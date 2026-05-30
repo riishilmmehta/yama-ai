@@ -1,3 +1,4 @@
+# yama_complete.py - 🏛️ Logo + Google Search + Original UI + New Chat + Mobile Fix
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 import uvicorn
@@ -11,37 +12,40 @@ from datetime import datetime
 
 app = FastAPI(title="Yama AI")
 
-# ============ IMPROVED SEARCH (Using Brave Search - Free & Reliable) ============
+# ============ GOOGLE SEARCH (WORKING - UNCHANGED FROM YOUR OLD CODE) ============
 
-def search_web(query):
-    """Search the web using Brave Search API (free, no blocking)"""
+def google_search(query):
+    """Search Google and get real results"""
     results = []
-    
-    # Try Brave Search (free, reliable)
     try:
-        url = f"https://search.brave.com/search?q={quote(query)}"
+        url = f"https://www.google.com/search?q={quote(query)}&num=10"
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
         response = requests.get(url, headers=headers, timeout=15)
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        for result in soup.find_all('div', class_='snippet')[:7]:
-            title_elem = result.find('a')
-            if title_elem:
+        for result in soup.find_all('div', class_='g')[:7]:
+            title_elem = result.find('h3')
+            link_elem = result.find('a')
+            snippet_elem = result.find('div', class_='VwiC3b')
+            
+            if title_elem and link_elem:
                 title = title_elem.get_text(strip=True)
-                link = title_elem.get('href', '')
-                snippet = result.get_text(strip=True)[:300]
+                link = link_elem.get('href', '')
+                if link.startswith('/url?q='):
+                    link = link.split('/url?q=')[1].split('&')[0]
+                snippet = snippet_elem.get_text(strip=True) if snippet_elem else ""
                 results.append({"title": title, "snippet": snippet, "url": link})
-    except:
-        pass
+    except Exception as e:
+        print(f"Google search error: {e}")
     
     # Fallback to DuckDuckGo
     if not results:
         try:
-            url = f"https://html.duckduckgo.com/html/?q={quote(query)}"
+            ddg_url = f"https://html.duckduckgo.com/html/?q={quote(query)}"
             headers = {'User-Agent': 'Mozilla/5.0'}
-            response = requests.get(url, headers=headers, timeout=10)
+            response = requests.get(ddg_url, headers=headers, timeout=10)
             soup = BeautifulSoup(response.text, 'html.parser')
             
             for result in soup.find_all('div', class_='result')[:7]:
@@ -52,14 +56,14 @@ def search_web(query):
                     title = title_elem.get_text(strip=True)
                     link = title_elem.get('href', '')
                     snippet = snippet_elem.get_text(strip=True) if snippet_elem else ""
-                    results.append({"title": title, "snippet": snippet[:300], "url": link})
+                    results.append({"title": title, "snippet": snippet, "url": link})
         except:
             pass
     
     return results
 
 def get_response(message):
-    msg = message.strip()
+    msg = message.lower().strip()
     
     # Math
     math_match = re.search(r'(\d+)\s*([\+\-\*\/])\s*(\d+)', msg)
@@ -78,21 +82,13 @@ def get_response(message):
         except:
             pass
     
-    # Greetings - handle directly (no search needed)
-    greetings = ['hi', 'hello', 'hey', 'sup', 'yo', 'hii', 'heyy']
-    if msg.lower() in greetings:
-        return "👋 Hello! I'm Yama. How can I help you today?"
-    
-    if 'how are you' in msg.lower():
-        return "😊 I'm doing great! Thanks for asking! How can I help you?"
-    
-    # Search the web for everything else
-    search_results = search_web(msg)
+    # Search Google for everything else
+    search_results = google_search(message)
     
     if not search_results:
-        return f"I searched for '{msg}' but found no results. Please try a different question."
+        return f"I searched for '{message}' but found no results. Please try a different question."
     
-    response = f"**🔍 Search results for: {msg}**\n\n"
+    response = f"**🔍 Search results for: {message}**\n\n"
     for i, r in enumerate(search_results[:7], 1):
         response += f"**{i}. {r['title']}**\n"
         response += f"{r['snippet']}\n"
@@ -113,7 +109,7 @@ def save_history(history):
     with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-# ============ COMPLETE UI ============
+# ============ ORIGINAL UI WITH 🏛️ LOGO + IMPROVEMENTS ============
 HTML = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -123,12 +119,7 @@ HTML = '''
     <title>Yama - AI Assistant</title>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            -webkit-tap-highlight-color: transparent;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
         
         html, body {
             height: 100%;
@@ -166,9 +157,7 @@ HTML = '''
             box-shadow: 4px 0 20px rgba(0,0,0,0.1);
         }
         
-        .sidebar.open {
-            transform: translateX(0);
-        }
+        .sidebar.open { transform: translateX(0); }
         
         .sidebar-header {
             padding: 20px;
@@ -268,9 +257,7 @@ HTML = '''
             z-index: 999;
         }
         
-        .overlay.show {
-            display: block;
-        }
+        .overlay.show { display: block; }
         
         .main {
             flex: 1;
@@ -313,9 +300,7 @@ HTML = '''
             gap: 6px;
         }
         
-        .logo-icon {
-            font-size: 1.8rem;
-        }
+        .logo-icon { font-size: 1.8rem; }
         
         .logo h1 {
             font-family: 'Playfair Display', serif;
@@ -343,23 +328,15 @@ HTML = '''
             min-height: 0;
         }
         
-        .message {
-            margin-bottom: 20px;
-            animation: fadeIn 0.3s ease;
-        }
+        .message { margin-bottom: 20px; animation: fadeIn 0.3s ease; }
         
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(10px); }
             to { opacity: 1; transform: translateY(0); }
         }
         
-        .user-message {
-            text-align: right;
-        }
-        
-        .ai-message {
-            text-align: left;
-        }
+        .user-message { text-align: right; }
+        .ai-message { text-align: left; }
         
         .message-content {
             display: inline-block;
@@ -526,106 +503,30 @@ HTML = '''
         }
         
         @media (max-width: 768px) {
-            .message-content {
-                max-width: 90%;
-                font-size: 0.85rem;
-            }
-            
-            .suggestions {
-                display: none;
-            }
-            
-            .new-chat-mobile {
-                display: block;
-            }
-            
-            .header {
-                padding: 10px 12px;
-            }
-            
-            .logo h1 {
-                font-size: 1.1rem;
-            }
-            
-            .logo-icon {
-                font-size: 1.4rem;
-            }
-            
-            .messages {
-                padding: 12px;
-            }
-            
-            .input-area {
-                padding: 10px 12px 16px;
-            }
-            
-            .input-wrapper {
-                border-radius: 28px;
-                padding: 0 6px 0 16px;
-                min-height: 56px;
-            }
-            
-            textarea {
-                font-size: 0.9rem;
-                padding: 14px 0;
-                min-height: 52px;
-                width: calc(100% - 80px);
-            }
-            
-            .input-wrapper button {
-                padding: 10px 18px;
-                min-width: 65px;
-                font-size: 0.85rem;
-                border-radius: 25px;
-            }
+            .message-content { max-width: 90%; font-size: 0.85rem; }
+            .suggestions { display: none; }
+            .new-chat-mobile { display: block; }
+            .header { padding: 10px 12px; }
+            .logo h1 { font-size: 1.1rem; }
+            .logo-icon { font-size: 1.4rem; }
+            .messages { padding: 12px; }
+            .input-area { padding: 10px 12px 16px; }
+            .input-wrapper { border-radius: 28px; padding: 0 6px 0 16px; min-height: 56px; }
+            textarea { font-size: 0.9rem; padding: 14px 0; min-height: 52px; width: calc(100% - 80px); }
+            .input-wrapper button { padding: 10px 18px; min-width: 65px; font-size: 0.85rem; border-radius: 25px; }
         }
         
         @media (min-width: 769px) {
-            .input-wrapper {
-                border-radius: 32px;
-                padding: 0 10px 0 22px;
-                min-height: 64px;
-            }
-            
-            textarea {
-                font-size: 1rem;
-                padding: 18px 0;
-                min-height: 60px;
-                width: calc(100% - 90px);
-            }
-            
-            .input-wrapper button {
-                padding: 14px 28px;
-                min-width: 80px;
-                font-size: 1rem;
-                border-radius: 30px;
-            }
+            .input-wrapper { border-radius: 32px; padding: 0 10px 0 22px; min-height: 64px; }
+            textarea { font-size: 1rem; padding: 18px 0; min-height: 60px; width: calc(100% - 90px); }
+            .input-wrapper button { padding: 14px 28px; min-width: 80px; font-size: 1rem; border-radius: 30px; }
         }
         
         @media (max-width: 480px) {
-            .input-area {
-                padding: 8px 10px 12px;
-            }
-            
-            .input-wrapper {
-                gap: 8px;
-                border-radius: 26px;
-                min-height: 52px;
-            }
-            
-            textarea {
-                font-size: 0.85rem;
-                padding: 12px 0;
-                min-height: 48px;
-                width: calc(100% - 75px);
-            }
-            
-            .input-wrapper button {
-                padding: 8px 14px;
-                min-width: 60px;
-                font-size: 0.8rem;
-                border-radius: 24px;
-            }
+            .input-area { padding: 8px 10px 12px; }
+            .input-wrapper { gap: 8px; border-radius: 26px; min-height: 52px; }
+            textarea { font-size: 0.85rem; padding: 12px 0; min-height: 48px; width: calc(100% - 75px); }
+            .input-wrapper button { padding: 8px 14px; min-width: 60px; font-size: 0.8rem; border-radius: 24px; }
         }
     </style>
 </head>
@@ -664,10 +565,10 @@ HTML = '''
                     <h2>Yama</h2>
                     <p>Your AI companion. Ask me anything - I'll search the web!</p>
                     <div class="suggestions">
-                        <div class="suggestion" onclick="askSuggestion('Who is The Great Khali?')">🏛️ Who is The Great Khali?</div>
-                        <div class="suggestion" onclick="askSuggestion('What is AI?')">🤖 What is AI?</div>
+                        <div class="suggestion" onclick="askSuggestion('What is the capital of France?')">🗼 Capital of France</div>
+                        <div class="suggestion" onclick="askSuggestion('Who is Elon Musk?')">🚀 Who is Elon Musk?</div>
                         <div class="suggestion" onclick="askSuggestion('10000/8')">📐 10000/8</div>
-                        <div class="suggestion" onclick="askSuggestion('Latest news')">📰 Latest news</div>
+                        <div class="suggestion" onclick="askSuggestion('Latest news today')">📰 Latest news</div>
                     </div>
                 </div>
             </div>
@@ -686,7 +587,6 @@ HTML = '''
     </div>
     
     <script>
-        let sessionId = 'session_' + Date.now();
         let hasMessages = false;
         
         function newChat() {
@@ -848,9 +748,9 @@ if __name__ == "__main__":
     print("="*55)
     print("🌐 Open: http://localhost:8000")
     print("🏛️ Original Logo Restored!")
-    print("🔍 Brave Search + DuckDuckGo Working!")
+    print("🔍 Google Search Working!")
     print("📜 Chat History with ☰ menu")
-    print("➕ New Chat Button at Bottom")
+    print("➕ New Chat Button")
     print("📱 Mobile Optimized")
     print("="*55 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=10000)
