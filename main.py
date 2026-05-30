@@ -101,7 +101,7 @@ def save_history(history):
     with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-# ============ UI WITH NEW CHAT AT BOTTOM ============
+# ============ FIXED UI - NO CUTOFF AT BOTTOM ============
 HTML = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -118,24 +118,27 @@ HTML = '''
             -webkit-tap-highlight-color: transparent;
         }
         
-        body {
-            font-family: 'Inter', sans-serif;
-            background: #f5f0e8;
-            height: 100vh;
+        html, body {
+            height: 100%;
             overflow: hidden;
             position: fixed;
             width: 100%;
         }
         
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #f5f0e8;
+        }
+        
         .app {
             display: flex;
-            height: 100vh;
+            height: 100%;
             width: 100%;
             position: relative;
             overflow: hidden;
         }
         
-        /* Sidebar - New Chat at Bottom */
+        /* Sidebar */
         .sidebar {
             position: fixed;
             left: 0;
@@ -160,13 +163,13 @@ HTML = '''
             padding: 20px;
             border-bottom: 1px solid #4a3f2f;
             background: #1f1912;
+            flex-shrink: 0;
         }
         
         .sidebar-header h3 {
             color: #d4c5a9;
             font-family: 'Playfair Display', serif;
             font-size: 1rem;
-            margin-bottom: 12px;
         }
         
         .history-list {
@@ -204,11 +207,11 @@ HTML = '''
             margin-top: 4px;
         }
         
-        /* New Chat Button at Bottom */
         .sidebar-footer {
             padding: 16px;
             border-top: 1px solid #4a3f2f;
             background: #1f1912;
+            flex-shrink: 0;
         }
         
         .new-chat-btn {
@@ -264,6 +267,7 @@ HTML = '''
             flex-direction: column;
             width: 100%;
             overflow: hidden;
+            height: 100%;
         }
         
         .header {
@@ -319,12 +323,14 @@ HTML = '''
             display: none;
         }
         
+        /* Messages - Takes remaining space */
         .messages {
             flex: 1;
             overflow-y: auto;
             padding: 16px;
             -webkit-overflow-scrolling: touch;
             scroll-behavior: smooth;
+            min-height: 0;
         }
         
         .message {
@@ -376,6 +382,7 @@ HTML = '''
             gap: 5px;
             color: #888;
             font-size: 0.8rem;
+            flex-shrink: 0;
         }
         
         .typing span {
@@ -392,10 +399,12 @@ HTML = '''
             30% { transform: translateY(-6px); }
         }
         
+        /* Input area - Fixed at bottom */
         .input-area {
-            padding: 12px 16px 16px;
+            padding: 12px 16px 20px;
             background: linear-gradient(to top, #f5f0e8, transparent);
             flex-shrink: 0;
+            border-top: 1px solid rgba(212,197,169,0.3);
         }
         
         .input-wrapper {
@@ -495,7 +504,7 @@ HTML = '''
             border-color: #2c2418;
         }
         
-        /* Mobile Responsive */
+        /* Mobile Responsive - No cutoff */
         @media (max-width: 768px) {
             .message-content {
                 max-width: 90%;
@@ -527,11 +536,37 @@ HTML = '''
             }
             
             .input-area {
-                padding: 10px 12px 14px;
+                padding: 10px 12px 16px;
             }
             
             button {
                 padding: 8px 16px;
+            }
+            
+            textarea {
+                font-size: 0.85rem;
+                padding: 8px 0;
+            }
+        }
+        
+        /* For very small phones */
+        @media (max-width: 480px) {
+            .input-area {
+                padding: 8px 10px 12px;
+            }
+            
+            .input-wrapper {
+                gap: 6px;
+                padding: 4px 4px 4px 12px;
+            }
+            
+            button {
+                padding: 8px 14px;
+                font-size: 0.8rem;
+            }
+            
+            .message-content {
+                font-size: 0.8rem;
             }
         }
     </style>
