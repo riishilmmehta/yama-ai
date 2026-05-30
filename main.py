@@ -550,5 +550,4 @@ if __name__ == "__main__":
     print("🔍 Google Search Working!")
     print("📜 Chat History with ☰ menu")
     print("="*55 + "\n")
-    uvicorn.run(app, host="0.0.0.0", port=10000)
-'@ | Out-File -FilePath yama_complete.py -Encoding UTF8                                                                                            
+    uvicorn.run(app, host="0.0.0.0", port=10000)                                                                                         
