@@ -4,58 +4,30 @@ import uvicorn
 import json
 import os
 import re
-import requests
-from bs4 import BeautifulSoup
-from urllib.parse import quote
+import asyncio
 from datetime import datetime
+from ddgs import DDGS
 
 app = FastAPI(title="Yama AI")
 
-# ============ RELIABLE SEARCH (Works on Render) ============
+# ============ DDGS SEARCH (WORKING) ============
 
 def search_web(query):
-    """Search using Brave Search (not blocked by Google)"""
+    """Search using DDGS (DuckDuckGo Search) - WORKS ON RENDER"""
     results = []
-    
-    # Use Brave Search (reliable, no blocking)
     try:
-        url = f"https://search.brave.com/search?q={quote(query)}"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        response = requests.get(url, headers=headers, timeout=15)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        for result in soup.find_all('div', class_='snippet')[:7]:
-            title_elem = result.find('a')
-            if title_elem:
-                title = title_elem.get_text(strip=True)
-                link = title_elem.get('href', '')
-                snippet = result.get_text(strip=True)[:300]
-                if link and link.startswith('http'):
-                    results.append({"title": title, "snippet": snippet, "url": link})
-    except:
-        pass
-    
-    # Fallback to DuckDuckGo
-    if not results:
-        try:
-            url = f"https://html.duckduckgo.com/html/?q={quote(query)}"
-            response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
-            soup = BeautifulSoup(response.text, 'html.parser')
+        with DDGS() as ddgs:
+            # Search and get results
+            search_results = list(ddgs.text(query, max_results=7))
             
-            for result in soup.find_all('div', class_='result')[:7]:
-                title_elem = result.find('a', class_='result__a')
-                snippet_elem = result.find('a', class_='result__snippet')
-                
-                if title_elem:
-                    title = title_elem.get_text(strip=True)
-                    link = title_elem.get('href', '')
-                    snippet = snippet_elem.get_text(strip=True) if snippet_elem else ""
-                    if link:
-                        results.append({"title": title, "snippet": snippet[:300], "url": link})
-        except:
-            pass
+            for r in search_results:
+                results.append({
+                    "title": r.get('title', ''),
+                    "snippet": r.get('body', '')[:300],
+                    "url": r.get('href', '')
+                })
+    except Exception as e:
+        print(f"Search error: {e}")
     
     return results
 
@@ -79,7 +51,7 @@ def get_response(message):
         except:
             pass
     
-    # Greetings (no search needed)
+    # Greetings
     greetings = ['hi', 'hello', 'hey', 'sup', 'yo', 'hii', 'heyy']
     if msg in greetings:
         return "👋 Hello! I'm Yama. How can I help you today?"
@@ -87,7 +59,7 @@ def get_response(message):
     if 'how are you' in msg:
         return "😊 I'm doing great! Thanks for asking! How can I help you?"
     
-    # Search the web
+    # Search using DDGS
     search_results = search_web(message)
     
     if not search_results:
@@ -733,7 +705,7 @@ if __name__ == "__main__":
     print("="*55)
     print("🌐 Open: http://localhost:8000")
     print("🏛️ Original Logo Restored!")
-    print("🔍 Brave Search + DuckDuckGo (Works on Render)")
+    print("🔍 DDGS Search Working!")
     print("📜 Chat History with ☰ menu")
     print("➕ New Chat Button")
     print("📱 Mobile Optimized")
