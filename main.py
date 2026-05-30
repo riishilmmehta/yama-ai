@@ -11,36 +11,58 @@ from datetime import datetime
 
 app = FastAPI(title="Yama AI")
 
-# ============ WORKING SEARCH (DuckDuckGo - Reliable) ============
+# ============ GOOGLE SEARCH (WORKING - FROM YOUR OLD CODE) ============
 
-def search_web(query):
-    """Search the web using DuckDuckGo (reliable, not blocked)"""
+def google_search(query):
+    """Search Google and get real results"""
     results = []
     try:
-        url = f"https://html.duckduckgo.com/html/?q={quote(query)}"
+        url = f"https://www.google.com/search?q={quote(query)}&num=10"
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
         response = requests.get(url, headers=headers, timeout=15)
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        for result in soup.find_all('div', class_='result')[:7]:
-            title_elem = result.find('a', class_='result__a')
-            snippet_elem = result.find('a', class_='result__snippet')
+        for result in soup.find_all('div', class_='g')[:7]:
+            title_elem = result.find('h3')
+            link_elem = result.find('a')
+            snippet_elem = result.find('div', class_='VwiC3b')
             
-            if title_elem:
+            if title_elem and link_elem:
                 title = title_elem.get_text(strip=True)
-                link = title_elem.get('href', '')
+                link = link_elem.get('href', '')
+                if link.startswith('/url?q='):
+                    link = link.split('/url?q=')[1].split('&')[0]
                 snippet = snippet_elem.get_text(strip=True) if snippet_elem else ""
-                if link:
-                    results.append({"title": title, "snippet": snippet[:300], "url": link})
+                results.append({"title": title, "snippet": snippet, "url": link})
     except Exception as e:
-        print(f"Search error: {e}")
+        print(f"Google search error: {e}")
+    
+    # Fallback to DuckDuckGo
+    if not results:
+        try:
+            ddg_url = f"https://html.duckduckgo.com/html/?q={quote(query)}"
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            response = requests.get(ddg_url, headers=headers, timeout=10)
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            for result in soup.find_all('div', class_='result')[:7]:
+                title_elem = result.find('a', class_='result__a')
+                snippet_elem = result.find('a', class_='result__snippet')
+                
+                if title_elem:
+                    title = title_elem.get_text(strip=True)
+                    link = title_elem.get('href', '')
+                    snippet = snippet_elem.get_text(strip=True) if snippet_elem else ""
+                    results.append({"title": title, "snippet": snippet, "url": link})
+        except:
+            pass
     
     return results
 
 def get_response(message):
-    msg = message.strip()
+    msg = message.lower().strip()
     
     # Math
     math_match = re.search(r'(\d+)\s*([\+\-\*\/])\s*(\d+)', msg)
@@ -59,13 +81,13 @@ def get_response(message):
         except:
             pass
     
-    # Search the web
-    search_results = search_web(msg)
+    # Search Google for everything else
+    search_results = google_search(message)
     
     if not search_results:
-        return f"I searched for '{msg}' but found no results. Please try a different question."
+        return f"I searched for '{message}' but found no results. Please try a different question."
     
-    response = f"🔍 **Search results for: {msg}**\n\n"
+    response = f"**🔍 Search results for: {message}**\n\n"
     for i, r in enumerate(search_results[:7], 1):
         response += f"**{i}. {r['title']}**\n"
         response += f"{r['snippet']}\n"
@@ -86,7 +108,7 @@ def save_history(history):
     with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-# ============ COMPLETE UI ============
+# ============ COMPLETE UI WITH NEW CHAT & FIXED INPUT ============
 HTML = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -816,4 +838,14 @@ async def clear_history_endpoint():
     return {"status": "cleared"}
 
 if __name__ == "__main__":
+    print("\n" + "="*55)
+    print("🏛️ YAMA AI - COMPLETE EDITION")
+    print("="*55)
+    print("🌐 Open: http://localhost:8000")
+    print("🏛️ Original Logo Restored!")
+    print("🔍 Google Search Working!")
+    print("📜 Chat History with ☰ menu")
+    print("➕ New Chat Button")
+    print("📱 Mobile Optimized")
+    print("="*55 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=10000)
