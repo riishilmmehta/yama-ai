@@ -11,13 +11,10 @@ from datetime import datetime
 
 app = FastAPI(title="Yama AI")
 
-# ============ WORKING SEARCH (DuckDuckGo + Google Fallback) ============
+# ============ WORKING SEARCH ============
 
 def search_web(query):
-    """Search the web and get real results"""
     results = []
-    
-    # Try DuckDuckGo first (more reliable)
     try:
         url = f"https://html.duckduckgo.com/html/?q={quote(query)}"
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
@@ -37,7 +34,6 @@ def search_web(query):
     except:
         pass
     
-    # Fallback to Google
     if not results:
         try:
             url = f"https://www.google.com/search?q={quote(query)}&num=10"
@@ -64,7 +60,6 @@ def search_web(query):
 def get_response(message):
     msg = message.strip()
     
-    # Math
     math_match = re.search(r'(\d+)\s*([\+\-\*\/])\s*(\d+)', msg)
     if math_match:
         try:
@@ -81,7 +76,6 @@ def get_response(message):
         except:
             pass
     
-    # Search web
     search_results = search_web(msg)
     
     if not search_results:
@@ -95,7 +89,6 @@ def get_response(message):
     
     return response
 
-# ============ HISTORY ============
 HISTORY_FILE = "history.json"
 
 def load_history():
@@ -108,7 +101,7 @@ def save_history(history):
     with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-# ============ COMPLETE UI ============
+# ============ UI WITH NEW CHAT AT BOTTOM ============
 HTML = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -142,6 +135,7 @@ HTML = '''
             overflow: hidden;
         }
         
+        /* Sidebar - New Chat at Bottom */
         .sidebar {
             position: fixed;
             left: 0;
@@ -173,38 +167,6 @@ HTML = '''
             font-family: 'Playfair Display', serif;
             font-size: 1rem;
             margin-bottom: 12px;
-        }
-        
-        .new-chat-btn {
-            background: #4a3f2f;
-            border: none;
-            border-radius: 25px;
-            padding: 10px 16px;
-            color: #d4c5a9;
-            cursor: pointer;
-            width: 100%;
-            font-size: 0.85rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            transition: all 0.2s;
-        }
-        
-        .new-chat-btn:hover {
-            background: #5a4f3f;
-        }
-        
-        .clear-history {
-            background: rgba(212,197,169,0.1);
-            border: 1px solid #4a3f2f;
-            border-radius: 20px;
-            padding: 8px 16px;
-            color: #d4c5a9;
-            cursor: pointer;
-            font-size: 0.7rem;
-            margin-top: 10px;
-            width: 100%;
         }
         
         .history-list {
@@ -240,6 +202,45 @@ HTML = '''
             font-size: 0.6rem;
             color: #6a5a4a;
             margin-top: 4px;
+        }
+        
+        /* New Chat Button at Bottom */
+        .sidebar-footer {
+            padding: 16px;
+            border-top: 1px solid #4a3f2f;
+            background: #1f1912;
+        }
+        
+        .new-chat-btn {
+            background: #4a3f2f;
+            border: none;
+            border-radius: 25px;
+            padding: 12px 16px;
+            color: #d4c5a9;
+            cursor: pointer;
+            width: 100%;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            transition: all 0.2s;
+        }
+        
+        .new-chat-btn:hover {
+            background: #5a4f3f;
+        }
+        
+        .clear-history {
+            background: rgba(212,197,169,0.1);
+            border: 1px solid #4a3f2f;
+            border-radius: 20px;
+            padding: 8px 16px;
+            color: #d4c5a9;
+            cursor: pointer;
+            font-size: 0.7rem;
+            margin-top: 10px;
+            width: 100%;
         }
         
         .overlay {
@@ -542,13 +543,15 @@ HTML = '''
         <div class="sidebar" id="sidebar">
             <div class="sidebar-header">
                 <h3>📜 CONVERSATIONS</h3>
+            </div>
+            <div class="history-list" id="historyList">
+                <div style="color: #6a5a4a; text-align: center; padding: 20px;">No conversations yet</div>
+            </div>
+            <div class="sidebar-footer">
                 <button class="new-chat-btn" onclick="newChat()">
                     ➕ New Chat
                 </button>
                 <button class="clear-history" onclick="clearHistory()">Clear all history</button>
-            </div>
-            <div class="history-list" id="historyList">
-                <div style="color: #6a5a4a; text-align: center; padding: 20px;">No conversations yet</div>
             </div>
         </div>
         
