@@ -1,4 +1,3 @@
-# yama_complete.py - 🏛️ Logo + Google Search + Original UI + New Chat + Mobile Fix
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 import uvicorn
@@ -12,40 +11,37 @@ from datetime import datetime
 
 app = FastAPI(title="Yama AI")
 
-# ============ GOOGLE SEARCH (WORKING - UNCHANGED FROM YOUR OLD CODE) ============
+# ============ RELIABLE SEARCH (Works on Render) ============
 
-def google_search(query):
-    """Search Google and get real results"""
+def search_web(query):
+    """Search using Brave Search (not blocked by Google)"""
     results = []
+    
+    # Use Brave Search (reliable, no blocking)
     try:
-        url = f"https://www.google.com/search?q={quote(query)}&num=10"
+        url = f"https://search.brave.com/search?q={quote(query)}"
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
         response = requests.get(url, headers=headers, timeout=15)
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        for result in soup.find_all('div', class_='g')[:7]:
-            title_elem = result.find('h3')
-            link_elem = result.find('a')
-            snippet_elem = result.find('div', class_='VwiC3b')
-            
-            if title_elem and link_elem:
+        for result in soup.find_all('div', class_='snippet')[:7]:
+            title_elem = result.find('a')
+            if title_elem:
                 title = title_elem.get_text(strip=True)
-                link = link_elem.get('href', '')
-                if link.startswith('/url?q='):
-                    link = link.split('/url?q=')[1].split('&')[0]
-                snippet = snippet_elem.get_text(strip=True) if snippet_elem else ""
-                results.append({"title": title, "snippet": snippet, "url": link})
-    except Exception as e:
-        print(f"Google search error: {e}")
+                link = title_elem.get('href', '')
+                snippet = result.get_text(strip=True)[:300]
+                if link and link.startswith('http'):
+                    results.append({"title": title, "snippet": snippet, "url": link})
+    except:
+        pass
     
     # Fallback to DuckDuckGo
     if not results:
         try:
-            ddg_url = f"https://html.duckduckgo.com/html/?q={quote(query)}"
-            headers = {'User-Agent': 'Mozilla/5.0'}
-            response = requests.get(ddg_url, headers=headers, timeout=10)
+            url = f"https://html.duckduckgo.com/html/?q={quote(query)}"
+            response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
             soup = BeautifulSoup(response.text, 'html.parser')
             
             for result in soup.find_all('div', class_='result')[:7]:
@@ -56,14 +52,15 @@ def google_search(query):
                     title = title_elem.get_text(strip=True)
                     link = title_elem.get('href', '')
                     snippet = snippet_elem.get_text(strip=True) if snippet_elem else ""
-                    results.append({"title": title, "snippet": snippet, "url": link})
+                    if link:
+                        results.append({"title": title, "snippet": snippet[:300], "url": link})
         except:
             pass
     
     return results
 
 def get_response(message):
-    msg = message.lower().strip()
+    msg = message.strip().lower()
     
     # Math
     math_match = re.search(r'(\d+)\s*([\+\-\*\/])\s*(\d+)', msg)
@@ -82,8 +79,16 @@ def get_response(message):
         except:
             pass
     
-    # Search Google for everything else
-    search_results = google_search(message)
+    # Greetings (no search needed)
+    greetings = ['hi', 'hello', 'hey', 'sup', 'yo', 'hii', 'heyy']
+    if msg in greetings:
+        return "👋 Hello! I'm Yama. How can I help you today?"
+    
+    if 'how are you' in msg:
+        return "😊 I'm doing great! Thanks for asking! How can I help you?"
+    
+    # Search the web
+    search_results = search_web(message)
     
     if not search_results:
         return f"I searched for '{message}' but found no results. Please try a different question."
@@ -109,7 +114,7 @@ def save_history(history):
     with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-# ============ ORIGINAL UI WITH 🏛️ LOGO + IMPROVEMENTS ============
+# ============ COMPLETE UI ============
 HTML = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -230,9 +235,7 @@ HTML = '''
             transition: all 0.2s;
         }
         
-        .new-chat-btn:hover {
-            background: #5a4f3f;
-        }
+        .new-chat-btn:hover { background: #5a4f3f; }
         
         .clear-history {
             background: rgba(212,197,169,0.1);
@@ -288,10 +291,7 @@ HTML = '''
             border-radius: 10px;
         }
         
-        .menu-btn:hover {
-            background: #d4c5a9;
-            color: #2c2418;
-        }
+        .menu-btn:hover { background: #d4c5a9; color: #2c2418; }
         
         .logo {
             flex: 1;
@@ -301,12 +301,7 @@ HTML = '''
         }
         
         .logo-icon { font-size: 1.8rem; }
-        
-        .logo h1 {
-            font-family: 'Playfair Display', serif;
-            font-size: 1.3rem;
-            color: #2c2418;
-        }
+        .logo h1 { font-family: 'Playfair Display', serif; font-size: 1.3rem; color: #2c2418; }
         
         .new-chat-mobile {
             background: none;
@@ -419,10 +414,7 @@ HTML = '''
             max-height: 120px;
         }
         
-        textarea::placeholder {
-            color: #b8a88a;
-            font-size: 0.95rem;
-        }
+        textarea::placeholder { color: #b8a88a; font-size: 0.95rem; }
         
         .input-wrapper button {
             background: #2c2418;
@@ -439,10 +431,7 @@ HTML = '''
             flex-shrink: 0;
         }
         
-        .input-wrapper button:hover {
-            background: #4a3f2f;
-            transform: scale(1.02);
-        }
+        .input-wrapper button:hover { background: #4a3f2f; transform: scale(1.02); }
         
         .welcome {
             display: flex;
@@ -542,9 +531,7 @@ HTML = '''
                 <div style="color: #6a5a4a; text-align: center; padding: 20px;">No conversations yet</div>
             </div>
             <div class="sidebar-footer">
-                <button class="new-chat-btn" onclick="newChat()">
-                    ➕ New Chat
-                </button>
+                <button class="new-chat-btn" onclick="newChat()">➕ New Chat</button>
                 <button class="clear-history" onclick="clearHistory()">Clear all history</button>
             </div>
         </div>
@@ -590,9 +577,7 @@ HTML = '''
         let hasMessages = false;
         
         function newChat() {
-            if (confirm('Start a new chat? Current conversation will be saved in history.')) {
-                location.reload();
-            }
+            if (confirm('Start a new chat?')) { location.reload(); }
         }
         
         function toggleSidebar() {
@@ -639,7 +624,7 @@ HTML = '''
         }
         
         async function clearHistory() {
-            if (confirm('Clear all conversation history?')) {
+            if (confirm('Clear all history?')) {
                 await fetch('/clear_history', { method: 'POST' });
                 location.reload();
             }
@@ -748,7 +733,7 @@ if __name__ == "__main__":
     print("="*55)
     print("🌐 Open: http://localhost:8000")
     print("🏛️ Original Logo Restored!")
-    print("🔍 Google Search Working!")
+    print("🔍 Brave Search + DuckDuckGo (Works on Render)")
     print("📜 Chat History with ☰ menu")
     print("➕ New Chat Button")
     print("📱 Mobile Optimized")
