@@ -1,5 +1,4 @@
-﻿@'
-# yama_complete.py - 🏛️ Logo + Google Search + Original UI
+﻿# yama_complete.py - 🏛️ Logo + Google Search + Original UI
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 import uvicorn
