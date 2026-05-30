@@ -101,7 +101,7 @@ def save_history(history):
     with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-# ============ FIXED UI - NO CUTOFF AT BOTTOM ============
+# ============ UI WITH EXACT INPUT SIZE SPECIFICATIONS ============
 HTML = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -323,7 +323,7 @@ HTML = '''
             display: none;
         }
         
-        /* Messages - Takes remaining space */
+        /* Messages */
         .messages {
             flex: 1;
             overflow-y: auto;
@@ -399,21 +399,23 @@ HTML = '''
             30% { transform: translateY(-6px); }
         }
         
-        /* Input area - Fixed at bottom */
+        /* Input Area - EXACT SPECIFICATIONS */
         .input-area {
             padding: 12px 16px 20px;
             background: linear-gradient(to top, #f5f0e8, transparent);
             flex-shrink: 0;
-            border-top: 1px solid rgba(212,197,169,0.3);
         }
         
         .input-wrapper {
             display: flex;
-            gap: 8px;
+            align-items: center;
+            gap: 12px;
             background: white;
             border-radius: 30px;
-            padding: 5px 5px 5px 16px;
+            padding: 0 8px 0 20px;
             border: 1px solid #d4c5a9;
+            min-height: 60px;
+            height: auto;
         }
         
         textarea {
@@ -421,29 +423,39 @@ HTML = '''
             background: transparent;
             border: none;
             color: #2c2418;
-            font-size: 0.9rem;
+            font-size: 1rem;
             resize: none;
             outline: none;
-            padding: 10px 0;
+            padding: 16px 0;
             font-family: inherit;
+            width: calc(100% - 90px);
+            min-height: 56px;
+            max-height: 120px;
         }
         
         textarea::placeholder {
             color: #b8a88a;
+            font-size: 0.95rem;
         }
         
-        button {
+        .input-wrapper button {
             background: #2c2418;
             border: none;
-            border-radius: 30px;
-            padding: 10px 20px;
+            border-radius: 28px;
+            padding: 12px 24px;
             color: #f5f0e8;
             font-weight: 500;
             cursor: pointer;
+            font-size: 0.9rem;
+            min-width: 70px;
+            width: auto;
+            transition: all 0.2s;
+            flex-shrink: 0;
         }
         
-        button:hover {
+        .input-wrapper button:hover {
             background: #4a3f2f;
+            transform: scale(1.02);
         }
         
         .welcome {
@@ -504,7 +516,7 @@ HTML = '''
             border-color: #2c2418;
         }
         
-        /* Mobile Responsive - No cutoff */
+        /* Mobile Responsive */
         @media (max-width: 768px) {
             .message-content {
                 max-width: 90%;
@@ -539,34 +551,73 @@ HTML = '''
                 padding: 10px 12px 16px;
             }
             
-            button {
-                padding: 8px 16px;
+            .input-wrapper {
+                border-radius: 28px;
+                padding: 0 6px 0 16px;
+                min-height: 56px;
             }
             
             textarea {
+                font-size: 0.9rem;
+                padding: 14px 0;
+                min-height: 52px;
+                width: calc(100% - 80px);
+            }
+            
+            .input-wrapper button {
+                padding: 10px 18px;
+                min-width: 65px;
                 font-size: 0.85rem;
-                padding: 8px 0;
+                border-radius: 25px;
             }
         }
         
-        /* For very small phones */
+        /* Desktop */
+        @media (min-width: 769px) {
+            .input-wrapper {
+                border-radius: 32px;
+                padding: 0 10px 0 22px;
+                min-height: 64px;
+            }
+            
+            textarea {
+                font-size: 1rem;
+                padding: 18px 0;
+                min-height: 60px;
+                width: calc(100% - 90px);
+            }
+            
+            .input-wrapper button {
+                padding: 14px 28px;
+                min-width: 80px;
+                font-size: 1rem;
+                border-radius: 30px;
+            }
+        }
+        
         @media (max-width: 480px) {
             .input-area {
                 padding: 8px 10px 12px;
             }
             
             .input-wrapper {
-                gap: 6px;
-                padding: 4px 4px 4px 12px;
+                gap: 8px;
+                border-radius: 26px;
+                min-height: 52px;
             }
             
-            button {
+            textarea {
+                font-size: 0.85rem;
+                padding: 12px 0;
+                min-height: 48px;
+                width: calc(100% - 75px);
+            }
+            
+            .input-wrapper button {
                 padding: 8px 14px;
+                min-width: 60px;
                 font-size: 0.8rem;
-            }
-            
-            .message-content {
-                font-size: 0.8rem;
+                border-radius: 24px;
             }
         }
     </style>
@@ -690,7 +741,7 @@ HTML = '''
         const textarea = document.getElementById('userInput');
         textarea.addEventListener('input', function() {
             this.style.height = 'auto';
-            this.style.height = Math.min(this.scrollHeight, 100) + 'px';
+            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
         });
         
         function handleKey(e) {
