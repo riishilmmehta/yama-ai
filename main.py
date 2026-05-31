@@ -78,33 +78,9 @@ def search_web(query):
                     "snippet": r.get('body', '')[:300],
                     "url": r.get('href', '')
                 })
-    except:
-        pass
+    except Exception as e:
+        print(f"Search error: {e}")
     return results
-
-def read_full_webpage(url):
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        response = requests.get(url, headers=headers, timeout=15)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        for tag in soup(['script', 'style', 'nav', 'footer', 'header', 'aside']):
-            tag.decompose()
-        
-        content = []
-        article = soup.find('article')
-        if article:
-            content.append(article.get_text())
-        else:
-            for p in soup.find_all('p'):
-                text = p.get_text(strip=True)
-                if len(text) > 50:
-                    content.append(text)
-        
-        full_text = ' '.join(content[:30])
-        return full_text[:2000]
-    except:
-        return None
 
 # ============ RESPONSE FUNCTION ============
 
@@ -113,6 +89,7 @@ def get_response(message, email):
     
     stats = update_user_stats(email)
     user = user_db.get(User.email == email)
+    user_name = user.get('name', 'User') if user else 'User'
     
     # Math
     math_match = re.search(r'(\d+)\s*([\+\-\*\/])\s*(\d+)', msg)
@@ -127,16 +104,16 @@ def get_response(message, email):
             elif op == '/': result = a / b
             if isinstance(result, float) and result.is_integer():
                 result = int(result)
-            return f"🧮 {a} {op} {b} = {result}\n\n✨ Great job, {user.get('name', 'User')}! Level {stats['level']} - {stats['title']}"
+            return f"🧮 {a} {op} {b} = {result}\n\n✨ Great job, {user_name}! Level {stats['level']} - {stats['title']}"
         except:
             pass
     
     # Greetings
     if msg in ['hi', 'hello', 'hey', 'sup', 'yo']:
-        return f"👋 Hello {user.get('name', 'User')}! You are a **{stats['title']}** (Level {stats['level']}) with {stats['count']} messages!\n\nHow can I help you today?"
+        return f"👋 Hello {user_name}! You are a **{stats['title']}** (Level {stats['level']}) with {stats['count']} messages!\n\nHow can I help you today?"
     
     if 'how are you' in msg:
-        return f"😊 I'm doing great! Thanks for asking, {user.get('name', 'User')}!"
+        return f"😊 I'm doing great! Thanks for asking, {user_name}!"
     
     # Search
     search_results = search_web(message)
@@ -144,23 +121,9 @@ def get_response(message, email):
     if not search_results:
         return f"I searched for '{message}' but found no results."
     
-    # Try full webpage reading
-    try:
-        full_content = read_full_webpage(search_results[0]['url'])
-        if full_content:
-            response = f"🔍 **Deep Search Result**\n\n"
-            response += f"**{search_results[0]['title']}**\n"
-            response += f"{full_content}\n"
-            response += f"🔗 {search_results[0]['url']}\n\n"
-            response += f"📊 **{user.get('name', 'User')}'s Stats:** Level {stats['level']} - {stats['title']}\n"
-            response += f"📝 Total messages: {stats['count']}\n"
-            return response
-    except:
-        pass
-    
     # Regular results
     response = f"🔍 **Search results for: {message}**\n\n"
-    response += f"📊 **{user.get('name', 'User')}'s Stats:** Level {stats['level']} - {stats['title']} ({stats['count']} messages)\n\n"
+    response += f"📊 **{user_name}'s Stats:** Level {stats['level']} - {stats['title']} ({stats['count']} messages)\n\n"
     
     for i, r in enumerate(search_results[:7], 1):
         response += f"**{i}. {r['title']}**\n"
@@ -172,14 +135,20 @@ def get_response(message, email):
 # ============ HISTORY ============
 
 def load_history(email):
-    filepath = f"history_{email.replace('@', '_at_')}.json"
+    if not email:
+        return []
+    safe_email = email.replace('@', '_at_').replace('.', '_dot_')
+    filepath = f"history_{safe_email}.json"
     if os.path.exists(filepath):
         with open(filepath, 'r', encoding='utf-8') as f:
             return json.load(f)
     return []
 
 def save_history(email, history):
-    filepath = f"history_{email.replace('@', '_at_')}.json"
+    if not email:
+        return
+    safe_email = email.replace('@', '_at_').replace('.', '_dot_')
+    filepath = f"history_{safe_email}.json"
     with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
@@ -459,7 +428,9 @@ HTML = f'''
             currentUser = null;
             document.getElementById('loginOverlay').style.display = 'flex';
             document.getElementById('app').style.display = 'none';
-            google.accounts.id.disableAutoSelect();
+            if (google && google.accounts) {{
+                google.accounts.id.disableAutoSelect();
+            }}
         }}
         
         function toggleUserMenu() {{ document.getElementById('sidebar').classList.toggle('open'); }}
@@ -550,15 +521,19 @@ async def set_user(request: Request):
 @app.post("/chat")
 async def chat(request: Request):
     data = await request.json()
-    response = get_response(data.get('message', ''), data.get('email', ''))
+    message = data.get('message', '')
+    email = data.get('email', '')
     
-    history = load_history(data.get('email', ''))
-    history.append({
-        "user": data.get('message', ''),
-        "ai": response,
-        "timestamp": datetime.now().strftime("%H:%M")
-    })
-    save_history(data.get('email', ''), history)
+    response = get_response(message, email)
+    
+    if email:
+        history = load_history(email)
+        history.append({
+            "user": message,
+            "ai": response,
+            "timestamp": datetime.now().strftime("%H:%M")
+        })
+        save_history(email, history)
     
     return {"response": response}
 
