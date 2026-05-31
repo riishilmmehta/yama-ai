@@ -3,4 +3,8 @@ uvicorn
 requests
 beautifulsoup4
 ddgs
-numpy
+qrcode
+pillow
+thefuzz
+dateparser
+tinydb
