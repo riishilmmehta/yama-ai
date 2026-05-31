@@ -19,7 +19,7 @@ from tinydb import TinyDB, Query
 
 app = FastAPI(title="Yama AI")
 
-# ============ NEW FEATURES SETUP ============
+# ============ FEATURES SETUP ============
 
 # User Leveling System with TinyDB
 user_db = TinyDB('user_stats.json')
@@ -48,7 +48,7 @@ keyword_weights = {
     "news": 9
 }
 
-# ============ NEW FEATURE 1: URL SHORTENER & QR CODE ============
+# ============ URL SHORTENER & QR CODE ============
 
 def shorten_url(long_url):
     """Shorten URL using free tinyurl API"""
@@ -74,7 +74,7 @@ def generate_qr_code(data):
     except:
         return None
 
-# ============ NEW FEATURE 2: USER LEVELING SYSTEM ============
+# ============ USER LEVELING SYSTEM ============
 
 def get_user_level(user_id):
     """Get or create user stats"""
@@ -117,7 +117,7 @@ def update_user_stats(user_id):
     
     return {"count": new_count, "level": new_level, "title": new_title}
 
-# ============ NEW FEATURE 3: SESSION MEMORY ============
+# ============ SESSION MEMORY ============
 
 def get_session_memory(session_id):
     """Get or create session memory"""
@@ -136,7 +136,7 @@ def update_session_memory(session_id, key, value):
     memory[key] = value
     session_memory[session_id] = memory
 
-# ============ NEW FEATURE 4: FUZZY MATCHING & KEYWORD WEIGHTING ============
+# ============ FUZZY MATCHING & KEYWORD WEIGHTING ============
 
 def fuzzy_match(user_input, target_list, threshold=80):
     """Check if user input matches any target using fuzzy matching"""
@@ -153,7 +153,7 @@ def calculate_intent_weight(message):
             score += weight
     return score
 
-# ============ NEW FEATURE 5: DATE/TIME EXTRACTION ============
+# ============ DATE/TIME EXTRACTION ============
 
 def extract_datetime(text):
     """Extract date and time from natural language"""
@@ -165,7 +165,7 @@ def extract_datetime(text):
         pass
     return None
 
-# ============ NEW FEATURE 6: TEXT ANALYSIS (Simple version without spaCy) ============
+# ============ TEXT ANALYSIS ============
 
 def analyze_text(text):
     """Simple text analysis without spaCy"""
@@ -177,7 +177,7 @@ def analyze_text(text):
         "is_question": text.strip().endswith("?")
     }
 
-# ============ DDGS SEARCH (WORKING) - UNCHANGED ============
+# ============ DDGS SEARCH ============
 
 def search_web(query):
     """Search using DDGS (DuckDuckGo Search) - WORKS ON RENDER"""
@@ -195,7 +195,7 @@ def search_web(query):
         print(f"Search error: {e}")
     return results
 
-# ============ NEW FEATURE 7: EXTERNAL API (Weather) ============
+# ============ WEATHER API ============
 
 def get_weather(city):
     """Get weather using free wttr.in API"""
@@ -207,7 +207,7 @@ def get_weather(city):
         pass
     return None
 
-# ============ MAIN RESPONSE WITH ALL NEW FEATURES (ORIGINAL KEPT) ============
+# ============ MAIN RESPONSE ============
 
 def get_response(message, session_id="default"):
     msg = message.strip().lower()
@@ -244,7 +244,7 @@ def get_response(message, session_id="default"):
             if weather:
                 return weather
     
-    # Math (ORIGINAL - UNCHANGED)
+    # Math
     math_match = re.search(r'(\d+)\s*([\+\-\*\/])\s*(\d+)', msg)
     if math_match:
         try:
@@ -262,7 +262,7 @@ def get_response(message, session_id="default"):
         except:
             pass
     
-    # Greetings with fuzzy matching (ORIGINAL + IMPROVED)
+    # Greetings with fuzzy matching
     greetings_list = ["hi", "hello", "hey", "sup", "yo", "hii", "heyy"]
     if fuzzy_match(msg, greetings_list) or msg in synonyms.get("hi", []):
         memory = get_session_memory(session_id)
@@ -279,13 +279,12 @@ def get_response(message, session_id="default"):
     # Analyze text
     analysis = analyze_text(message)
     
-    # Search using DDGS (ORIGINAL - UNCHANGED)
+    # Search using DDGS
     search_results = search_web(message)
     
     if not search_results:
         return f"I searched for '{message}' but found no results. Please try a different question."
     
-    # ORIGINAL RESPONSE FORMAT - KEPT EXACTLY THE SAME
     response = f"**🔍 Search results for: {message}**\n\n"
     response += f"📊 **Your Stats:** Level {stats['level']} - {stats['title']} ({stats['count']} messages)\n\n"
     
@@ -294,24 +293,21 @@ def get_response(message, session_id="default"):
         response += f"{r['snippet']}\n"
         response += f"🔗 {r['url']}\n\n"
     
-    # Add datetime extraction info if applicable (NEW - EXTRA)
     extracted_date = extract_datetime(message)
     if extracted_date:
         response += f"\n📅 *Detected date/time: {extracted_date}*\n"
     
-    # Add session memory info (NEW - EXTRA)
     memory = get_session_memory(session_id)
     if memory['user_name']:
         response += f"\n💭 *I remember you're {memory['user_name']}!*\n"
     
-    # Add keyword weight score (NEW - EXTRA)
     intent_score = calculate_intent_weight(message)
     if intent_score > 15:
         response += f"\n🎯 *High intent detected (score: {intent_score})*\n"
     
     return response
 
-# ============ HISTORY (UNCHANGED) ============
+# ============ HISTORY ============
 HISTORY_FILE = "history.json"
 
 def load_history():
@@ -324,7 +320,7 @@ def save_history(history):
     with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-# ============ COMPLETE UI (YOUR EXACT HTML - UNCHANGED) ============
+# ============ COMPLETE UI WITH DARK MODE ============
 HTML = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -346,6 +342,136 @@ HTML = '''
         body {
             font-family: 'Inter', sans-serif;
             background: #f5f0e8;
+            transition: all 0.3s ease;
+        }
+        
+        /* Dark Mode Styles */
+        body.dark {
+            background: #1a1a2e;
+        }
+        
+        body.dark .app {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        }
+        
+        body.dark .header {
+            background: rgba(26,26,46,0.95);
+            border-bottom-color: #2a2a4e;
+        }
+        
+        body.dark .logo h1 {
+            color: #d4c5a9;
+        }
+        
+        body.dark .input-wrapper {
+            background: #2a2a4e;
+            border-color: #3a3a5e;
+        }
+        
+        body.dark textarea {
+            color: #e0e0e0;
+        }
+        
+        body.dark textarea::placeholder {
+            color: #6a5a7a;
+        }
+        
+        body.dark .message-content {
+            color: #e0e0e0;
+        }
+        
+        body.dark .ai-message .message-content {
+            background: #2a2a4e !important;
+            color: #e0e0e0 !important;
+        }
+        
+        body.dark .suggestion {
+            background: #2a2a4e;
+            border-color: #3a3a5e;
+            color: #e0e0e0;
+        }
+        
+        body.dark .suggestion:hover {
+            background: #3a3a5e;
+            color: white;
+        }
+        
+        body.dark .welcome h2 {
+            color: #d4c5a9;
+        }
+        
+        body.dark .welcome p {
+            color: #8a7a6a;
+        }
+        
+        body.dark .sidebar {
+            background: #0f0f23;
+            border-right-color: #2a2a4e;
+        }
+        
+        body.dark .sidebar-header {
+            background: #0a0a1a;
+        }
+        
+        body.dark .history-question {
+            color: #d4c5a9;
+        }
+        
+        body.dark .history-time {
+            color: #6a5a7a;
+        }
+        
+        body.dark .history-item:hover {
+            background: rgba(212,197,169,0.08);
+            border-color: #3a3a5e;
+        }
+        
+        body.dark .clear-history {
+            color: #d4c5a9;
+            border-color: #3a3a5e;
+        }
+        
+        body.dark .clear-history:hover {
+            background: rgba(212,197,169,0.2);
+            border-color: #c4a57b;
+        }
+        
+        body.dark .new-chat-btn {
+            background: #3a3a5e;
+            color: #d4c5a9;
+        }
+        
+        body.dark .new-chat-btn:hover {
+            background: #4a4a6e;
+        }
+        
+        body.dark .typing span {
+            background: #d4c5a9;
+        }
+        
+        body.dark .typing {
+            color: #d4c5a9;
+        }
+        
+        body.dark a {
+            color: #4ecdc4;
+        }
+        
+        body.dark .message-content a {
+            color: #4ecdc4;
+        }
+        
+        body.dark .message-content a:hover {
+            color: #6ee7de;
+        }
+        
+        body.dark .control-btn {
+            color: #d4c5a9;
+        }
+        
+        body.dark .control-btn:hover {
+            background: #3a3a5e;
+            color: white;
         }
         
         .app {
@@ -354,6 +480,8 @@ HTML = '''
             width: 100%;
             position: relative;
             overflow: hidden;
+            transition: all 0.3s ease;
+            background: linear-gradient(135deg, #f5f0e8 0%, #e8e0d5 100%);
         }
         
         .sidebar {
@@ -524,6 +652,21 @@ HTML = '''
             display: none;
         }
         
+        .control-btn {
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            padding: 8px 12px;
+            border-radius: 20px;
+            color: #6a5a4a;
+            transition: all 0.2s;
+        }
+        
+        .control-btn:hover {
+            background: #d4c5a9;
+        }
+        
         .messages {
             flex: 1;
             overflow-y: auto;
@@ -603,9 +746,9 @@ HTML = '''
             gap: 12px;
             background: white;
             border-radius: 30px;
-            padding: 0 8px 0 20px;
+            padding: 8px 8px 8px 20px;
             border: 1px solid #d4c5a9;
-            min-height: 60px;
+            min-height: 56px;
             height: auto;
         }
         
@@ -617,11 +760,12 @@ HTML = '''
             font-size: 1rem;
             resize: none;
             outline: none;
-            padding: 16px 0;
+            padding: 12px 0;
             font-family: inherit;
-            width: calc(100% - 90px);
-            min-height: 56px;
+            width: 100%;
+            min-height: 40px;
             max-height: 120px;
+            overflow-y: auto;
         }
         
         textarea::placeholder { color: #b8a88a; font-size: 0.95rem; }
@@ -630,18 +774,22 @@ HTML = '''
             background: #2c2418;
             border: none;
             border-radius: 28px;
-            padding: 12px 24px;
+            padding: 10px 24px;
             color: #f5f0e8;
             font-weight: 500;
             cursor: pointer;
             font-size: 0.9rem;
             min-width: 70px;
             width: auto;
+            white-space: nowrap;
             transition: all 0.2s;
             flex-shrink: 0;
         }
         
-        .input-wrapper button:hover { background: #4a3f2f; transform: scale(1.02); }
+        .input-wrapper button:hover {
+            background: #4a3f2f;
+            transform: scale(1.02);
+        }
         
         .welcome {
             display: flex;
@@ -710,22 +858,24 @@ HTML = '''
             .logo-icon { font-size: 1.4rem; }
             .messages { padding: 12px; }
             .input-area { padding: 10px 12px 16px; }
-            .input-wrapper { border-radius: 28px; padding: 0 6px 0 16px; min-height: 56px; }
-            textarea { font-size: 0.9rem; padding: 14px 0; min-height: 52px; width: calc(100% - 80px); }
-            .input-wrapper button { padding: 10px 18px; min-width: 65px; font-size: 0.85rem; border-radius: 25px; }
+            .input-wrapper { border-radius: 28px; padding: 6px 6px 6px 16px; min-height: 48px; }
+            textarea { font-size: 0.9rem; padding: 10px 0; min-height: 36px; max-height: 100px; }
+            .input-wrapper button { padding: 8px 18px; min-width: 60px; font-size: 0.85rem; }
+            .control-btn { font-size: 1rem; padding: 6px 10px; }
         }
         
         @media (min-width: 769px) {
-            .input-wrapper { border-radius: 32px; padding: 0 10px 0 22px; min-height: 64px; }
-            textarea { font-size: 1rem; padding: 18px 0; min-height: 60px; width: calc(100% - 90px); }
-            .input-wrapper button { padding: 14px 28px; min-width: 80px; font-size: 1rem; border-radius: 30px; }
+            .input-wrapper { border-radius: 32px; padding: 10px 10px 10px 24px; min-height: 64px; }
+            textarea { font-size: 1rem; padding: 14px 0; min-height: 44px; max-height: 140px; }
+            .input-wrapper button { padding: 12px 28px; min-width: 80px; font-size: 1rem; }
         }
         
         @media (max-width: 480px) {
             .input-area { padding: 8px 10px 12px; }
-            .input-wrapper { gap: 8px; border-radius: 26px; min-height: 52px; }
-            textarea { font-size: 0.85rem; padding: 12px 0; min-height: 48px; width: calc(100% - 75px); }
-            .input-wrapper button { padding: 8px 14px; min-width: 60px; font-size: 0.8rem; border-radius: 24px; }
+            .input-wrapper { gap: 8px; border-radius: 26px; padding: 5px 5px 5px 14px; min-height: 44px; }
+            textarea { font-size: 0.85rem; padding: 8px 0; min-height: 32px; max-height: 80px; }
+            .input-wrapper button { padding: 7px 14px; min-width: 55px; font-size: 0.8rem; }
+            .control-btn { font-size: 0.9rem; padding: 5px 8px; }
         }
     </style>
 </head>
@@ -754,6 +904,8 @@ HTML = '''
                     <h1>YAMA</h1>
                 </div>
                 <button class="new-chat-mobile" onclick="newChat()">➕</button>
+                <button class="control-btn" onclick="toggleTheme()" title="Dark/Light Mode">🌓</button>
+                <button class="control-btn" onclick="exportChat()" title="Export Chat">📥</button>
             </div>
             
             <div class="messages" id="messages">
@@ -786,6 +938,34 @@ HTML = '''
     <script>
         let sessionId = 'session_' + Date.now();
         let hasMessages = false;
+        
+        // Dark/Light Mode Toggle
+        function toggleTheme() {
+            document.body.classList.toggle('dark');
+            localStorage.setItem('theme', document.body.classList.contains('dark') ? 'dark' : 'light');
+        }
+        
+        // Export chat function
+        function exportChat() {
+            const messages = document.querySelectorAll('.message');
+            let exportText = '';
+            messages.forEach(msg => {
+                const sender = msg.classList.contains('user-message') ? 'You' : 'Yama';
+                const text = msg.querySelector('.message-content').innerText;
+                exportText += `${sender}: ${text}\\n\\n`;
+            });
+            const blob = new Blob([exportText], {type: 'text/plain'});
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `yama_chat_${new Date().toISOString()}.txt`;
+            a.click();
+        }
+        
+        // Load saved theme
+        const savedTheme = localStorage.getItem('theme');
+        if (savedTheme === 'dark') {
+            document.body.classList.add('dark');
+        }
         
         function newChat() {
             if (confirm('Start a new chat?')) { location.reload(); }
@@ -950,12 +1130,13 @@ if __name__ == "__main__":
     print("📜 Chat History with ☰ menu")
     print("➕ New Chat Button")
     print("📱 Mobile Optimized")
-    print("✨ NEW: URL Shortener & QR Code")
-    print("✨ NEW: User Leveling System")
-    print("✨ NEW: Session Memory")
-    print("✨ NEW: Fuzzy Matching")
-    print("✨ NEW: Keyword Weighting")
-    print("✨ NEW: Date/Time Extraction")
-    print("✨ NEW: Weather API")
+    print("🌓 Dark/Light Mode Added!")
+    print("✨ URL Shortener & QR Code")
+    print("✨ User Leveling System")
+    print("✨ Session Memory")
+    print("✨ Fuzzy Matching")
+    print("✨ Keyword Weighting")
+    print("✨ Date/Time Extraction")
+    print("✨ Weather API")
     print("="*55 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=10000)
