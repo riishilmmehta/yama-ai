@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, UploadFile, File, Form
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 import uvicorn
 import json
@@ -16,95 +16,16 @@ import requests
 from thefuzz import fuzz, process
 import dateparser
 from tinydb import TinyDB, Query
-import PyPDF2
-from textblob import TextBlob
-import networkx as nx
-from bs4 import BeautifulSoup
-from urllib.parse import quote, urljoin, urlparse
 
 app = FastAPI(title="Yama AI")
 
-# ============ NEW ADDED FEATURES ============
+# ============ FEATURES SETUP ============
 
-# Knowledge Graph (NEW)
-knowledge_graph = nx.Graph()
-
-# Add some basic relationships
-knowledge_graph.add_edge("Python", "Programming", relation="is a")
-knowledge_graph.add_edge("AI", "Machine Learning", relation="includes")
-knowledge_graph.add_edge("Yama", "AI Assistant", relation="is a")
-knowledge_graph.add_edge("Google", "Search Engine", relation="is a")
-knowledge_graph.add_edge("FastAPI", "Web Framework", relation="is a")
-
-def find_related_concepts(topic):
-    """Find related concepts from knowledge graph"""
-    if topic in knowledge_graph:
-        return list(knowledge_graph.neighbors(topic))
-    return []
-
-# Full Webpage Reader (NEW)
-def read_full_webpage(url):
-    """Read and extract full content from a webpage"""
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        response = requests.get(url, headers=headers, timeout=15)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Remove unwanted elements
-        for tag in soup(['script', 'style', 'nav', 'footer', 'header', 'aside']):
-            tag.decompose()
-        
-        content = []
-        article = soup.find('article')
-        if article:
-            content.append(article.get_text())
-        else:
-            for p in soup.find_all('p'):
-                text = p.get_text(strip=True)
-                if len(text) > 50:
-                    content.append(text)
-        
-        full_text = ' '.join(content[:30])
-        return full_text[:2000]
-    except:
-        return None
-
-# PDF Text Extraction (NEW)
-def extract_pdf_text(file_content):
-    """Extract text from PDF file"""
-    try:
-        pdf_reader = PyPDF2.PdfReader(BytesIO(file_content))
-        text = ""
-        for page in pdf_reader.pages[:10]:
-            text += page.extract_text() or ""
-        return text[:3000]
-    except:
-        return None
-
-# Sentiment Analysis (NEW)
-def analyze_sentiment(text):
-    """Detect user sentiment using TextBlob"""
-    blob = TextBlob(text)
-    polarity = blob.sentiment.polarity
-    
-    if polarity > 0.3:
-        return "positive", "😊 I can see you're happy!"
-    elif polarity > 0:
-        return "slightly_positive", "🙂 You seem positive!"
-    elif polarity < -0.3:
-        return "negative", "😔 I notice you're feeling down. I'm here to help!"
-    elif polarity < 0:
-        return "slightly_negative", "😕 You seem a bit frustrated."
-    else:
-        return "neutral", "😐 I understand."
-
-# ============ EXISTING FEATURES (UNCHANGED) ============
-
-# User Leveling System
+# User Leveling System with TinyDB
 user_db = TinyDB('user_stats.json')
 User = Query()
 
-# Session memory
+# Session memory for conversations
 session_memory = {}
 
 # Synonym mapping
@@ -115,7 +36,7 @@ synonyms = {
     "thanks": ["thank you", "thx", "thank u", "appreciate it"]
 }
 
-# Keyword weights
+# Keyword weights for intent detection
 keyword_weights = {
     "weather": 10,
     "temperature": 10,
@@ -127,8 +48,10 @@ keyword_weights = {
     "news": 9
 }
 
-# URL Shortener & QR Code
+# ============ URL SHORTENER & QR CODE ============
+
 def shorten_url(long_url):
+    """Shorten URL using free tinyurl API"""
     try:
         response = requests.get(f"https://tinyurl.com/api-create.php?url={long_url}")
         if response.status_code == 200:
@@ -138,6 +61,7 @@ def shorten_url(long_url):
     return long_url
 
 def generate_qr_code(data):
+    """Generate QR code image as base64"""
     try:
         qr = qrcode.QRCode(version=1, box_size=10, border=4)
         qr.add_data(data)
@@ -150,8 +74,10 @@ def generate_qr_code(data):
     except:
         return None
 
-# User Leveling Functions
+# ============ USER LEVELING SYSTEM ============
+
 def get_user_level(user_id):
+    """Get or create user stats"""
     user = user_db.get(User.user_id == user_id)
     if not user:
         user_db.insert({
@@ -166,6 +92,7 @@ def get_user_level(user_id):
     return user
 
 def update_user_stats(user_id):
+    """Update message count and level"""
     user = get_user_level(user_id)
     new_count = user.get("message_count", 0) + 1
     new_level = 1 + (new_count // 50)
@@ -190,7 +117,10 @@ def update_user_stats(user_id):
     
     return {"count": new_count, "level": new_level, "title": new_title}
 
+# ============ SESSION MEMORY ============
+
 def get_session_memory(session_id):
+    """Get or create session memory"""
     if session_id not in session_memory:
         session_memory[session_id] = {
             "user_name": None,
@@ -201,24 +131,32 @@ def get_session_memory(session_id):
     return session_memory[session_id]
 
 def update_session_memory(session_id, key, value):
+    """Update session memory"""
     memory = get_session_memory(session_id)
     memory[key] = value
     session_memory[session_id] = memory
 
+# ============ FUZZY MATCHING & KEYWORD WEIGHTING ============
+
 def fuzzy_match(user_input, target_list, threshold=80):
+    """Check if user input matches any target using fuzzy matching"""
     for target in target_list:
         if fuzz.ratio(user_input.lower(), target.lower()) >= threshold:
             return True
     return False
 
 def calculate_intent_weight(message):
+    """Calculate intent score based on keyword weights"""
     score = 0
     for keyword, weight in keyword_weights.items():
         if keyword in message.lower():
             score += weight
     return score
 
+# ============ DATE/TIME EXTRACTION ============
+
 def extract_datetime(text):
+    """Extract date and time from natural language"""
     try:
         parsed = dateparser.parse(text, settings={'PREFER_DATES_FROM': 'future'})
         if parsed:
@@ -227,7 +165,10 @@ def extract_datetime(text):
         pass
     return None
 
+# ============ TEXT ANALYSIS ============
+
 def analyze_text(text):
+    """Simple text analysis without spaCy"""
     sentences = text.split('.')
     keywords = [w for w in text.lower().split() if len(w) > 3][:5]
     return {
@@ -236,8 +177,10 @@ def analyze_text(text):
         "is_question": text.strip().endswith("?")
     }
 
-# DDGS Search (WORKING)
+# ============ DDGS SEARCH ============
+
 def search_web(query):
+    """Search using DDGS (DuckDuckGo Search) - WORKS ON RENDER"""
     results = []
     try:
         with DDGS() as ddgs:
@@ -252,8 +195,10 @@ def search_web(query):
         print(f"Search error: {e}")
     return results
 
-# Weather API
+# ============ WEATHER API ============
+
 def get_weather(city):
+    """Get weather using free wttr.in API"""
     try:
         response = requests.get(f"https://wttr.in/{city}?format=%C+%t")
         if response.status_code == 200:
@@ -262,27 +207,23 @@ def get_weather(city):
         pass
     return None
 
-# ============ MAIN RESPONSE WITH NEW FEATURES ADDED ============
+# ============ MAIN RESPONSE ============
 
 def get_response(message, session_id="default"):
     msg = message.strip().lower()
-    
-    # Sentiment Analysis (NEW - ADDED)
-    sentiment, sentiment_msg = analyze_sentiment(message)
     
     # Update user stats
     stats = update_user_stats(session_id)
     
     # Update session memory
     update_session_memory(session_id, "last_topic", msg)
-    update_session_memory(session_id, "last_sentiment", sentiment)
     
     # Check for name memory
     name_match = re.search(r'my name is (\w+)|i am (\w+)|call me (\w+)', msg)
     if name_match:
         name = name_match.group(1) or name_match.group(2) or name_match.group(3)
         update_session_memory(session_id, "user_name", name)
-        return f"{sentiment_msg}\n\n✨ Nice to meet you, {name}! I'll remember that. (You're a {stats['title']} with {stats['count']} messages!)"
+        return f"✨ Nice to meet you, {name}! I'll remember that. (You're a {stats['title']} with {stats['count']} messages!)"
     
     # Check for URL shortening request
     if 'shorten' in msg and ('http' in msg or 'https' in msg):
@@ -316,50 +257,35 @@ def get_response(message, session_id="default"):
             elif op == '/': result = a / b
             if isinstance(result, float) and result.is_integer():
                 result = int(result)
-            return f"{sentiment_msg}\n\n🧮 {a} {op} {b} = {result}\n\n✨ Great math, {stats['title']}!"
+            user_level = stats['title']
+            return f"🧮 {a} {op} {b} = {result}\n\n✨ Great math, {user_level}! {stats['count']} messages so far!"
         except:
             pass
     
-    # Greetings
+    # Greetings with fuzzy matching
     greetings_list = ["hi", "hello", "hey", "sup", "yo", "hii", "heyy"]
     if fuzzy_match(msg, greetings_list) or msg in synonyms.get("hi", []):
         memory = get_session_memory(session_id)
         name_part = f", {memory['user_name']}" if memory['user_name'] else ""
-        return f"{sentiment_msg}\n\n👋 Hello{name_part}! I'm Yama. You're a **{stats['title']}** with {stats['count']} messages!"
+        return f"👋 Hello{name_part}! I'm Yama. You're a **{stats['title']}** with {stats['count']} messages! How can I help you today?"
     
     if 'how are you' in msg or fuzzy_match(msg, ["how are you", "how r u", "how're you"]):
-        return f"{sentiment_msg}\n\n😊 I'm doing great! Thanks for asking! (You're a {stats['title']})"
+        return f"😊 I'm doing great! Thanks for asking! (You're a {stats['title']} with {stats['count']} messages!)"
     
+    # Thank you response
     if 'thank' in msg or fuzzy_match(msg, ["thanks", "thank you", "thx"]):
-        return f"{sentiment_msg}\n\n✨ You're very welcome! Happy to help a {stats['title']} like you!"
+        return f"✨ You're very welcome! Happy to help a {stats['title']} like you! 😊"
     
-    # Check knowledge graph for related concepts (NEW - ADDED)
-    related = find_related_concepts(msg)
-    related_text = ""
-    if related:
-        related_text = f"\n\n🔗 **Related topics:** {', '.join(related[:3])}\n"
+    # Analyze text
+    analysis = analyze_text(message)
     
-    # Try full webpage reading first (NEW - ADDED)
+    # Search using DDGS
     search_results = search_web(message)
     
-    if search_results:
-        # Try to read first result fully
-        full_content = read_full_webpage(search_results[0]['url'])
-        
-        if full_content:
-            response = f"{sentiment_msg}\n\n**🔍 Deep Search Result for: {message}**\n\n"
-            response += f"📊 **Your Stats:** Level {stats['level']} - {stats['title']}\n\n"
-            response += f"**{search_results[0]['title']}**\n"
-            response += f"{full_content}\n"
-            response += f"🔗 {search_results[0]['url']}\n\n"
-            response += related_text
-            return response
-    
-    # Regular search results
     if not search_results:
-        return f"{sentiment_msg}\n\nI searched for '{message}' but found no results."
+        return f"I searched for '{message}' but found no results. Please try a different question."
     
-    response = f"{sentiment_msg}\n\n**🔍 Search results for: {message}**\n\n"
+    response = f"**🔍 Search results for: {message}**\n\n"
     response += f"📊 **Your Stats:** Level {stats['level']} - {stats['title']} ({stats['count']} messages)\n\n"
     
     for i, r in enumerate(search_results[:7], 1):
@@ -367,36 +293,21 @@ def get_response(message, session_id="default"):
         response += f"{r['snippet']}\n"
         response += f"🔗 {r['url']}\n\n"
     
-    response += related_text
-    
-    # Add extracted date if found
     extracted_date = extract_datetime(message)
     if extracted_date:
         response += f"\n📅 *Detected date/time: {extracted_date}*\n"
     
-    # Add session memory info
     memory = get_session_memory(session_id)
     if memory['user_name']:
         response += f"\n💭 *I remember you're {memory['user_name']}!*\n"
     
+    intent_score = calculate_intent_weight(message)
+    if intent_score > 15:
+        response += f"\n🎯 *High intent detected (score: {intent_score})*\n"
+    
     return response
 
-# ============ FILE UPLOAD ENDPOINT (NEW - ADDED) ============
-
-@app.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
-    content = await file.read()
-    filename = file.filename
-    
-    text = ""
-    if filename.endswith('.pdf'):
-        text = extract_pdf_text(content)
-        if text:
-            return {"response": f"📄 **PDF Content Extracted:**\n\n{text[:1000]}...\n\nYou can now ask questions about this PDF!"}
-    
-    return {"response": f"📎 File uploaded: {filename}\n\nFile ready for processing!"}
-
-# ============ HISTORY (UNCHANGED) ============
+# ============ HISTORY ============
 HISTORY_FILE = "history.json"
 
 def load_history():
@@ -409,8 +320,773 @@ def save_history(history):
     with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-# ============ COMPLETE UI (YOUR EXACT HTML - UNCHANGED) ============
-# [YOUR EXISTING HTML CODE GOES HERE - EXACTLY AS YOU HAVE IT]
+# ============ COMPLETE UI WITH DARK MODE ============
+HTML = '''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
+    <title>Yama - AI Assistant</title>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        
+        html, body {
+            height: 100%;
+            overflow: hidden;
+            position: fixed;
+            width: 100%;
+        }
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #f5f0e8;
+            transition: all 0.3s ease;
+        }
+        
+        /* Dark Mode Styles */
+        body.dark {
+            background: #1a1a2e;
+        }
+        
+        body.dark .app {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        }
+        
+        body.dark .header {
+            background: rgba(26,26,46,0.95);
+            border-bottom-color: #2a2a4e;
+        }
+        
+        body.dark .logo h1 {
+            color: #d4c5a9;
+        }
+        
+        body.dark .input-wrapper {
+            background: #2a2a4e;
+            border-color: #3a3a5e;
+        }
+        
+        body.dark textarea {
+            color: #e0e0e0;
+        }
+        
+        body.dark textarea::placeholder {
+            color: #6a5a7a;
+        }
+        
+        body.dark .message-content {
+            color: #e0e0e0;
+        }
+        
+        body.dark .ai-message .message-content {
+            background: #2a2a4e !important;
+            color: #e0e0e0 !important;
+        }
+        
+        body.dark .suggestion {
+            background: #2a2a4e;
+            border-color: #3a3a5e;
+            color: #e0e0e0;
+        }
+        
+        body.dark .suggestion:hover {
+            background: #3a3a5e;
+            color: white;
+        }
+        
+        body.dark .welcome h2 {
+            color: #d4c5a9;
+        }
+        
+        body.dark .welcome p {
+            color: #8a7a6a;
+        }
+        
+        body.dark .sidebar {
+            background: #0f0f23;
+            border-right-color: #2a2a4e;
+        }
+        
+        body.dark .sidebar-header {
+            background: #0a0a1a;
+        }
+        
+        body.dark .history-question {
+            color: #d4c5a9;
+        }
+        
+        body.dark .history-time {
+            color: #6a5a7a;
+        }
+        
+        body.dark .history-item:hover {
+            background: rgba(212,197,169,0.08);
+            border-color: #3a3a5e;
+        }
+        
+        body.dark .clear-history {
+            color: #d4c5a9;
+            border-color: #3a3a5e;
+        }
+        
+        body.dark .clear-history:hover {
+            background: rgba(212,197,169,0.2);
+            border-color: #c4a57b;
+        }
+        
+        body.dark .new-chat-btn {
+            background: #3a3a5e;
+            color: #d4c5a9;
+        }
+        
+        body.dark .new-chat-btn:hover {
+            background: #4a4a6e;
+        }
+        
+        body.dark .typing span {
+            background: #d4c5a9;
+        }
+        
+        body.dark .typing {
+            color: #d4c5a9;
+        }
+        
+        body.dark a {
+            color: #4ecdc4;
+        }
+        
+        body.dark .message-content a {
+            color: #4ecdc4;
+        }
+        
+        body.dark .message-content a:hover {
+            color: #6ee7de;
+        }
+        
+        body.dark .control-btn {
+            color: #d4c5a9;
+        }
+        
+        body.dark .control-btn:hover {
+            background: #3a3a5e;
+            color: white;
+        }
+        
+        .app {
+            display: flex;
+            height: 100%;
+            width: 100%;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s ease;
+            background: linear-gradient(135deg, #f5f0e8 0%, #e8e0d5 100%);
+        }
+        
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 280px;
+            background: #2c2418;
+            border-right: 1px solid #4a3f2f;
+            display: flex;
+            flex-direction: column;
+            transform: translateX(-100%);
+            transition: transform 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            z-index: 1000;
+            box-shadow: 4px 0 20px rgba(0,0,0,0.1);
+        }
+        
+        .sidebar.open { transform: translateX(0); }
+        
+        .sidebar-header {
+            padding: 20px;
+            border-bottom: 1px solid #4a3f2f;
+            background: #1f1912;
+            flex-shrink: 0;
+        }
+        
+        .sidebar-header h3 {
+            color: #d4c5a9;
+            font-family: 'Playfair Display', serif;
+            font-size: 1rem;
+        }
+        
+        .history-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+            -webkit-overflow-scrolling: touch;
+        }
+        
+        .history-item {
+            padding: 10px;
+            margin-bottom: 6px;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 1px solid transparent;
+        }
+        
+        .history-item:hover {
+            background: rgba(212,197,169,0.08);
+            border-color: #4a3f2f;
+        }
+        
+        .history-question {
+            font-size: 0.8rem;
+            color: #d4c5a9;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        .history-time {
+            font-size: 0.6rem;
+            color: #6a5a4a;
+            margin-top: 4px;
+        }
+        
+        .sidebar-footer {
+            padding: 16px;
+            border-top: 1px solid #4a3f2f;
+            background: #1f1912;
+            flex-shrink: 0;
+        }
+        
+        .new-chat-btn {
+            background: #4a3f2f;
+            border: none;
+            border-radius: 25px;
+            padding: 12px 16px;
+            color: #d4c5a9;
+            cursor: pointer;
+            width: 100%;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            transition: all 0.2s;
+        }
+        
+        .new-chat-btn:hover { background: #5a4f3f; }
+        
+        .clear-history {
+            background: rgba(212,197,169,0.1);
+            border: 1px solid #4a3f2f;
+            border-radius: 20px;
+            padding: 8px 16px;
+            color: #d4c5a9;
+            cursor: pointer;
+            font-size: 0.7rem;
+            margin-top: 10px;
+            width: 100%;
+        }
+        
+        .overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.4);
+            display: none;
+            z-index: 999;
+        }
+        
+        .overlay.show { display: block; }
+        
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            overflow: hidden;
+            height: 100%;
+        }
+        
+        .header {
+            padding: 12px 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border-bottom: 1px solid #d4c5a9;
+            background: rgba(245,240,232,0.95);
+            flex-shrink: 0;
+        }
+        
+        .menu-btn {
+            background: none;
+            border: none;
+            font-size: 1.3rem;
+            cursor: pointer;
+            color: #6a5a4a;
+            padding: 8px;
+            border-radius: 10px;
+        }
+        
+        .menu-btn:hover { background: #d4c5a9; color: #2c2418; }
+        
+        .logo {
+            flex: 1;
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+        }
+        
+        .logo-icon { font-size: 1.8rem; }
+        .logo h1 { font-family: 'Playfair Display', serif; font-size: 1.3rem; color: #2c2418; }
+        
+        .new-chat-mobile {
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 10px;
+            color: #6a5a4a;
+            display: none;
+        }
+        
+        .control-btn {
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            padding: 8px 12px;
+            border-radius: 20px;
+            color: #6a5a4a;
+            transition: all 0.2s;
+        }
+        
+        .control-btn:hover {
+            background: #d4c5a9;
+        }
+        
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            -webkit-overflow-scrolling: touch;
+            scroll-behavior: smooth;
+            min-height: 0;
+        }
+        
+        .message { margin-bottom: 20px; animation: fadeIn 0.3s ease; }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .user-message { text-align: right; }
+        .ai-message { text-align: left; }
+        
+        .message-content {
+            display: inline-block;
+            max-width: 85%;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            color: #2c2418;
+            background: transparent !important;
+            padding: 0 !important;
+        }
+        
+        .user-message .message-content {
+            background: #2c2418 !important;
+            color: white !important;
+            padding: 10px 16px !important;
+            border-radius: 20px !important;
+        }
+        
+        .ai-message .message-content {
+            background: white !important;
+            color: #2c2418 !important;
+            padding: 12px 18px !important;
+            border-radius: 20px !important;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }
+        
+        .typing {
+            display: none;
+            padding: 10px 16px;
+            gap: 5px;
+            color: #888;
+            font-size: 0.8rem;
+            flex-shrink: 0;
+        }
+        
+        .typing span {
+            width: 6px;
+            height: 6px;
+            background: #c4a57b;
+            border-radius: 50%;
+            display: inline-block;
+            animation: bounce 1.4s infinite;
+        }
+        
+        @keyframes bounce {
+            0%, 60%, 100% { transform: translateY(0); }
+            30% { transform: translateY(-6px); }
+        }
+        
+        .input-area {
+            padding: 12px 16px 20px;
+            background: linear-gradient(to top, #f5f0e8, transparent);
+            flex-shrink: 0;
+        }
+        
+        .input-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: white;
+            border-radius: 30px;
+            padding: 8px 8px 8px 20px;
+            border: 1px solid #d4c5a9;
+            min-height: 56px;
+            height: auto;
+        }
+        
+        textarea {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: #2c2418;
+            font-size: 1rem;
+            resize: none;
+            outline: none;
+            padding: 12px 0;
+            font-family: inherit;
+            width: 100%;
+            min-height: 40px;
+            max-height: 120px;
+            overflow-y: auto;
+        }
+        
+        textarea::placeholder { color: #b8a88a; font-size: 0.95rem; }
+        
+        .input-wrapper button {
+            background: #2c2418;
+            border: none;
+            border-radius: 28px;
+            padding: 10px 24px;
+            color: #f5f0e8;
+            font-weight: 500;
+            cursor: pointer;
+            font-size: 0.9rem;
+            min-width: 70px;
+            width: auto;
+            white-space: nowrap;
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+        
+        .input-wrapper button:hover {
+            background: #4a3f2f;
+            transform: scale(1.02);
+        }
+        
+        .welcome {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 50vh;
+            text-align: center;
+        }
+        
+        .welcome-icon {
+            font-size: 3rem;
+            margin-bottom: 15px;
+            animation: float 3s ease-in-out infinite;
+        }
+        
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-8px); }
+        }
+        
+        .welcome h2 {
+            font-family: 'Playfair Display', serif;
+            font-size: 2rem;
+            color: #2c2418;
+            margin-bottom: 8px;
+        }
+        
+        .welcome p {
+            color: #6a5a4a;
+            font-size: 0.85rem;
+            margin-bottom: 20px;
+        }
+        
+        .suggestions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            justify-content: center;
+            margin-top: 15px;
+        }
+        
+        .suggestion {
+            background: white;
+            border: 1px solid #d4c5a9;
+            border-radius: 30px;
+            padding: 6px 14px;
+            font-size: 0.75rem;
+            color: #2c2418;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .suggestion:hover {
+            background: #2c2418;
+            color: white;
+            border-color: #2c2418;
+        }
+        
+        @media (max-width: 768px) {
+            .message-content { max-width: 90%; font-size: 0.85rem; }
+            .suggestions { display: none; }
+            .new-chat-mobile { display: block; }
+            .header { padding: 10px 12px; }
+            .logo h1 { font-size: 1.1rem; }
+            .logo-icon { font-size: 1.4rem; }
+            .messages { padding: 12px; }
+            .input-area { padding: 10px 12px 16px; }
+            .input-wrapper { border-radius: 28px; padding: 6px 6px 6px 16px; min-height: 48px; }
+            textarea { font-size: 0.9rem; padding: 10px 0; min-height: 36px; max-height: 100px; }
+            .input-wrapper button { padding: 8px 18px; min-width: 60px; font-size: 0.85rem; }
+            .control-btn { font-size: 1rem; padding: 6px 10px; }
+        }
+        
+        @media (min-width: 769px) {
+            .input-wrapper { border-radius: 32px; padding: 10px 10px 10px 24px; min-height: 64px; }
+            textarea { font-size: 1rem; padding: 14px 0; min-height: 44px; max-height: 140px; }
+            .input-wrapper button { padding: 12px 28px; min-width: 80px; font-size: 1rem; }
+        }
+        
+        @media (max-width: 480px) {
+            .input-area { padding: 8px 10px 12px; }
+            .input-wrapper { gap: 8px; border-radius: 26px; padding: 5px 5px 5px 14px; min-height: 44px; }
+            textarea { font-size: 0.85rem; padding: 8px 0; min-height: 32px; max-height: 80px; }
+            .input-wrapper button { padding: 7px 14px; min-width: 55px; font-size: 0.8rem; }
+            .control-btn { font-size: 0.9rem; padding: 5px 8px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <div class="overlay" id="overlay" onclick="closeSidebar()"></div>
+        
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <h3>📜 CONVERSATIONS</h3>
+            </div>
+            <div class="history-list" id="historyList">
+                <div style="color: #6a5a4a; text-align: center; padding: 20px;">No conversations yet</div>
+            </div>
+            <div class="sidebar-footer">
+                <button class="new-chat-btn" onclick="newChat()">➕ New Chat</button>
+                <button class="clear-history" onclick="clearHistory()">Clear all history</button>
+            </div>
+        </div>
+        
+        <div class="main">
+            <div class="header">
+                <button class="menu-btn" onclick="toggleSidebar()">☰</button>
+                <div class="logo" id="logo">
+                    <span class="logo-icon">🏛️</span>
+                    <h1>YAMA</h1>
+                </div>
+                <button class="new-chat-mobile" onclick="newChat()">➕</button>
+                <button class="control-btn" onclick="toggleTheme()" title="Dark/Light Mode">🌓</button>
+                <button class="control-btn" onclick="exportChat()" title="Export Chat">📥</button>
+            </div>
+            
+            <div class="messages" id="messages">
+                <div class="welcome" id="welcome">
+                    <div class="welcome-icon">🏛️</div>
+                    <h2>Yama</h2>
+                    <p>Your AI companion. Ask me anything - I'll search the web!</p>
+                    <div class="suggestions">
+                        <div class="suggestion" onclick="askSuggestion('What is the capital of France?')">🗼 Capital of France</div>
+                        <div class="suggestion" onclick="askSuggestion('Who is Elon Musk?')">🚀 Who is Elon Musk?</div>
+                        <div class="suggestion" onclick="askSuggestion('10000/8')">📐 10000/8</div>
+                        <div class="suggestion" onclick="askSuggestion('Latest news today')">📰 Latest news</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="typing" id="typing">
+                <span></span><span></span><span></span> Yama is thinking...
+            </div>
+            
+            <div class="input-area">
+                <div class="input-wrapper">
+                    <textarea id="userInput" placeholder="Ask Yama anything..." rows="1" onkeypress="handleKey(event)"></textarea>
+                    <button onclick="sendMessage()">Send</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let sessionId = 'session_' + Date.now();
+        let hasMessages = false;
+        
+        // Dark/Light Mode Toggle
+        function toggleTheme() {
+            document.body.classList.toggle('dark');
+            localStorage.setItem('theme', document.body.classList.contains('dark') ? 'dark' : 'light');
+        }
+        
+        // Export chat function
+        function exportChat() {
+            const messages = document.querySelectorAll('.message');
+            let exportText = '';
+            messages.forEach(msg => {
+                const sender = msg.classList.contains('user-message') ? 'You' : 'Yama';
+                const text = msg.querySelector('.message-content').innerText;
+                exportText += `${sender}: ${text}\\n\\n`;
+            });
+            const blob = new Blob([exportText], {type: 'text/plain'});
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `yama_chat_${new Date().toISOString()}.txt`;
+            a.click();
+        }
+        
+        // Load saved theme
+        const savedTheme = localStorage.getItem('theme');
+        if (savedTheme === 'dark') {
+            document.body.classList.add('dark');
+        }
+        
+        function newChat() {
+            if (confirm('Start a new chat?')) { location.reload(); }
+        }
+        
+        function toggleSidebar() {
+            document.getElementById('sidebar').classList.toggle('open');
+            document.getElementById('overlay').classList.toggle('show');
+        }
+        
+        function closeSidebar() {
+            document.getElementById('sidebar').classList.remove('open');
+            document.getElementById('overlay').classList.remove('show');
+        }
+        
+        function askSuggestion(q) {
+            document.getElementById('userInput').value = q;
+            sendMessage();
+        }
+        
+        async function loadHistory() {
+            const res = await fetch('/get_history');
+            const history = await res.json();
+            const container = document.getElementById('historyList');
+            if (history.length === 0) {
+                container.innerHTML = '<div style="color:#6a5a4a;text-align:center;padding:20px;">No conversations yet</div>';
+                return;
+            }
+            container.innerHTML = history.slice().reverse().map(item => `
+                <div class="history-item" onclick="loadChatMessage('${escapeHtml(item.user)}')">
+                    <div class="history-question">${escapeHtml(item.user.substring(0, 45))}</div>
+                    <div class="history-time">${item.timestamp}</div>
+                </div>
+            `).join('');
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        function loadChatMessage(msg) {
+            document.getElementById('userInput').value = msg;
+            closeSidebar();
+            sendMessage();
+        }
+        
+        async function clearHistory() {
+            if (confirm('Clear all history?')) {
+                await fetch('/clear_history', { method: 'POST' });
+                location.reload();
+            }
+        }
+        
+        const textarea = document.getElementById('userInput');
+        textarea.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+        });
+        
+        function handleKey(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        }
+        
+        async function sendMessage() {
+            const message = textarea.value.trim();
+            if (!message) return;
+            
+            if (!hasMessages) {
+                const welcome = document.getElementById('welcome');
+                if (welcome) welcome.style.display = 'none';
+                hasMessages = true;
+            }
+            
+            addMessage(message, 'user');
+            textarea.value = '';
+            textarea.style.height = 'auto';
+            
+            document.getElementById('typing').style.display = 'block';
+            scrollToBottom();
+            
+            const res = await fetch('/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: message, session_id: sessionId })
+            });
+            const data = await res.json();
+            
+            addMessage(data.response, 'ai');
+            document.getElementById('typing').style.display = 'none';
+            loadHistory();
+            scrollToBottom();
+        }
+        
+        function addMessage(text, sender) {
+            const messages = document.getElementById('messages');
+            const div = document.createElement('div');
+            div.className = `message ${sender}-message`;
+            const content = document.createElement('div');
+            content.className = 'message-content';
+            content.innerHTML = text.replace(/\\n/g, '<br>').replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>');
+            div.appendChild(content);
+            messages.appendChild(div);
+            scrollToBottom();
+        }
+        
+        function scrollToBottom() {
+            const messages = document.getElementById('messages');
+            messages.scrollTop = messages.scrollHeight;
+        }
+        
+        loadHistory();
+        textarea.focus();
+    </script>
+</body>
+</html>
+'''
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
@@ -454,12 +1130,13 @@ if __name__ == "__main__":
     print("📜 Chat History with ☰ menu")
     print("➕ New Chat Button")
     print("📱 Mobile Optimized")
-    print("🌓 Dark/Light Mode")
-    print("✨ NEW: Full Webpage Reader")
-    print("✨ NEW: PDF Text Extraction")
-    print("✨ NEW: Sentiment Analysis")
-    print("✨ NEW: Knowledge Graph")
+    print("🌓 Dark/Light Mode Added!")
     print("✨ URL Shortener & QR Code")
     print("✨ User Leveling System")
+    print("✨ Session Memory")
+    print("✨ Fuzzy Matching")
+    print("✨ Keyword Weighting")
+    print("✨ Date/Time Extraction")
+    print("✨ Weather API")
     print("="*55 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=10000)
