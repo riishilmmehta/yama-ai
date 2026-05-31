@@ -8,3 +8,6 @@ pillow
 thefuzz
 dateparser
 tinydb
+PyPDF2
+textblob
+networkx
