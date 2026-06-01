@@ -192,7 +192,7 @@ def save_history(email, history):
 # ============ GOOGLE CLIENT ID ============
 GOOGLE_CLIENT_ID = "46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com"
 
-# ============ COMPLETE HTML ============
+# ============ COMPLETE HTML WITH AUTO-ADJUST INPUT ============
 HTML = f"""
 <!DOCTYPE html>
 <html lang="en">
@@ -576,89 +576,136 @@ HTML = f"""
             flex-shrink: 0;
         }}
         
-        .input-wrapper {{
+        /* Responsive container that handles all screen variations */
+        .chat-input-wrapper {{
             display: flex;
-            align-items: center;
-            gap: clamp(8px, 2vw, 12px);
-            background: white;
-            border-radius: clamp(28px, 5vw, 32px);
-            padding: clamp(6px, 1.5vw, 10px) clamp(6px, 1.5vw, 10px) clamp(6px, 1.5vw, 10px) clamp(16px, 4vw, 24px);
-            border: 1px solid #d4c5a9;
-            min-height: clamp(48px, 8vh, 64px);
-            height: auto;
+            align-items: flex-end;
+            gap: 8px;
             width: 100%;
+            max-width: 800px;
+            padding: 8px 12px;
+            background-color: #ffffff;
+            border: 1px solid #d4c5a9;
+            border-radius: 24px;
+            box-sizing: border-box;
+            margin: 0 auto;
         }}
         
-        body.dark .input-wrapper {{
-            background: #2a2a4e;
+        body.dark .chat-input-wrapper {{
+            background-color: #2a2a4e;
             border-color: #3a3a5e;
         }}
         
-        textarea {{
+        /* Flex-grow input field */
+        .chat-input-field {{
             flex: 1;
-            background: transparent;
+            min-width: 0;
+            min-height: 24px;
+            max-height: 160px;
+            padding: 8px 4px;
+            font-size: 16px;
+            line-height: 1.5;
             border: none;
-            color: #2c2418;
-            font-size: clamp(14px, 4vw, 16px);
-            resize: none;
             outline: none;
-            padding: clamp(8px, 2vw, 12px) 0;
-            font-family: inherit;
-            width: 100%;
-            min-height: clamp(36px, 6vh, 44px);
-            max-height: 120px;
-            overflow-y: auto;
-            line-height: 1.4;
+            resize: none;
+            background: transparent;
+            font-family: 'Inter', sans-serif;
         }}
         
-        /* Prevent zoom on mobile focus */
+        /* Critical: Prevents iOS Safari from forced auto-zooming */
         @media (max-width: 768px) {{
-            textarea {{
+            .chat-input-field {{
                 font-size: 16px !important;
             }}
         }}
         
-        body.dark textarea {{
+        body.dark .chat-input-field {{
             color: #e0e0e0;
         }}
         
-        textarea::placeholder {{
+        .chat-input-field::placeholder {{
             color: #b8a88a;
-            font-size: clamp(12px, 3.5vw, 14px);
         }}
         
-        .input-wrapper button {{
-            background: #2c2418;
-            border: none;
-            border-radius: clamp(25px, 5vw, 28px);
-            padding: clamp(8px, 2vw, 12px) clamp(16px, 4vw, 28px);
-            color: #f5f0e8;
-            font-weight: 500;
-            cursor: pointer;
-            font-size: clamp(12px, 3.5vw, 16px);
-            min-width: clamp(55px, 15vw, 80px);
-            width: auto;
-            white-space: nowrap;
-            transition: all 0.2s;
+        /* Fixed-size touch-friendly button */
+        .chat-submit-btn {{
+            display: flex;
+            align-items: center;
+            justify-content: center;
             flex-shrink: 0;
-            -webkit-tap-highlight-color: transparent;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            border: none;
+            background-color: #2c2418;
+            color: #ffffff;
+            cursor: pointer;
+            transition: all 0.2s;
         }}
         
-        .input-wrapper button:hover {{
-            background: #4a3f2f;
+        .chat-submit-btn:hover {{
+            background-color: #4a3f2f;
             transform: scale(1.02);
         }}
         
-        .input-wrapper button:active {{
+        .chat-submit-btn:active {{
             transform: scale(0.98);
         }}
         
-        body.dark .input-wrapper button {{
-            background: #4a3f2f;
+        body.dark .chat-submit-btn {{
+            background-color: #4a3f2f;
         }}
         
-        body.dark .input-wrapper button:hover {{
-            background: #5a4f3f;
+        body.dark .chat-submit-btn:hover {{
+            background-color: #5a4f3f;
+        }}
+        
+        .send-icon {{
+            width: 20px;
+            height: 20px;
+            fill: currentColor;
+        }}
+        
+        /* Mobile adjustments */
+        @media (max-width: 768px) {{
+            .input-area {{
+                padding: 10px 12px 16px;
+            }}
+            .chat-input-wrapper {{
+                padding: 6px 10px;
+                border-radius: 28px;
+            }}
+            .chat-input-field {{
+                font-size: 16px !important;
+                padding: 6px 2px;
+            }}
+            .chat-submit-btn {{
+                width: 38px;
+                height: 38px;
+            }}
+            .send-icon {{
+                width: 18px;
+                height: 18px;
+            }}
+        }}
+        
+        @media (max-width: 480px) {{
+            .input-area {{
+                padding: 8px 10px 14px;
+            }}
+            .chat-input-wrapper {{
+                padding: 5px 8px;
+                gap: 6px;
+                border-radius: 26px;
+            }}
+            .chat-submit-btn {{
+                width: 34px;
+                height: 34px;
+            }}
+            .send-icon {{
+                width: 16px;
+                height: 16px;
+            }}
         }}
         
         .welcome {{
@@ -730,46 +777,6 @@ HTML = f"""
         body.dark .suggestion:hover {{
             background: #3a3a5e;
             color: white;
-        }}
-        
-        /* Mobile specific adjustments */
-        @media (max-width: 768px) {{
-            .message-content {{ max-width: 90%; font-size: 0.85rem; }}
-            .suggestions {{ display: none; }}
-            .new-chat-mobile {{ display: block; }}
-            .header {{ padding: 10px 12px; }}
-            .logo h1 {{ font-size: 1.1rem; }}
-            .logo-icon {{ font-size: 1.4rem; }}
-            .messages {{ padding: 12px; }}
-            .input-area {{ padding: 10px 12px 16px; }}
-        }}
-        
-        @media (min-width: 769px) and (max-width: 1024px) {{
-            .input-wrapper {{
-                max-width: 90%;
-                margin: 0 auto;
-            }}
-        }}
-        
-        @media (min-width: 1025px) {{
-            .input-wrapper {{
-                max-width: 85%;
-                margin: 0 auto;
-            }}
-        }}
-        
-        @media (max-width: 480px) {{
-            .input-area {{ padding: 8px 10px 14px; }}
-            .input-wrapper {{ gap: 6px; }}
-            .input-wrapper button {{ padding: 6px 12px; min-width: 50px; }}
-            textarea {{ min-height: 32px; }}
-        }}
-        
-        /* iOS specific fixes */
-        @supports (-webkit-touch-callout: none) {{
-            textarea {{
-                font-size: 16px !important;
-            }}
         }}
     </style>
 </head>
@@ -850,9 +857,13 @@ HTML = f"""
             </div>
             
             <div class="input-area">
-                <div class="input-wrapper">
-                    <textarea id="userInput" placeholder="Ask Yama anything..." rows="1" onkeypress="handleKey(event)"></textarea>
-                    <button onclick="sendMessage()">Send</button>
+                <div class="chat-input-wrapper">
+                    <textarea class="chat-input-field" id="userInput" placeholder="Ask Yama anything..." rows="1" onkeypress="handleKey(event)"></textarea>
+                    <button class="chat-submit-btn" onclick="sendMessage()" aria-label="Send message">
+                        <svg class="send-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+                        </svg>
+                    </button>
                 </div>
             </div>
         </div>
@@ -995,17 +1006,17 @@ HTML = f"""
             }}
         }}
         
+        // Auto-adjust height function for textarea
         const textarea = document.getElementById('userInput');
         
-        // Auto-adjust height function
         function autoAdjustHeight() {{
             this.style.height = 'auto';
-            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+            this.style.height = Math.min(this.scrollHeight, 160) + 'px';
         }}
         
         textarea.addEventListener('input', autoAdjustHeight);
         
-        // Fix for mobile focus
+        // Fix for mobile focus - ensures keyboard doesn't break layout
         textarea.addEventListener('focus', function() {{
             setTimeout(() => {{
                 scrollToBottom();
@@ -1127,6 +1138,6 @@ if __name__ == "__main__":
     print("🌐 Open: http://localhost:8000")
     print("🔐 Google Sign-In Working")
     print("📊 Level System Working")
-    print("📱 AUTO-ADJUST INPUT FOR ALL DEVICES")
+    print("📱 AUTO-ADJUST INPUT - WORKS ON ALL DEVICES")
     print("="*55 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=10000)
