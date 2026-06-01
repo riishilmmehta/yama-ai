@@ -218,7 +218,6 @@ HTML = f"""
             transition: all 0.3s ease;
         }}
         
-        /* Login Overlay */
         .login-overlay {{
             position: fixed;
             top: 0;
@@ -256,7 +255,6 @@ HTML = f"""
             background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
         }}
         
-        /* Sidebar */
         .sidebar {{
             position: fixed;
             left: 0;
@@ -288,7 +286,6 @@ HTML = f"""
             font-size: 1rem;
         }}
         
-        /* User Profile in Sidebar */
         .user-profile {{
             display: none;
             align-items: center;
@@ -572,7 +569,7 @@ HTML = f"""
         
         @keyframes bounce {{ 0%, 60%, 100% {{ transform: translateY(0); }} 30% {{ transform: translateY(-6px); }} }}
         
-        /* ORIGINAL INPUT AREA - UNCHANGED */
+        /* ========== AUTO-ADJUST INPUT FOR ALL DEVICES ========== */
         .input-area {{
             padding: 12px 16px 20px;
             background: linear-gradient(to top, #f5f0e8, transparent);
@@ -582,13 +579,14 @@ HTML = f"""
         .input-wrapper {{
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: clamp(8px, 2vw, 12px);
             background: white;
-            border-radius: 30px;
-            padding: 8px 8px 8px 20px;
+            border-radius: clamp(28px, 5vw, 32px);
+            padding: clamp(6px, 1.5vw, 10px) clamp(6px, 1.5vw, 10px) clamp(6px, 1.5vw, 10px) clamp(16px, 4vw, 24px);
             border: 1px solid #d4c5a9;
-            min-height: 56px;
+            min-height: clamp(48px, 8vh, 64px);
             height: auto;
+            width: 100%;
         }}
         
         body.dark .input-wrapper {{
@@ -601,15 +599,23 @@ HTML = f"""
             background: transparent;
             border: none;
             color: #2c2418;
-            font-size: 1rem;
+            font-size: clamp(14px, 4vw, 16px);
             resize: none;
             outline: none;
-            padding: 12px 0;
+            padding: clamp(8px, 2vw, 12px) 0;
             font-family: inherit;
             width: 100%;
-            min-height: 40px;
+            min-height: clamp(36px, 6vh, 44px);
             max-height: 120px;
             overflow-y: auto;
+            line-height: 1.4;
+        }}
+        
+        /* Prevent zoom on mobile focus */
+        @media (max-width: 768px) {{
+            textarea {{
+                font-size: 16px !important;
+            }}
         }}
         
         body.dark textarea {{
@@ -618,28 +624,33 @@ HTML = f"""
         
         textarea::placeholder {{
             color: #b8a88a;
-            font-size: 0.95rem;
+            font-size: clamp(12px, 3.5vw, 14px);
         }}
         
         .input-wrapper button {{
             background: #2c2418;
             border: none;
-            border-radius: 28px;
-            padding: 10px 24px;
+            border-radius: clamp(25px, 5vw, 28px);
+            padding: clamp(8px, 2vw, 12px) clamp(16px, 4vw, 28px);
             color: #f5f0e8;
             font-weight: 500;
             cursor: pointer;
-            font-size: 0.9rem;
-            min-width: 70px;
+            font-size: clamp(12px, 3.5vw, 16px);
+            min-width: clamp(55px, 15vw, 80px);
             width: auto;
             white-space: nowrap;
             transition: all 0.2s;
             flex-shrink: 0;
+            -webkit-tap-highlight-color: transparent;
         }}
         
         .input-wrapper button:hover {{
             background: #4a3f2f;
             transform: scale(1.02);
+        }}
+        
+        .input-wrapper button:active {{
+            transform: scale(0.98);
         }}
         
         body.dark .input-wrapper button {{
@@ -721,6 +732,7 @@ HTML = f"""
             color: white;
         }}
         
+        /* Mobile specific adjustments */
         @media (max-width: 768px) {{
             .message-content {{ max-width: 90%; font-size: 0.85rem; }}
             .suggestions {{ display: none; }}
@@ -730,24 +742,34 @@ HTML = f"""
             .logo-icon {{ font-size: 1.4rem; }}
             .messages {{ padding: 12px; }}
             .input-area {{ padding: 10px 12px 16px; }}
-            .input-wrapper {{ border-radius: 28px; padding: 6px 6px 6px 16px; min-height: 48px; }}
-            textarea {{ font-size: 0.9rem; padding: 10px 0; min-height: 36px; max-height: 100px; }}
-            .input-wrapper button {{ padding: 8px 18px; min-width: 60px; font-size: 0.85rem; }}
-            .control-btn {{ font-size: 1rem; padding: 6px 10px; }}
         }}
         
-        @media (min-width: 769px) {{
-            .input-wrapper {{ border-radius: 32px; padding: 10px 10px 10px 24px; min-height: 64px; }}
-            textarea {{ font-size: 1rem; padding: 14px 0; min-height: 44px; max-height: 140px; }}
-            .input-wrapper button {{ padding: 12px 28px; min-width: 80px; font-size: 1rem; }}
+        @media (min-width: 769px) and (max-width: 1024px) {{
+            .input-wrapper {{
+                max-width: 90%;
+                margin: 0 auto;
+            }}
+        }}
+        
+        @media (min-width: 1025px) {{
+            .input-wrapper {{
+                max-width: 85%;
+                margin: 0 auto;
+            }}
         }}
         
         @media (max-width: 480px) {{
-            .input-area {{ padding: 8px 10px 12px; }}
-            .input-wrapper {{ gap: 8px; border-radius: 26px; padding: 5px 5px 5px 14px; min-height: 44px; }}
-            textarea {{ font-size: 0.85rem; padding: 8px 0; min-height: 32px; max-height: 80px; }}
-            .input-wrapper button {{ padding: 7px 14px; min-width: 55px; font-size: 0.8rem; }}
-            .control-btn {{ font-size: 0.9rem; padding: 5px 8px; }}
+            .input-area {{ padding: 8px 10px 14px; }}
+            .input-wrapper {{ gap: 6px; }}
+            .input-wrapper button {{ padding: 6px 12px; min-width: 50px; }}
+            textarea {{ min-height: 32px; }}
+        }}
+        
+        /* iOS specific fixes */
+        @supports (-webkit-touch-callout: none) {{
+            textarea {{
+                font-size: 16px !important;
+            }}
         }}
     </style>
 </head>
@@ -777,60 +799,60 @@ HTML = f"""
     </div>
     
     <!-- MAIN APP -->
-    <div class="app\" id=\"app\">
-        <div class=\"overlay\" id=\"overlay\" onclick=\"closeSidebar()\"></div>
+    <div class="app" id="app">
+        <div class="overlay" id="overlay" onclick="closeSidebar()"></div>
         
-        <div class=\"sidebar\" id=\"sidebar\">
-            <div class=\"sidebar-header\">
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-header">
                 <h3>📜 CONVERSATIONS</h3>
-                <div class=\"user-profile\" id=\"userProfile\"></div>
+                <div class="user-profile" id="userProfile"></div>
             </div>
-            <div class=\"history-list\" id=\"historyList\">
-                <div style=\"color: #6a5a4a; text-align: center; padding: 20px;\">No conversations yet</div>
+            <div class="history-list" id="historyList">
+                <div style="color: #6a5a4a; text-align: center; padding: 20px;">No conversations yet</div>
             </div>
-            <div class=\"sidebar-footer\">
-                <button class=\"new-chat-btn\" onclick=\"newChat()\">➕ New Chat</button>
-                <button class=\"clear-history\" onclick=\"clearHistory()\">Clear all history</button>
+            <div class="sidebar-footer">
+                <button class="new-chat-btn" onclick="newChat()">➕ New Chat</button>
+                <button class="clear-history" onclick="clearHistory()">Clear all history</button>
             </div>
         </div>
         
-        <div class=\"main\">
-            <div class=\"header\">
-                <button class=\"menu-btn\" onclick=\"toggleSidebar()\">☰</button>
-                <div class=\"logo\" id=\"logo\">
-                    <span class=\"logo-icon\">🏛️</span>
+        <div class="main">
+            <div class="header">
+                <button class="menu-btn" onclick="toggleSidebar()">☰</button>
+                <div class="logo" id="logo">
+                    <span class="logo-icon">🏛️</span>
                     <h1>YAMA</h1>
                 </div>
-                <button class=\"new-chat-mobile\" onclick=\"newChat()\">➕</button>
-                <button class=\"control-btn\" onclick=\"toggleTheme()\" title=\"Dark/Light Mode\">🌓</button>
-                <button class=\"control-btn\" onclick=\"exportChat()\" title=\"Export Chat\">📥</button>
-                <button class=\"user-btn\" id=\"userBtn\" onclick=\"toggleUserMenu()\">
-                    <img id=\"userAvatar\" src=\"\" alt=\"User\">
+                <button class="new-chat-mobile" onclick="newChat()">➕</button>
+                <button class="control-btn" onclick="toggleTheme()" title="Dark/Light Mode">🌓</button>
+                <button class="control-btn" onclick="exportChat()" title="Export Chat">📥</button>
+                <button class="user-btn" id="userBtn" onclick="toggleUserMenu()">
+                    <img id="userAvatar" src="" alt="User">
                 </button>
             </div>
             
-            <div class=\"messages\" id=\"messages\">
-                <div class=\"welcome\" id=\"welcome\">
-                    <div class=\"welcome-icon\">🏛️</div>
+            <div class="messages" id="messages">
+                <div class="welcome" id="welcome">
+                    <div class="welcome-icon">🏛️</div>
                     <h2>Yama</h2>
                     <p>Your AI companion. Ask me anything - I'll search the web!</p>
-                    <div class=\"suggestions\">
-                        <div class=\"suggestion\" onclick=\"askSuggestion('What is the capital of France?')\">🗼 Capital of France</div>
-                        <div class=\"suggestion\" onclick=\"askSuggestion('Who is Elon Musk?')\">🚀 Who is Elon Musk?</div>
-                        <div class=\"suggestion\" onclick=\"askSuggestion('10000/8')\">📐 10000/8</div>
-                        <div class=\"suggestion\" onclick=\"askSuggestion('Latest news today')\">📰 Latest news</div>
+                    <div class="suggestions">
+                        <div class="suggestion" onclick="askSuggestion('What is the capital of France?')">🗼 Capital of France</div>
+                        <div class="suggestion" onclick="askSuggestion('Who is Elon Musk?')">🚀 Who is Elon Musk?</div>
+                        <div class="suggestion" onclick="askSuggestion('10000/8')">📐 10000/8</div>
+                        <div class="suggestion" onclick="askSuggestion('Latest news today')">📰 Latest news</div>
                     </div>
                 </div>
             </div>
             
-            <div class=\"typing\" id=\"typing\">
+            <div class="typing" id="typing">
                 <span></span><span></span><span></span> Yama is thinking...
             </div>
             
-            <div class=\"input-area\">
-                <div class=\"input-wrapper\">
-                    <textarea id=\"userInput\" placeholder=\"Ask Yama anything...\" rows=\"1\" onkeypress=\"handleKey(event)\"></textarea>
-                    <button onclick=\"sendMessage()\">Send</button>
+            <div class="input-area">
+                <div class="input-wrapper">
+                    <textarea id="userInput" placeholder="Ask Yama anything..." rows="1" onkeypress="handleKey(event)"></textarea>
+                    <button onclick="sendMessage()">Send</button>
                 </div>
             </div>
         </div>
@@ -974,9 +996,20 @@ HTML = f"""
         }}
         
         const textarea = document.getElementById('userInput');
-        textarea.addEventListener('input', function() {{
+        
+        // Auto-adjust height function
+        function autoAdjustHeight() {{
             this.style.height = 'auto';
             this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+        }}
+        
+        textarea.addEventListener('input', autoAdjustHeight);
+        
+        // Fix for mobile focus
+        textarea.addEventListener('focus', function() {{
+            setTimeout(() => {{
+                scrollToBottom();
+            }}, 300);
         }});
         
         function handleKey(e) {{
@@ -1094,6 +1127,6 @@ if __name__ == "__main__":
     print("🌐 Open: http://localhost:8000")
     print("🔐 Google Sign-In Working")
     print("📊 Level System Working")
-    print("📱 Auto-Adjust Buttons - Responsive")
+    print("📱 AUTO-ADJUST INPUT FOR ALL DEVICES")
     print("="*55 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=10000)
