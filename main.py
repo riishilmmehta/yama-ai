@@ -14,7 +14,7 @@ import secrets
 
 app = FastAPI(title="Yama AI")
 
-# ============ USER DATABASE WITH GOOGLE ============
+# ============ USER DATABASE ============
 user_db = TinyDB('users.json')
 User = Query()
 
@@ -29,7 +29,7 @@ def get_or_create_user(email, name, picture=None):
             "picture": picture,
             "message_count": 0,
             "level": 1,
-            "title": "🌟 Newbie Chatter",
+            "title": "Newbie",
             "created_at": datetime.now().isoformat(),
             "last_seen": datetime.now().isoformat()
         })
@@ -45,15 +45,15 @@ def update_user_stats(email):
         new_level = 1 + (new_count // 50)
         
         titles = {
-            1: "🌟 Newbie Chatter",
-            2: "💬 Regular Talker",
-            3: "🔥 Chatty User",
+            1: "🌱 Newbie",
+            2: "💬 Talker",
+            3: "🔥 Chatter",
             4: "⚡ Power User",
-            5: "👑 Super Chat Master",
-            6: "🏆 Ultimate Reviewer",
-            7: "🧠 Yama Legend"
+            5: "👑 Master",
+            6: "🏆 Legend",
+            7: "🧠 Yama God"
         }
-        new_title = titles.get(new_level, "🧠 Yama Legend")
+        new_title = titles.get(new_level, "🧠 Yama God")
         
         user_db.update({
             "message_count": new_count,
@@ -63,7 +63,7 @@ def update_user_stats(email):
         }, User.email == email)
         
         return {"count": new_count, "level": new_level, "title": new_title}
-    return {"count": 0, "level": 1, "title": "🌟 Newbie Chatter"}
+    return {"count": 0, "level": 1, "title": "Newbie"}
 
 # ============ SEARCH FUNCTION ============
 
@@ -81,32 +81,6 @@ def search_web(query):
     except Exception as e:
         print(f"Search error: {e}")
     return results
-
-def read_full_webpage(url):
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        response = requests.get(url, headers=headers, timeout=15)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        for tag in soup(['script', 'style', 'nav', 'footer', 'header', 'aside']):
-            tag.decompose()
-        
-        content = []
-        article = soup.find('article')
-        if article:
-            content.append(article.get_text())
-        else:
-            for p in soup.find_all('p'):
-                text = p.get_text(strip=True)
-                if len(text) > 50:
-                    content.append(text)
-        
-        full_text = ' '.join(content[:30])
-        return full_text[:2000]
-    except:
-        return None
-
-# ============ RESPONSE FUNCTION ============
 
 def get_response(message, email):
     msg = message.strip().lower()
@@ -128,7 +102,7 @@ def get_response(message, email):
             elif op == '/': result = a / b
             if isinstance(result, float) and result.is_integer():
                 result = int(result)
-            return f"🧮 {a} {op} {b} = {result}\n\n✨ Great job, {user_name}! Level {stats['level']} - {stats['title']}"
+            return f"🧮 {a} {op} {b} = {result}\n\n✨ Great job, {user_name}! Level {stats['level']} - {stats['title']} ({stats['count']} msgs)"
         except:
             pass
     
@@ -137,7 +111,7 @@ def get_response(message, email):
         return f"👋 Hello {user_name}! You are a **{stats['title']}** (Level {stats['level']}) with {stats['count']} messages!\n\nHow can I help you today?"
     
     if 'how are you' in msg:
-        return f"😊 I'm doing great! Thanks for asking, {user_name}!"
+        return f"😊 I'm doing great! Thanks for asking, {user_name}! (Level {stats['level']} {stats['title']})"
     
     # Search
     search_results = search_web(message)
@@ -145,20 +119,6 @@ def get_response(message, email):
     if not search_results:
         return f"I searched for '{message}' but found no results."
     
-    # Try full webpage reading
-    try:
-        full_content = read_full_webpage(search_results[0]['url'])
-        if full_content:
-            response = f"🔍 **Deep Search Result**\n\n"
-            response += f"**{search_results[0]['title']}**\n"
-            response += f"{full_content}\n"
-            response += f"🔗 {search_results[0]['url']}\n\n"
-            response += f"📊 **{user_name}'s Stats:** Level {stats['level']} - {stats['title']} ({stats['count']} messages)\n"
-            return response
-    except:
-        pass
-    
-    # Regular results
     response = f"🔍 **Search results for: {message}**\n\n"
     response += f"📊 **{user_name}'s Stats:** Level {stats['level']} - {stats['title']} ({stats['count']} messages)\n\n"
     
@@ -192,13 +152,13 @@ def save_history(email, history):
 # ============ GOOGLE CLIENT ID ============
 GOOGLE_CLIENT_ID = "46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com"
 
-# ============ YOUR EXACT ORIGINAL HTML WITH ONLY GOOGLE SIGN-IN ADDED ============
+# ============ COMPLETE HTML ============
 HTML = f"""
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
     <title>Yama - AI Assistant</title>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -218,6 +178,7 @@ HTML = f"""
             transition: all 0.3s ease;
         }}
         
+        /* Login Overlay */
         .login-overlay {{
             position: fixed;
             top: 0;
@@ -234,17 +195,18 @@ HTML = f"""
         .login-card {{
             background: white;
             border-radius: 30px;
-            padding: 50px;
+            padding: 40px 30px;
             text-align: center;
-            max-width: 450px;
-            width: 90%;
+            max-width: 400px;
+            width: 85%;
             box-shadow: 0 25px 50px rgba(0,0,0,0.2);
         }}
         
-        .login-card .logo-icon {{ font-size: 4rem; margin-bottom: 20px; }}
-        .login-card h2 {{ font-family: 'Playfair Display', serif; font-size: 2rem; margin-bottom: 10px; }}
-        .login-card p {{ color: #666; margin-bottom: 30px; }}
+        .login-card .logo-icon {{ font-size: 3.5rem; margin-bottom: 15px; }}
+        .login-card h2 {{ font-family: 'Playfair Display', serif; font-size: 1.8rem; margin-bottom: 8px; }}
+        .login-card p {{ color: #666; font-size: 0.85rem; margin-bottom: 25px; }}
         
+        /* Main App */
         .app {{
             display: none;
             height: 100vh;
@@ -255,6 +217,7 @@ HTML = f"""
             background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
         }}
         
+        /* Sidebar */
         .sidebar {{
             position: fixed;
             left: 0;
@@ -286,6 +249,63 @@ HTML = f"""
             font-size: 1rem;
         }}
         
+        /* User Profile in Sidebar */
+        .user-profile {{
+            display: none;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            background: rgba(212,197,169,0.1);
+            border-radius: 12px;
+            margin-top: 15px;
+        }}
+        
+        .user-profile-img {{
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            object-fit: cover;
+        }}
+        
+        .user-profile-info {{
+            flex: 1;
+            min-width: 0;
+        }}
+        
+        .user-profile-name {{
+            color: #d4c5a9;
+            font-weight: 600;
+            font-size: 0.85rem;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }}
+        
+        .user-profile-email {{
+            color: #8a7a6a;
+            font-size: 0.65rem;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }}
+        
+        .user-level {{
+            color: #c4a57b;
+            font-size: 0.6rem;
+            margin-top: 2px;
+        }}
+        
+        .logout-btn {{
+            background: rgba(212,197,169,0.1);
+            border: 1px solid #4a3f2f;
+            border-radius: 20px;
+            padding: 6px 12px;
+            color: #d4c5a9;
+            cursor: pointer;
+            font-size: 0.65rem;
+            white-space: nowrap;
+        }}
+        
         .history-list {{
             flex: 1;
             overflow-y: auto;
@@ -308,7 +328,7 @@ HTML = f"""
         }}
         
         .history-question {{
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: #d4c5a9;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -316,7 +336,7 @@ HTML = f"""
         }}
         
         .history-time {{
-            font-size: 0.6rem;
+            font-size: 0.55rem;
             color: #6a5a4a;
             margin-top: 4px;
         }}
@@ -332,11 +352,11 @@ HTML = f"""
             background: #4a3f2f;
             border: none;
             border-radius: 25px;
-            padding: 12px 16px;
+            padding: 12px;
             color: #d4c5a9;
             cursor: pointer;
             width: 100%;
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -350,10 +370,10 @@ HTML = f"""
             background: rgba(212,197,169,0.1);
             border: 1px solid #4a3f2f;
             border-radius: 20px;
-            padding: 8px 16px;
+            padding: 8px;
             color: #d4c5a9;
             cursor: pointer;
-            font-size: 0.7rem;
+            font-size: 0.65rem;
             margin-top: 10px;
             width: 100%;
         }}
@@ -371,6 +391,7 @@ HTML = f"""
         
         .overlay.show {{ display: block; }}
         
+        /* Main Content */
         .main {{
             flex: 1;
             display: flex;
@@ -381,10 +402,10 @@ HTML = f"""
         }}
         
         .header {{
-            padding: 12px 16px;
+            padding: 10px 16px;
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 10px;
             border-bottom: 1px solid #d4c5a9;
             background: rgba(245,240,232,0.95);
             flex-shrink: 0;
@@ -398,7 +419,7 @@ HTML = f"""
         .menu-btn {{
             background: none;
             border: none;
-            font-size: 1.3rem;
+            font-size: 1.2rem;
             cursor: pointer;
             color: #6a5a4a;
             padding: 8px;
@@ -411,20 +432,34 @@ HTML = f"""
             flex: 1;
             display: flex;
             align-items: baseline;
-            gap: 6px;
+            gap: 5px;
         }}
         
-        .logo-icon {{ font-size: 1.8rem; }}
-        .logo h1 {{ font-family: 'Playfair Display', serif; font-size: 1.3rem; color: #2c2418; }}
-        
+        .logo-icon {{ font-size: 1.5rem; }}
+        .logo h1 {{ font-family: 'Playfair Display', serif; font-size: 1.2rem; color: #2c2418; }}
         body.dark .logo h1 {{ color: #d4c5a9; }}
+        
+        .user-btn {{
+            background: none;
+            border: none;
+            cursor: pointer;
+            display: none;
+            padding: 5px;
+        }}
+        
+        .user-btn img {{
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            object-fit: cover;
+        }}
         
         .new-chat-mobile {{
             background: none;
             border: none;
-            font-size: 1.2rem;
+            font-size: 1.1rem;
             cursor: pointer;
-            padding: 8px;
+            padding: 6px;
             border-radius: 10px;
             color: #6a5a4a;
             display: none;
@@ -433,27 +468,19 @@ HTML = f"""
         .control-btn {{
             background: none;
             border: none;
-            font-size: 1.2rem;
+            font-size: 1rem;
             cursor: pointer;
-            padding: 8px 12px;
+            padding: 6px 10px;
             border-radius: 20px;
             color: #6a5a4a;
             transition: all 0.2s;
         }}
         
-        .control-btn:hover {{
-            background: #d4c5a9;
-        }}
+        .control-btn:hover {{ background: #d4c5a9; }}
+        body.dark .control-btn {{ color: #d4c5a9; }}
+        body.dark .control-btn:hover {{ background: #3a3a5e; color: white; }}
         
-        body.dark .control-btn {{
-            color: #d4c5a9;
-        }}
-        
-        body.dark .control-btn:hover {{
-            background: #3a3a5e;
-            color: white;
-        }}
-        
+        /* Messages */
         .messages {{
             flex: 1;
             overflow-y: auto;
@@ -464,19 +491,14 @@ HTML = f"""
         }}
         
         .message {{ margin-bottom: 20px; animation: fadeIn 0.3s ease; }}
-        
-        @keyframes fadeIn {{
-            from {{ opacity: 0; transform: translateY(10px); }}
-            to {{ opacity: 1; transform: translateY(0); }}
-        }}
-        
+        @keyframes fadeIn {{ from {{ opacity: 0; transform: translateY(10px); }} to {{ opacity: 1; transform: translateY(0); }} }}
         .user-message {{ text-align: right; }}
         .ai-message {{ text-align: left; }}
         
         .message-content {{
             display: inline-block;
             max-width: 85%;
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             line-height: 1.5;
             color: #2c2418;
             background: transparent !important;
@@ -486,29 +508,27 @@ HTML = f"""
         .user-message .message-content {{
             background: #2c2418 !important;
             color: white !important;
-            padding: 10px 16px !important;
+            padding: 8px 14px !important;
             border-radius: 20px !important;
         }}
         
         .ai-message .message-content {{
             background: white !important;
             color: #2c2418 !important;
-            padding: 12px 18px !important;
+            padding: 10px 16px !important;
             border-radius: 20px !important;
             box-shadow: 0 2px 5px rgba(0,0,0,0.05);
         }}
         
-        body.dark .ai-message .message-content {{
-            background: #2a2a4e !important;
-            color: #e0e0e0 !important;
-        }}
+        body.dark .ai-message .message-content {{ background: #2a2a4e !important; color: #e0e0e0 !important; }}
         
+        /* Typing */
         .typing {{
             display: none;
             padding: 10px 16px;
             gap: 5px;
             color: #888;
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             flex-shrink: 0;
         }}
         
@@ -521,11 +541,9 @@ HTML = f"""
             animation: bounce 1.4s infinite;
         }}
         
-        @keyframes bounce {{
-            0%, 60%, 100% {{ transform: translateY(0); }}
-            30% {{ transform: translateY(-6px); }}
-        }}
+        @keyframes bounce {{ 0%, 60%, 100% {{ transform: translateY(0); }} 30% {{ transform: translateY(-6px); }} }}
         
+        /* Input Area - FIXED VISIBLE BUTTON */
         .input-area {{
             padding: 12px 16px 20px;
             background: linear-gradient(to top, #f5f0e8, transparent);
@@ -535,63 +553,51 @@ HTML = f"""
         .input-wrapper {{
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 10px;
             background: white;
             border-radius: 30px;
-            padding: 8px 8px 8px 20px;
+            padding: 6px 6px 6px 18px;
             border: 1px solid #d4c5a9;
-            min-height: 56px;
-            height: auto;
+            min-height: 52px;
         }}
         
-        body.dark .input-wrapper {{
-            background: #2a2a4e;
-            border-color: #3a3a5e;
-        }}
+        body.dark .input-wrapper {{ background: #2a2a4e; border-color: #3a3a5e; }}
         
         textarea {{
             flex: 1;
             background: transparent;
             border: none;
             color: #2c2418;
-            font-size: 1rem;
+            font-size: 0.9rem;
             resize: none;
             outline: none;
-            padding: 12px 0;
+            padding: 10px 0;
             font-family: inherit;
-            width: 100%;
             min-height: 40px;
-            max-height: 120px;
-            overflow-y: auto;
+            max-height: 100px;
         }}
         
-        body.dark textarea {{
-            color: #e0e0e0;
-        }}
+        body.dark textarea {{ color: #e0e0e0; }}
+        textarea::placeholder {{ color: #b8a88a; font-size: 0.85rem; }}
         
-        textarea::placeholder {{ color: #b8a88a; font-size: 0.95rem; }}
-        
-        .input-wrapper button {{
+        .send-btn {{
             background: #2c2418;
             border: none;
             border-radius: 28px;
-            padding: 10px 24px;
+            padding: 8px 20px;
             color: #f5f0e8;
             font-weight: 500;
             cursor: pointer;
-            font-size: 0.9rem;
-            min-width: 70px;
-            width: auto;
+            font-size: 0.85rem;
+            min-width: 65px;
             white-space: nowrap;
             transition: all 0.2s;
             flex-shrink: 0;
         }}
         
-        .input-wrapper button:hover {{
-            background: #4a3f2f;
-            transform: scale(1.02);
-        }}
+        .send-btn:hover {{ background: #4a3f2f; transform: scale(1.02); }}
         
+        /* Welcome */
         .welcome {{
             display: flex;
             flex-direction: column;
@@ -601,100 +607,60 @@ HTML = f"""
             text-align: center;
         }}
         
-        .welcome-icon {{
-            font-size: 3rem;
-            margin-bottom: 15px;
-            animation: float 3s ease-in-out infinite;
-        }}
-        
-        @keyframes float {{
-            0%, 100% {{ transform: translateY(0); }}
-            50% {{ transform: translateY(-8px); }}
-        }}
-        
-        .welcome h2 {{
-            font-family: 'Playfair Display', serif;
-            font-size: 2rem;
-            color: #2c2418;
-            margin-bottom: 8px;
-        }}
-        
+        .welcome-icon {{ font-size: 2.5rem; margin-bottom: 12px; animation: float 3s ease-in-out infinite; }}
+        @keyframes float {{ 0%, 100% {{ transform: translateY(0); }} 50% {{ transform: translateY(-8px); }} }}
+        .welcome h2 {{ font-family: 'Playfair Display', serif; font-size: 1.8rem; margin-bottom: 6px; }}
         body.dark .welcome h2 {{ color: #d4c5a9; }}
-        
-        .welcome p {{
-            color: #6a5a4a;
-            font-size: 0.85rem;
-            margin-bottom: 20px;
-        }}
+        .welcome p {{ color: #6a5a4a; font-size: 0.8rem; margin-bottom: 20px; }}
         
         .suggestions {{
             display: flex;
             flex-wrap: wrap;
             gap: 8px;
             justify-content: center;
-            margin-top: 15px;
         }}
         
         .suggestion {{
             background: white;
             border: 1px solid #d4c5a9;
             border-radius: 30px;
-            padding: 6px 14px;
-            font-size: 0.75rem;
+            padding: 5px 12px;
+            font-size: 0.7rem;
             color: #2c2418;
             cursor: pointer;
             transition: all 0.2s;
         }}
         
-        .suggestion:hover {{
-            background: #2c2418;
-            color: white;
-            border-color: #2c2418;
-        }}
+        .suggestion:hover {{ background: #2c2418; color: white; border-color: #2c2418; }}
+        body.dark .suggestion {{ background: #2a2a4e; border-color: #3a3a5e; color: #e0e0e0; }}
+        body.dark .suggestion:hover {{ background: #3a3a5e; color: white; }}
         
-        body.dark .suggestion {{
-            background: #2a2a4e;
-            border-color: #3a3a5e;
-            color: #e0e0e0;
-        }}
-        
-        body.dark .suggestion:hover {{
-            background: #3a3a5e;
-            color: white;
-        }}
-        
+        /* Responsive */
         @media (max-width: 768px) {{
-            .message-content {{ max-width: 90%; font-size: 0.85rem; }}
+            .message-content {{ max-width: 90%; font-size: 0.8rem; }}
             .suggestions {{ display: none; }}
             .new-chat-mobile {{ display: block; }}
-            .header {{ padding: 10px 12px; }}
-            .logo h1 {{ font-size: 1.1rem; }}
-            .logo-icon {{ font-size: 1.4rem; }}
+            .header {{ padding: 8px 12px; }}
+            .logo h1 {{ font-size: 1rem; }}
+            .logo-icon {{ font-size: 1.3rem; }}
             .messages {{ padding: 12px; }}
             .input-area {{ padding: 10px 12px 16px; }}
-            .input-wrapper {{ border-radius: 28px; padding: 6px 6px 6px 16px; min-height: 48px; }}
-            textarea {{ font-size: 0.9rem; padding: 10px 0; min-height: 36px; max-height: 100px; }}
-            .input-wrapper button {{ padding: 8px 18px; min-width: 60px; font-size: 0.85rem; }}
-            .control-btn {{ font-size: 1rem; padding: 6px 10px; }}
-        }}
-        
-        @media (min-width: 769px) {{
-            .input-wrapper {{ border-radius: 32px; padding: 10px 10px 10px 24px; min-height: 64px; }}
-            textarea {{ font-size: 1rem; padding: 14px 0; min-height: 44px; max-height: 140px; }}
-            .input-wrapper button {{ padding: 12px 28px; min-width: 80px; font-size: 1rem; }}
+            .input-wrapper {{ border-radius: 25px; padding: 5px 5px 5px 14px; min-height: 48px; }}
+            textarea {{ font-size: 0.85rem; padding: 8px 0; min-height: 36px; max-height: 80px; }}
+            .send-btn {{ padding: 7px 16px; min-width: 55px; font-size: 0.8rem; }}
+            .control-btn {{ font-size: 0.9rem; padding: 5px 8px; }}
         }}
         
         @media (max-width: 480px) {{
-            .input-area {{ padding: 8px 10px 12px; }}
-            .input-wrapper {{ gap: 8px; border-radius: 26px; padding: 5px 5px 5px 14px; min-height: 44px; }}
-            textarea {{ font-size: 0.85rem; padding: 8px 0; min-height: 32px; max-height: 80px; }}
-            .input-wrapper button {{ padding: 7px 14px; min-width: 55px; font-size: 0.8rem; }}
-            .control-btn {{ font-size: 0.9rem; padding: 5px 8px; }}
+            .input-area {{ padding: 8px 10px 14px; }}
+            .input-wrapper {{ gap: 8px; border-radius: 22px; padding: 4px 4px 4px 12px; min-height: 44px; }}
+            textarea {{ font-size: 0.8rem; padding: 7px 0; min-height: 32px; max-height: 70px; }}
+            .send-btn {{ padding: 6px 12px; min-width: 50px; font-size: 0.75rem; }}
+            .control-btn {{ font-size: 0.85rem; padding: 4px 6px; }}
         }}
     </style>
 </head>
 <body>
-    <!-- LOGIN OVERLAY -->
     <div id="loginOverlay" class="login-overlay">
         <div class="login-card">
             <div class="logo-icon">🏛️</div>
@@ -718,60 +684,60 @@ HTML = f"""
         </div>
     </div>
     
-    <!-- MAIN APP (ORIGINAL UI - UNCHANGED) -->
-    <div class="app\" id=\"app\">
-        <div class=\"overlay\" id=\"overlay\" onclick=\"closeSidebar()\"></div>
+    <div class="app" id="app">
+        <div class="overlay" id="overlay" onclick="closeSidebar()"></div>
         
-        <div class=\"sidebar\" id=\"sidebar\">
-            <div class=\"sidebar-header\">
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-header">
                 <h3>📜 CONVERSATIONS</h3>
+                <div class="user-profile" id="userProfile"></div>
             </div>
-            <div class=\"history-list\" id=\"historyList\">
-                <div style=\"color: #6a5a4a; text-align: center; padding: 20px;\">No conversations yet</div>
+            <div class="history-list" id="historyList">
+                <div style="color: #6a5a4a; text-align: center; padding: 20px; font-size: 0.75rem;">No conversations yet</div>
             </div>
-            <div class=\"sidebar-footer\">
-                <button class=\"new-chat-btn\" onclick=\"newChat()\">➕ New Chat</button>
-                <button class=\"clear-history\" onclick=\"clearHistory()\">Clear all history</button>
+            <div class="sidebar-footer">
+                <button class="new-chat-btn" onclick="newChat()">➕ New Chat</button>
+                <button class="clear-history" onclick="clearHistory()">Clear all history</button>
             </div>
         </div>
         
-        <div class=\"main\">
-            <div class=\"header\">
-                <button class=\"menu-btn\" onclick=\"toggleSidebar()\">☰</button>
-                <div class=\"logo\" id=\"logo\">
-                    <span class=\"logo-icon\">🏛️</span>
+        <div class="main">
+            <div class="header">
+                <button class="menu-btn" onclick="toggleSidebar()">☰</button>
+                <div class="logo" id="logo">
+                    <span class="logo-icon">🏛️</span>
                     <h1>YAMA</h1>
                 </div>
-                <button class=\"new-chat-mobile\" onclick=\"newChat()\">➕</button>
-                <button class=\"control-btn\" onclick=\"toggleTheme()\" title=\"Dark/Light Mode\">🌓</button>
-                <button class=\"control-btn\" onclick=\"exportChat()\" title=\"Export Chat\">📥</button>
-                <button class=\"user-btn\" id=\"userBtn\" onclick=\"toggleUserMenu()\" style=\"display: none;\">
-                    <img id=\"userAvatar\" src=\"\" alt=\"User\" style=\"width: 35px; height: 35px; border-radius: 50%;\">
+                <button class="new-chat-mobile" onclick="newChat()">➕</button>
+                <button class="control-btn" onclick="toggleTheme()" title="Dark/Light Mode">🌓</button>
+                <button class="control-btn" onclick="exportChat()" title="Export Chat">📥</button>
+                <button class="user-btn" id="userBtn" onclick="toggleUserMenu()">
+                    <img id="userAvatar" src="" alt="User">
                 </button>
             </div>
             
-            <div class=\"messages\" id=\"messages\">
-                <div class=\"welcome\" id=\"welcome\">
-                    <div class=\"welcome-icon\">🏛️</div>
+            <div class="messages" id="messages">
+                <div class="welcome" id="welcome">
+                    <div class="welcome-icon">🏛️</div>
                     <h2>Yama</h2>
                     <p>Your AI companion. Ask me anything - I'll search the web!</p>
-                    <div class=\"suggestions\">
-                        <div class=\"suggestion\" onclick=\"askSuggestion('What is the capital of France?')\">🗼 Capital of France</div>
-                        <div class=\"suggestion\" onclick=\"askSuggestion('Who is Elon Musk?')\">🚀 Who is Elon Musk?</div>
-                        <div class=\"suggestion\" onclick=\"askSuggestion('10000/8')\">📐 10000/8</div>
-                        <div class=\"suggestion\" onclick=\"askSuggestion('Latest news today')\">📰 Latest news</div>
+                    <div class="suggestions">
+                        <div class="suggestion" onclick="askSuggestion('What is the capital of France?')">🗼 Capital of France</div>
+                        <div class="suggestion" onclick="askSuggestion('Who is Elon Musk?')">🚀 Who is Elon Musk?</div>
+                        <div class="suggestion" onclick="askSuggestion('10000/8')">📐 10000/8</div>
+                        <div class="suggestion" onclick="askSuggestion('Latest news today')">📰 Latest news</div>
                     </div>
                 </div>
             </div>
             
-            <div class=\"typing\" id=\"typing\">
+            <div class="typing" id="typing">
                 <span></span><span></span><span></span> Yama is thinking...
             </div>
             
-            <div class=\"input-area\">
-                <div class=\"input-wrapper\">
-                    <textarea id=\"userInput\" placeholder=\"Ask Yama anything...\" rows=\"1\" onkeypress=\"handleKey(event)\"></textarea>
-                    <button onclick=\"sendMessage()\">Send</button>
+            <div class="input-area">
+                <div class="input-wrapper">
+                    <textarea id="userInput" placeholder="Ask Yama anything..." rows="1" onkeypress="handleKey(event)"></textarea>
+                    <button class="send-btn" onclick="sendMessage()">Send</button>
                 </div>
             </div>
         </div>
@@ -780,13 +746,8 @@ HTML = f"""
     <script>
         let currentUser = null;
         let hasMessages = false;
-        
-        // User profile sidebar element
-        const userProfileDiv = document.createElement('div');
-        userProfileDiv.className = 'user-profile';
-        userProfileDiv.id = 'userProfile';
-        userProfileDiv.style.display = 'none';
-        document.querySelector('.sidebar-header').appendChild(userProfileDiv);
+        let userLevel = 1;
+        let userTitle = "Newbie";
         
         function toggleTheme() {{
             document.body.classList.toggle('dark');
@@ -814,8 +775,7 @@ HTML = f"""
         }}
         
         function toggleUserMenu() {{
-            const sidebar = document.getElementById('sidebar');
-            sidebar.classList.toggle('open');
+            document.getElementById('sidebar').classList.toggle('open');
             document.getElementById('overlay').classList.toggle('show');
         }}
         
@@ -834,17 +794,19 @@ HTML = f"""
             document.getElementById('userBtn').style.display = 'block';
             document.getElementById('userAvatar').src = currentUser.picture;
             
-            userProfileDiv.style.display = 'flex';
-            userProfileDiv.innerHTML = `
+            document.getElementById('userProfile').style.display = 'flex';
+            document.getElementById('userProfile').innerHTML = `
                 <img src="${{currentUser.picture}}" class="user-profile-img">
                 <div class="user-profile-info">
                     <div class="user-profile-name">${{currentUser.name}}</div>
                     <div class="user-profile-email">${{currentUser.email}}</div>
+                    <div class="user-level" id="sidebarUserLevel">🏆 Level 1 - Newbie</div>
                 </div>
                 <button class="logout-btn" onclick="logout()">Logout</button>
             `;
             
             loadHistory();
+            loadUserLevel();
             
             fetch('/set_user', {{
                 method: 'POST',
@@ -853,12 +815,24 @@ HTML = f"""
             }});
         }}
         
+        async function loadUserLevel() {{
+            if (!currentUser) return;
+            const res = await fetch('/get_user_stats?email=' + encodeURIComponent(currentUser.email));
+            const stats = await res.json();
+            userLevel = stats.level;
+            userTitle = stats.title;
+            const sidebarLevel = document.getElementById('sidebarUserLevel');
+            if (sidebarLevel) {{
+                sidebarLevel.innerHTML = `🏆 Level ${{userLevel}} - ${{userTitle}}`;
+            }}
+        }}
+        
         function logout() {{
             currentUser = null;
             document.getElementById('loginOverlay').style.display = 'flex';
             document.getElementById('app').style.display = 'none';
             document.getElementById('userBtn').style.display = 'none';
-            userProfileDiv.style.display = 'none';
+            document.getElementById('userProfile').style.display = 'none';
             if (google && google.accounts) {{
                 google.accounts.id.disableAutoSelect();
             }}
@@ -889,7 +863,7 @@ HTML = f"""
             const history = await res.json();
             const container = document.getElementById('historyList');
             if (history.length === 0) {{
-                container.innerHTML = '<div style=\"color:#6a5a4a;text-align:center;padding:20px;\">No conversations yet</div>';
+                container.innerHTML = '<div style=\"color:#6a5a4a;text-align:center;padding:20px;font-size:0.75rem;\">No conversations yet</div>';
                 return;
             }}
             let html = '';
@@ -925,7 +899,7 @@ HTML = f"""
         const textarea = document.getElementById('userInput');
         textarea.addEventListener('input', function() {{
             this.style.height = 'auto';
-            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+            this.style.height = Math.min(this.scrollHeight, 100) + 'px';
         }});
         
         function handleKey(e) {{
@@ -964,6 +938,7 @@ HTML = f"""
             addMessage(data.response, 'ai');
             document.getElementById('typing').style.display = 'none';
             loadHistory();
+            loadUserLevel();
             scrollToBottom();
         }}
         
@@ -993,6 +968,13 @@ HTML = f"""
 @app.get("/", response_class=HTMLResponse)
 async def root():
     return HTML
+
+@app.get("/get_user_stats")
+async def get_user_stats(email: str = ""):
+    user = user_db.get(User.email == email)
+    if user:
+        return {"level": user.get("level", 1), "title": user.get("title", "Newbie")}
+    return {"level": 1, "title": "Newbie"}
 
 @app.post("/set_user")
 async def set_user(request: Request):
@@ -1030,11 +1012,11 @@ async def clear_history_endpoint():
 
 if __name__ == "__main__":
     print("\n" + "="*55)
-    print("🏛️ YAMA AI - WITH GOOGLE SIGN-IN")
+    print("🏛️ YAMA AI - COMPLETE EDITION")
     print("="*55)
     print("🌐 Open: http://localhost:8000")
-    print("🔐 Sign in with Google to start")
-    print("✨ Features: User Profiles, Leveling System, Chat History")
-    print("✨ Dark/Light Mode, Search, Math Solver")
+    print("🔐 Google Sign-In Working")
+    print("📊 Level System Working")
+    print("📱 Auto-Adjust Buttons")
     print("="*55 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=10000)
