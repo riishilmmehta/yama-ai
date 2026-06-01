@@ -192,7 +192,7 @@ def save_history(email, history):
 # ============ GOOGLE CLIENT ID ============
 GOOGLE_CLIENT_ID = "46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com"
 
-# ============ COMPLETE HTML ============
+# ============ COMPLETE HTML WITH PERFECT INPUT ============
 HTML = f"""
 <!DOCTYPE html>
 <html lang="en">
@@ -240,7 +240,7 @@ HTML = f"""
             color: #d4c5a9;
         }}
         
-        body.dark .input-wrapper {{
+        body.dark .input-container {{
             background: #2a2a4e;
             border-color: #3a3a5e;
         }}
@@ -660,73 +660,114 @@ HTML = f"""
         
         @keyframes bounce {{ 0%, 60%, 100% {{ transform: translateY(0); }} 30% {{ transform: translateY(-6px); }} }}
         
-        /* ========== SIMPLE AUTO-ADJUST INPUT - WORKS ON ALL DEVICES ========== */
+        /* ========== PERFECT AUTO-ADJUST INPUT - GEMINI STYLE ========== */
         .input-area {{
             padding: 12px 16px 20px;
             background: linear-gradient(to top, #f5f0e8, transparent);
             flex-shrink: 0;
         }}
         
-        .input-wrapper {{
+        /* Flex container - button anchors bottom-right */
+        .input-container {{
             display: flex;
-            align-items: center;
-            gap: 10px;
-            background: white;
-            border-radius: 30px;
-            padding: 8px 8px 8px 18px;
-            border: 1px solid #d4c5a9;
+            align-items: flex-end;
+            gap: 12px;
             width: 100%;
+            max-width: 760px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 28px;
+            padding: 8px 8px 8px 20px;
+            border: 1px solid #d4c5a9;
+            transition: all 0.2s ease;
         }}
         
-        textarea {{
+        /* Text wrapper - flex grow, prevents layout blowout */
+        .input-wrapper {{
             flex: 1;
+            min-width: 0;
+        }}
+        
+        /* Auto-growing textarea - NO FIXED HEIGHT */
+        .auto-textarea {{
+            width: 100%;
             background: transparent;
             border: none;
-            color: #2c2418;
-            font-size: 16px;
-            resize: none;
             outline: none;
+            font-size: 16px;
+            line-height: 1.5;
+            resize: none;
             padding: 10px 0;
             font-family: inherit;
-            min-height: 40px;
-            width: 100%;
+            color: #2c2418;
+            min-height: 24px;
+            max-height: 180px;
+            overflow-y: auto;
         }}
         
-        textarea::placeholder {{
+        /* iOS Zoom Fix - font-size must be 16px or larger */
+        @media (max-width: 768px) {{
+            .auto-textarea {{
+                font-size: 16px !important;
+            }}
+        }}
+        
+        .auto-textarea::placeholder {{
             color: #b8a88a;
         }}
         
-        .input-wrapper button {{
-            background: #2c2418;
-            border: none;
-            border-radius: 25px;
-            padding: 8px 20px;
-            color: #f5f0e8;
-            font-weight: 500;
-            cursor: pointer;
-            font-size: 14px;
-            white-space: nowrap;
+        /* Fixed-size touch-friendly button - NEVER SHRINKS */
+        .submit-btn {{
+            display: flex;
+            align-items: center;
+            justify-content: center;
             flex-shrink: 0;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            border: none;
+            background-color: #2c2418;
+            color: white;
+            cursor: pointer;
+            transition: all 0.2s;
         }}
         
-        .input-wrapper button:hover {{
-            background: #4a3f2f;
+        .submit-btn:hover {{
+            background-color: #4a3f2f;
+            transform: scale(1.02);
         }}
         
+        .submit-btn:active {{
+            transform: scale(0.96);
+        }}
+        
+        .submit-icon {{
+            width: 20px;
+            height: 20px;
+            fill: currentColor;
+        }}
+        
+        /* Mobile touch target adjustments */
         @media (max-width: 768px) {{
             .input-area {{
                 padding: 10px 12px 16px;
             }}
-            .input-wrapper {{
-                padding: 6px 6px 6px 14px;
+            .input-container {{
+                gap: 10px;
+                padding: 6px 6px 6px 16px;
+                border-radius: 28px;
             }}
-            textarea {{
-                font-size: 16px;
+            .auto-textarea {{
                 padding: 8px 0;
+                font-size: 16px;
             }}
-            .input-wrapper button {{
-                padding: 6px 16px;
-                font-size: 13px;
+            .submit-btn {{
+                width: 40px;
+                height: 40px;
+            }}
+            .submit-icon {{
+                width: 18px;
+                height: 18px;
             }}
         }}
         
@@ -734,17 +775,21 @@ HTML = f"""
             .input-area {{
                 padding: 8px 10px 14px;
             }}
-            .input-wrapper {{
-                gap: 6px;
-                padding: 5px 5px 5px 12px;
+            .input-container {{
+                gap: 8px;
+                padding: 5px 5px 5px 14px;
             }}
-            textarea {{
+            .auto-textarea {{
                 font-size: 15px;
                 padding: 7px 0;
             }}
-            .input-wrapper button {{
-                padding: 5px 12px;
-                font-size: 12px;
+            .submit-btn {{
+                width: 38px;
+                height: 38px;
+            }}
+            .submit-icon {{
+                width: 16px;
+                height: 16px;
             }}
         }}
         
@@ -892,9 +937,15 @@ HTML = f"""
             </div>
             
             <div class="input-area">
-                <div class="input-wrapper">
-                    <textarea id="userInput" placeholder="Ask Yama anything..." rows="1" onkeypress="handleKey(event)"></textarea>
-                    <button onclick="sendMessage()">Send</button>
+                <div class="input-container">
+                    <div class="input-wrapper">
+                        <textarea class="auto-textarea" id="userInput" placeholder="Ask Yama anything..." rows="1" onkeypress="handleKey(event)"></textarea>
+                    </div>
+                    <button class="submit-btn" onclick="sendMessage()" aria-label="Send message">
+                        <svg class="submit-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+                        </svg>
+                    </button>
                 </div>
             </div>
         </div>
@@ -1039,10 +1090,15 @@ HTML = f"""
         
         const textarea = document.getElementById('userInput');
         
-        textarea.addEventListener('input', function() {{
+        // AUTO-ADJUST HEIGHT - Dual recalculation stage
+        function autoAdjustHeight() {{
+            // Stage 1: Reset height to auto to clear historical calculations
             this.style.height = 'auto';
-            this.style.height = Math.min(this.scrollHeight, 100) + 'px';
-        }});
+            // Stage 2: Set height directly to scrollHeight
+            this.style.height = this.scrollHeight + 'px';
+        }}
+        
+        textarea.addEventListener('input', autoAdjustHeight);
         
         function handleKey(e) {{
             if (e.key === 'Enter' && !e.shiftKey) {{
@@ -1154,11 +1210,11 @@ async def clear_history_endpoint():
 
 if __name__ == "__main__":
     print("\n" + "="*55)
-    print("🏛️ YAMA AI - COMPLETE EDITION")
+    print("🏛️ YAMA AI - GEMINI STYLE INPUT")
     print("="*55)
     print("🌐 Open: http://localhost:8000")
     print("🔐 Google Sign-In Working")
     print("📊 Level System Working")
-    print("📱 AUTO-ADJUST INPUT - WORKS ON ALL DEVICES")
+    print("📱 PERFECT AUTO-ADJUST INPUT - Gemini Style")
     print("="*55 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=10000)
