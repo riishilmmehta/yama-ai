@@ -192,7 +192,7 @@ def save_history(email, history):
 # ============ GOOGLE CLIENT ID ============
 GOOGLE_CLIENT_ID = "46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com"
 
-# ============ COMPLETE HTML WITH GEMINI-STYLE INPUT ============
+# ============ COMPLETE HTML ============
 HTML = f"""
 <!DOCTYPE html>
 <html lang="en">
@@ -569,121 +569,107 @@ HTML = f"""
         
         @keyframes bounce {{ 0%, 60%, 100% {{ transform: translateY(0); }} 30% {{ transform: translateY(-6px); }} }}
         
-        /* ========== GEMINI-STYLE AUTO-ADJUST INPUT ========== */
+        /* ========== SIMPLE WORKING INPUT AREA ========== */
         .input-area {{
             padding: 12px 16px 20px;
             background: linear-gradient(to top, #f5f0e8, transparent);
             flex-shrink: 0;
         }}
         
-        /* Gemini Minimal Container */
-        .gemini-minimal-container {{
+        .input-wrapper {{
             display: flex;
-            align-items: flex-end;
-            background-color: #ffffff;
-            border-radius: 28px;
-            padding: 8px 12px 8px 20px;
+            align-items: center;
             gap: 12px;
-            width: 100%;
-            max-width: 100%;
-            margin: 0 auto;
-            box-sizing: border-box;
+            background: white;
+            border-radius: 30px;
+            padding: 8px 8px 8px 20px;
             border: 1px solid #d4c5a9;
+            min-height: 56px;
+            height: auto;
+            width: 100%;
         }}
         
-        body.dark .gemini-minimal-container {{
-            background-color: #2a2a4e;
+        body.dark .input-wrapper {{
+            background: #2a2a4e;
             border-color: #3a3a5e;
         }}
         
-        .input-shell {{
+        textarea {{
             flex: 1;
-            min-width: 0;
-        }}
-        
-        .gemini-textarea {{
-            width: 100%;
             background: transparent;
             border: none;
-            outline: none;
-            font-size: 16px;
-            line-height: 1.5;
-            resize: none;
-            padding: 10px 0;
             color: #2c2418;
+            font-size: 16px;
+            resize: none;
+            outline: none;
+            padding: 12px 0;
             font-family: inherit;
-            max-height: 180px;
-            min-height: 24px;
+            min-height: 40px;
+            max-height: 120px;
+            width: 100%;
         }}
         
-        body.dark .gemini-textarea {{
-            color: #e0e0e0;
-        }}
-        
-        /* Fix for iOS zoom */
         @media (max-width: 768px) {{
-            .gemini-textarea {{
+            textarea {{
                 font-size: 16px !important;
             }}
         }}
         
-        .gemini-textarea::placeholder {{
+        body.dark textarea {{
+            color: #e0e0e0;
+        }}
+        
+        textarea::placeholder {{
             color: #b8a88a;
+            font-size: 0.95rem;
         }}
         
-        .gemini-send-btn {{
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-shrink: 0;
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
+        .input-wrapper button {{
+            background: #2c2418;
             border: none;
-            background-color: #2c2418;
-            color: #ffffff;
+            border-radius: 28px;
+            padding: 10px 24px;
+            color: #f5f0e8;
+            font-weight: 500;
             cursor: pointer;
-            transition: transform 0.1s ease, background-color 0.2s;
+            font-size: 0.9rem;
+            min-width: 70px;
+            white-space: nowrap;
+            transition: all 0.2s;
+            flex-shrink: 0;
         }}
         
-        .gemini-send-btn:hover {{
-            background-color: #4a3f2f;
+        .input-wrapper button:hover {{
+            background: #4a3f2f;
+            transform: scale(1.02);
         }}
         
-        .gemini-send-btn:active {{
-            transform: scale(0.95);
+        body.dark .input-wrapper button {{
+            background: #4a3f2f;
         }}
         
-        body.dark .gemini-send-btn {{
-            background-color: #4a3f2f;
+        body.dark .input-wrapper button:hover {{
+            background: #5a4f3f;
         }}
         
-        body.dark .gemini-send-btn:hover {{
-            background-color: #5a4f3f;
-        }}
-        
-        .send-icon {{
-            width: 18px;
-            height: 18px;
-            fill: currentColor;
-        }}
-        
-        /* Mobile adjustments */
+        /* Responsive adjustments */
         @media (max-width: 768px) {{
             .input-area {{
                 padding: 10px 12px 16px;
             }}
-            .gemini-minimal-container {{
-                padding: 6px 10px 6px 16px;
+            .input-wrapper {{
                 border-radius: 28px;
+                padding: 6px 6px 6px 16px;
+                min-height: 48px;
             }}
-            .gemini-send-btn {{
-                width: 36px;
-                height: 36px;
+            textarea {{
+                padding: 10px 0;
+                min-height: 36px;
             }}
-            .send-icon {{
-                width: 16px;
-                height: 16px;
+            .input-wrapper button {{
+                padding: 8px 18px;
+                min-width: 60px;
+                font-size: 0.85rem;
             }}
         }}
         
@@ -691,21 +677,21 @@ HTML = f"""
             .input-area {{
                 padding: 8px 10px 14px;
             }}
-            .gemini-minimal-container {{
-                padding: 5px 8px 5px 14px;
+            .input-wrapper {{
                 gap: 8px;
+                border-radius: 26px;
+                padding: 5px 5px 5px 14px;
+                min-height: 44px;
             }}
-            .gemini-send-btn {{
-                width: 32px;
-                height: 32px;
-            }}
-            .send-icon {{
-                width: 14px;
-                height: 14px;
-            }}
-            .gemini-textarea {{
+            textarea {{
                 font-size: 15px;
                 padding: 8px 0;
+                min-height: 32px;
+            }}
+            .input-wrapper button {{
+                padding: 6px 14px;
+                min-width: 55px;
+                font-size: 0.8rem;
             }}
         }}
         
@@ -866,15 +852,9 @@ HTML = f"""
             </div>
             
             <div class="input-area">
-                <div class="gemini-minimal-container">
-                    <div class="input-shell">
-                        <textarea class="gemini-textarea" id="userInput" placeholder="Ask Yama anything..." rows="1" onkeypress="handleKey(event)"></textarea>
-                    </div>
-                    <button class="gemini-send-btn" onclick="sendMessage()" aria-label="Send message">
-                        <svg class="send-icon" viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-                            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
-                        </svg>
-                    </button>
+                <div class="input-wrapper">
+                    <textarea id="userInput" placeholder="Ask Yama anything..." rows="1" onkeypress="handleKey(event)"></textarea>
+                    <button onclick="sendMessage()">Send</button>
                 </div>
             </div>
         </div>
@@ -1019,10 +999,10 @@ HTML = f"""
         
         const textarea = document.getElementById('userInput');
         
-        // Auto-adjust height - Gemini style
+        // Auto-adjust height
         textarea.addEventListener('input', function() {{
             this.style.height = 'auto';
-            this.style.height = Math.min(this.scrollHeight, 180) + 'px';
+            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
         }});
         
         function handleKey(e) {{
@@ -1135,11 +1115,11 @@ async def clear_history_endpoint():
 
 if __name__ == "__main__":
     print("\n" + "="*55)
-    print("🏛️ YAMA AI - GEMINI STYLE INPUT")
+    print("🏛️ YAMA AI - COMPLETE EDITION")
     print("="*55)
     print("🌐 Open: http://localhost:8000")
     print("🔐 Google Sign-In Working")
     print("📊 Level System Working")
-    print("📱 Gemini-Style Auto-Adjust Input")
+    print("📱 VISIBLE SEND BUTTON - Auto-adjusts on all devices")
     print("="*55 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=10000)
