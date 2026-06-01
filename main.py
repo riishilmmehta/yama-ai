@@ -192,7 +192,7 @@ def save_history(email, history):
 # ============ GOOGLE CLIENT ID ============
 GOOGLE_CLIENT_ID = "46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com"
 
-# ============ HTML WITH GOOGLE SIGN-IN ONLY ============
+# ============ HTML - EXACT ORIGINAL WITH ONLY GOOGLE SIGN-IN ADDED ============
 HTML = f'''
 <!DOCTYPE html>
 <html lang="en">
@@ -1174,6 +1174,6 @@ if __name__ == "__main__":
     print("🌐 Open: http://localhost:8000")
     print("🔐 Google Sign-In Working")
     print("📊 Level System Working")
-    print("📱 Auto-Adjust Input")
+    print("📱 Input Button UNCHANGED")
     print("="*55 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=10000)
