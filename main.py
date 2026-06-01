@@ -192,23 +192,18 @@ def save_history(email, history):
 # ============ GOOGLE CLIENT ID ============
 GOOGLE_CLIENT_ID = "46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com"
 
-# ============ COMPLETE HTML WITH PERFECT INPUT ============
-HTML = f"""
+# ============ HTML WITH GOOGLE SIGN-IN ONLY ============
+HTML = f'''
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Yama - AI Assistant</title>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
     <style>
-        * {{
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            -webkit-tap-highlight-color: transparent;
-        }}
+        * {{ margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }}
         
         html, body {{
             height: 100%;
@@ -240,12 +235,20 @@ HTML = f"""
             color: #d4c5a9;
         }}
         
-        body.dark .input-container {{
+        body.dark .input-wrapper {{
             background: #2a2a4e;
             border-color: #3a3a5e;
         }}
         
         body.dark textarea {{
+            color: #e0e0e0;
+        }}
+        
+        body.dark textarea::placeholder {{
+            color: #6a5a7a;
+        }}
+        
+        body.dark .message-content {{
             color: #e0e0e0;
         }}
         
@@ -312,6 +315,26 @@ HTML = f"""
         
         body.dark .new-chat-btn:hover {{
             background: #4a4a6e;
+        }}
+        
+        body.dark .typing span {{
+            background: #d4c5a9;
+        }}
+        
+        body.dark .typing {{
+            color: #d4c5a9;
+        }}
+        
+        body.dark a {{
+            color: #4ecdc4;
+        }}
+        
+        body.dark .message-content a {{
+            color: #4ecdc4;
+        }}
+        
+        body.dark .message-content a:hover {{
+            color: #6ee7de;
         }}
         
         body.dark .control-btn {{
@@ -599,7 +622,9 @@ HTML = f"""
             transition: all 0.2s;
         }}
         
-        .control-btn:hover {{ background: #d4c5a9; }}
+        .control-btn:hover {{
+            background: #d4c5a9;
+        }}
         
         .messages {{
             flex: 1;
@@ -611,7 +636,12 @@ HTML = f"""
         }}
         
         .message {{ margin-bottom: 20px; animation: fadeIn 0.3s ease; }}
-        @keyframes fadeIn {{ from {{ opacity: 0; transform: translateY(10px); }} to {{ opacity: 1; transform: translateY(0); }} }}
+        
+        @keyframes fadeIn {{
+            from {{ opacity: 0; transform: translateY(10px); }}
+            to {{ opacity: 1; transform: translateY(0); }}
+        }}
+        
         .user-message {{ text-align: right; }}
         .ai-message {{ text-align: left; }}
         
@@ -658,139 +688,66 @@ HTML = f"""
             animation: bounce 1.4s infinite;
         }}
         
-        @keyframes bounce {{ 0%, 60%, 100% {{ transform: translateY(0); }} 30% {{ transform: translateY(-6px); }} }}
+        @keyframes bounce {{
+            0%, 60%, 100% {{ transform: translateY(0); }}
+            30% {{ transform: translateY(-6px); }}
+        }}
         
-        /* ========== PERFECT AUTO-ADJUST INPUT - GEMINI STYLE ========== */
         .input-area {{
             padding: 12px 16px 20px;
             background: linear-gradient(to top, #f5f0e8, transparent);
             flex-shrink: 0;
         }}
         
-        /* Flex container - button anchors bottom-right */
-        .input-container {{
+        .input-wrapper {{
             display: flex;
-            align-items: flex-end;
+            align-items: center;
             gap: 12px;
-            width: 100%;
-            max-width: 760px;
-            margin: 0 auto;
             background: white;
-            border-radius: 28px;
+            border-radius: 30px;
             padding: 8px 8px 8px 20px;
             border: 1px solid #d4c5a9;
-            transition: all 0.2s ease;
+            min-height: 56px;
+            height: auto;
         }}
         
-        /* Text wrapper - flex grow, prevents layout blowout */
-        .input-wrapper {{
+        textarea {{
             flex: 1;
-            min-width: 0;
-        }}
-        
-        /* Auto-growing textarea - NO FIXED HEIGHT */
-        .auto-textarea {{
-            width: 100%;
             background: transparent;
             border: none;
-            outline: none;
-            font-size: 16px;
-            line-height: 1.5;
-            resize: none;
-            padding: 10px 0;
-            font-family: inherit;
             color: #2c2418;
-            min-height: 24px;
-            max-height: 180px;
+            font-size: 1rem;
+            resize: none;
+            outline: none;
+            padding: 12px 0;
+            font-family: inherit;
+            width: 100%;
+            min-height: 40px;
+            max-height: 120px;
             overflow-y: auto;
         }}
         
-        /* iOS Zoom Fix - font-size must be 16px or larger */
-        @media (max-width: 768px) {{
-            .auto-textarea {{
-                font-size: 16px !important;
-            }}
-        }}
+        textarea::placeholder {{ color: #b8a88a; font-size: 0.95rem; }}
         
-        .auto-textarea::placeholder {{
-            color: #b8a88a;
-        }}
-        
-        /* Fixed-size touch-friendly button - NEVER SHRINKS */
-        .submit-btn {{
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-shrink: 0;
-            width: 44px;
-            height: 44px;
-            border-radius: 50%;
+        .input-wrapper button {{
+            background: #2c2418;
             border: none;
-            background-color: #2c2418;
-            color: white;
+            border-radius: 28px;
+            padding: 10px 24px;
+            color: #f5f0e8;
+            font-weight: 500;
             cursor: pointer;
+            font-size: 0.9rem;
+            min-width: 70px;
+            width: auto;
+            white-space: nowrap;
             transition: all 0.2s;
+            flex-shrink: 0;
         }}
         
-        .submit-btn:hover {{
-            background-color: #4a3f2f;
+        .input-wrapper button:hover {{
+            background: #4a3f2f;
             transform: scale(1.02);
-        }}
-        
-        .submit-btn:active {{
-            transform: scale(0.96);
-        }}
-        
-        .submit-icon {{
-            width: 20px;
-            height: 20px;
-            fill: currentColor;
-        }}
-        
-        /* Mobile touch target adjustments */
-        @media (max-width: 768px) {{
-            .input-area {{
-                padding: 10px 12px 16px;
-            }}
-            .input-container {{
-                gap: 10px;
-                padding: 6px 6px 6px 16px;
-                border-radius: 28px;
-            }}
-            .auto-textarea {{
-                padding: 8px 0;
-                font-size: 16px;
-            }}
-            .submit-btn {{
-                width: 40px;
-                height: 40px;
-            }}
-            .submit-icon {{
-                width: 18px;
-                height: 18px;
-            }}
-        }}
-        
-        @media (max-width: 480px) {{
-            .input-area {{
-                padding: 8px 10px 14px;
-            }}
-            .input-container {{
-                gap: 8px;
-                padding: 5px 5px 5px 14px;
-            }}
-            .auto-textarea {{
-                font-size: 15px;
-                padding: 7px 0;
-            }}
-            .submit-btn {{
-                width: 38px;
-                height: 38px;
-            }}
-            .submit-icon {{
-                width: 16px;
-                height: 16px;
-            }}
         }}
         
         .welcome {{
@@ -859,33 +816,54 @@ HTML = f"""
             .logo h1 {{ font-size: 1.1rem; }}
             .logo-icon {{ font-size: 1.4rem; }}
             .messages {{ padding: 12px; }}
+            .input-area {{ padding: 10px 12px 16px; }}
+            .input-wrapper {{ border-radius: 28px; padding: 6px 6px 6px 16px; min-height: 48px; }}
+            textarea {{ font-size: 0.9rem; padding: 10px 0; min-height: 36px; max-height: 100px; }}
+            .input-wrapper button {{ padding: 8px 18px; min-width: 60px; font-size: 0.85rem; }}
+            .control-btn {{ font-size: 1rem; padding: 6px 10px; }}
+        }}
+        
+        @media (min-width: 769px) {{
+            .input-wrapper {{ border-radius: 32px; padding: 10px 10px 10px 24px; min-height: 64px; }}
+            textarea {{ font-size: 1rem; padding: 14px 0; min-height: 44px; max-height: 140px; }}
+            .input-wrapper button {{ padding: 12px 28px; min-width: 80px; font-size: 1rem; }}
+        }}
+        
+        @media (max-width: 480px) {{
+            .input-area {{ padding: 8px 10px 12px; }}
+            .input-wrapper {{ gap: 8px; border-radius: 26px; padding: 5px 5px 5px 14px; min-height: 44px; }}
+            textarea {{ font-size: 0.85rem; padding: 8px 0; min-height: 32px; max-height: 80px; }}
+            .input-wrapper button {{ padding: 7px 14px; min-width: 55px; font-size: 0.8rem; }}
+            .control-btn {{ font-size: 0.9rem; padding: 5px 8px; }}
         }}
     </style>
 </head>
 <body>
+    <!-- LOGIN OVERLAY -->
     <div id="loginOverlay" class="login-overlay">
         <div class="login-card">
             <div class="logo-icon">🏛️</div>
             <h2>Welcome to Yama</h2>
             <p>Sign in to start your AI journey</p>
             <div id="g_id_onload"
-                 data-client_id=\"{GOOGLE_CLIENT_ID}\"
-                 data-context=\"signin\"
-                 data-ux_mode=\"popup\"
-                 data-callback=\"handleCredentialResponse\"
-                 data-auto_prompt=\"false\">
+                 data-client_id="{GOOGLE_CLIENT_ID}"
+                 data-context="signin"
+                 data-ux_mode="popup"
+                 data-callback="handleCredentialResponse"
+                 data-auto_prompt="false">
             </div>
-            <div class=\"g_id_signin\"
-                 data-type=\"standard\"
-                 data-shape=\"rectangular\"
-                 data-theme=\"outline\"
-                 data-text=\"signin_with\"
-                 data-size=\"large\"
-                 data-logo_alignment=\"left\">
+            <div class="g_id_signin"
+                 data-type="standard"
+                 data-shape="rectangular"
+                 data-theme="outline"
+                 data-text="signin_with"
+                 data-size="large"
+                 data-logo_alignment="left">
             </div>
         </div>
     </div>
     
+    <!-- MAIN APP -->
     <div class="app" id="app">
         <div class="overlay" id="overlay" onclick="closeSidebar()"></div>
         
@@ -937,15 +915,9 @@ HTML = f"""
             </div>
             
             <div class="input-area">
-                <div class="input-container">
-                    <div class="input-wrapper">
-                        <textarea class="auto-textarea" id="userInput" placeholder="Ask Yama anything..." rows="1" onkeypress="handleKey(event)"></textarea>
-                    </div>
-                    <button class="submit-btn" onclick="sendMessage()" aria-label="Send message">
-                        <svg class="submit-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
-                        </svg>
-                    </button>
+                <div class="input-wrapper">
+                    <textarea id="userInput" placeholder="Ask Yama anything..." rows="1" onkeypress="handleKey(event)"></textarea>
+                    <button onclick="sendMessage()">Send</button>
                 </div>
             </div>
         </div>
@@ -1089,16 +1061,10 @@ HTML = f"""
         }}
         
         const textarea = document.getElementById('userInput');
-        
-        // AUTO-ADJUST HEIGHT - Dual recalculation stage
-        function autoAdjustHeight() {{
-            // Stage 1: Reset height to auto to clear historical calculations
+        textarea.addEventListener('input', function() {{
             this.style.height = 'auto';
-            // Stage 2: Set height directly to scrollHeight
-            this.style.height = this.scrollHeight + 'px';
-        }}
-        
-        textarea.addEventListener('input', autoAdjustHeight);
+            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+        }});
         
         function handleKey(e) {{
             if (e.key === 'Enter' && !e.shiftKey) {{
@@ -1161,18 +1127,11 @@ HTML = f"""
     </script>
 </body>
 </html>
-"""
+'''
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
     return HTML
-
-@app.get("/get_user_stats")
-async def get_user_stats(email: str = ""):
-    user = user_db.get(User.email == email)
-    if user:
-        return {"level": user.get("level", 1), "title": user.get("title", "🌟 Newbie Chatter")}
-    return {"level": 1, "title": "🌟 Newbie Chatter"}
 
 @app.post("/set_user")
 async def set_user(request: Request):
@@ -1210,11 +1169,11 @@ async def clear_history_endpoint():
 
 if __name__ == "__main__":
     print("\n" + "="*55)
-    print("🏛️ YAMA AI - GEMINI STYLE INPUT")
+    print("🏛️ YAMA AI - WITH GOOGLE SIGN-IN")
     print("="*55)
     print("🌐 Open: http://localhost:8000")
     print("🔐 Google Sign-In Working")
     print("📊 Level System Working")
-    print("📱 PERFECT AUTO-ADJUST INPUT - Gemini Style")
+    print("📱 Auto-Adjust Input")
     print("="*55 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=10000)
