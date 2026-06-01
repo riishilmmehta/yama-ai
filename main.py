@@ -192,7 +192,7 @@ def save_history(email, history):
 # ============ GOOGLE CLIENT ID ============
 GOOGLE_CLIENT_ID = "46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com"
 
-# ============ COMPLETE HTML WITH AUTO-ADJUST INPUT ============
+# ============ COMPLETE HTML - ORIGINAL STRUCTURE WITH AUTO-ADJUST ============
 HTML = f"""
 <!DOCTYPE html>
 <html lang="en">
@@ -203,7 +203,12 @@ HTML = f"""
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
     <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }}
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }}
         
         html, body {{
             height: 100%;
@@ -216,6 +221,107 @@ HTML = f"""
             font-family: 'Inter', sans-serif;
             background: #f5f0e8;
             transition: all 0.3s ease;
+        }}
+        
+        /* Dark Mode Styles */
+        body.dark {{
+            background: #1a1a2e;
+        }}
+        
+        body.dark .app {{
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        }}
+        
+        body.dark .header {{
+            background: rgba(26,26,46,0.95);
+            border-bottom-color: #2a2a4e;
+        }}
+        
+        body.dark .logo h1 {{
+            color: #d4c5a9;
+        }}
+        
+        body.dark .input-wrapper {{
+            background: #2a2a4e;
+            border-color: #3a3a5e;
+        }}
+        
+        body.dark textarea {{
+            color: #e0e0e0;
+        }}
+        
+        body.dark .ai-message .message-content {{
+            background: #2a2a4e !important;
+            color: #e0e0e0 !important;
+        }}
+        
+        body.dark .suggestion {{
+            background: #2a2a4e;
+            border-color: #3a3a5e;
+            color: #e0e0e0;
+        }}
+        
+        body.dark .suggestion:hover {{
+            background: #3a3a5e;
+            color: white;
+        }}
+        
+        body.dark .welcome h2 {{
+            color: #d4c5a9;
+        }}
+        
+        body.dark .welcome p {{
+            color: #8a7a6a;
+        }}
+        
+        body.dark .sidebar {{
+            background: #0f0f23;
+            border-right-color: #2a2a4e;
+        }}
+        
+        body.dark .sidebar-header {{
+            background: #0a0a1a;
+        }}
+        
+        body.dark .history-question {{
+            color: #d4c5a9;
+        }}
+        
+        body.dark .history-time {{
+            color: #6a5a7a;
+        }}
+        
+        body.dark .history-item:hover {{
+            background: rgba(212,197,169,0.08);
+            border-color: #3a3a5e;
+        }}
+        
+        body.dark .clear-history {{
+            color: #d4c5a9;
+            border-color: #3a3a5e;
+        }}
+        
+        body.dark .clear-history:hover {{
+            background: rgba(212,197,169,0.2);
+            border-color: #c4a57b;
+        }}
+        
+        body.dark .new-chat-btn {{
+            background: #3a3a5e;
+            color: #d4c5a9;
+        }}
+        
+        body.dark .new-chat-btn:hover {{
+            background: #4a4a6e;
+        }}
+        
+        body.dark .control-btn {{
+            color: #d4c5a9;
+        }}
+        
+        body.dark .control-btn:hover {{
+            background: #3a3a5e;
+            color: white;
         }}
         
         .login-overlay {{
@@ -241,18 +347,26 @@ HTML = f"""
             box-shadow: 0 25px 50px rgba(0,0,0,0.2);
         }}
         
-        .login-card .logo-icon {{ font-size: 4rem; margin-bottom: 20px; }}
-        .login-card h2 {{ font-family: 'Playfair Display', serif; font-size: 2rem; margin-bottom: 10px; }}
-        .login-card p {{ color: #666; margin-bottom: 30px; }}
+        .login-card .logo-icon {{
+            font-size: 4rem;
+            margin-bottom: 20px;
+        }}
+        
+        .login-card h2 {{
+            font-family: 'Playfair Display', serif;
+            font-size: 2rem;
+            margin-bottom: 10px;
+        }}
+        
+        .login-card p {{
+            color: #666;
+            margin-bottom: 30px;
+        }}
         
         .app {{
             display: none;
             height: 100vh;
             background: linear-gradient(135deg, #f5f0e8 0%, #e8e0d5 100%);
-        }}
-        
-        body.dark .app {{
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
         }}
         
         .sidebar {{
@@ -271,7 +385,9 @@ HTML = f"""
             box-shadow: 4px 0 20px rgba(0,0,0,0.1);
         }}
         
-        .sidebar.open {{ transform: translateX(0); }}
+        .sidebar.open {{
+            transform: translateX(0);
+        }}
         
         .sidebar-header {{
             padding: 20px;
@@ -394,7 +510,9 @@ HTML = f"""
             transition: all 0.2s;
         }}
         
-        .new-chat-btn:hover {{ background: #5a4f3f; }}
+        .new-chat-btn:hover {{
+            background: #5a4f3f;
+        }}
         
         .clear-history {{
             background: rgba(212,197,169,0.1);
@@ -419,7 +537,9 @@ HTML = f"""
             z-index: 999;
         }}
         
-        .overlay.show {{ display: block; }}
+        .overlay.show {{
+            display: block;
+        }}
         
         .main {{
             flex: 1;
@@ -440,11 +560,6 @@ HTML = f"""
             flex-shrink: 0;
         }}
         
-        body.dark .header {{
-            background: rgba(26,26,46,0.95);
-            border-bottom-color: #2a2a4e;
-        }}
-        
         .menu-btn {{
             background: none;
             border: none;
@@ -455,7 +570,10 @@ HTML = f"""
             border-radius: 10px;
         }}
         
-        .menu-btn:hover {{ background: #d4c5a9; color: #2c2418; }}
+        .menu-btn:hover {{
+            background: #d4c5a9;
+            color: #2c2418;
+        }}
         
         .logo {{
             flex: 1;
@@ -464,9 +582,15 @@ HTML = f"""
             gap: 6px;
         }}
         
-        .logo-icon {{ font-size: 1.8rem; }}
-        .logo h1 {{ font-family: 'Playfair Display', serif; font-size: 1.3rem; color: #2c2418; }}
-        body.dark .logo h1 {{ color: #d4c5a9; }}
+        .logo-icon {{
+            font-size: 1.8rem;
+        }}
+        
+        .logo h1 {{
+            font-family: 'Playfair Display', serif;
+            font-size: 1.3rem;
+            color: #2c2418;
+        }}
         
         .user-btn {{
             background: none;
@@ -504,9 +628,9 @@ HTML = f"""
             transition: all 0.2s;
         }}
         
-        .control-btn:hover {{ background: #d4c5a9; }}
-        body.dark .control-btn {{ color: #d4c5a9; }}
-        body.dark .control-btn:hover {{ background: #3a3a5e; color: white; }}
+        .control-btn:hover {{
+            background: #d4c5a9;
+        }}
         
         .messages {{
             flex: 1;
@@ -517,10 +641,29 @@ HTML = f"""
             min-height: 0;
         }}
         
-        .message {{ margin-bottom: 20px; animation: fadeIn 0.3s ease; }}
-        @keyframes fadeIn {{ from {{ opacity: 0; transform: translateY(10px); }} to {{ opacity: 1; transform: translateY(0); }} }}
-        .user-message {{ text-align: right; }}
-        .ai-message {{ text-align: left; }}
+        .message {{
+            margin-bottom: 20px;
+            animation: fadeIn 0.3s ease;
+        }}
+        
+        @keyframes fadeIn {{
+            from {{
+                opacity: 0;
+                transform: translateY(10px);
+            }}
+            to {{
+                opacity: 1;
+                transform: translateY(0);
+            }}
+        }}
+        
+        .user-message {{
+            text-align: right;
+        }}
+        
+        .ai-message {{
+            text-align: left;
+        }}
         
         .message-content {{
             display: inline-block;
@@ -547,8 +690,6 @@ HTML = f"""
             box-shadow: 0 2px 5px rgba(0,0,0,0.05);
         }}
         
-        body.dark .ai-message .message-content {{ background: #2a2a4e !important; color: #e0e0e0 !important; }}
-        
         .typing {{
             display: none;
             padding: 10px 16px;
@@ -567,144 +708,100 @@ HTML = f"""
             animation: bounce 1.4s infinite;
         }}
         
-        @keyframes bounce {{ 0%, 60%, 100% {{ transform: translateY(0); }} 30% {{ transform: translateY(-6px); }} }}
+        @keyframes bounce {{
+            0%, 60%, 100% {{
+                transform: translateY(0);
+            }}
+            30% {{
+                transform: translateY(-6px);
+            }}
+        }}
         
-        /* ========== AUTO-ADJUST INPUT FOR ALL DEVICES ========== */
+        /* ========== AUTO-ADJUST INPUT SECTION ========== */
         .input-area {{
             padding: 12px 16px 20px;
             background: linear-gradient(to top, #f5f0e8, transparent);
             flex-shrink: 0;
         }}
         
-        /* Responsive container that handles all screen variations */
-        .chat-input-wrapper {{
+        .input-wrapper {{
             display: flex;
-            align-items: flex-end;
-            gap: 8px;
-            width: 100%;
-            max-width: 800px;
-            padding: 8px 12px;
-            background-color: #ffffff;
+            align-items: center;
+            gap: clamp(8px, 2vw, 12px);
+            background: white;
+            border-radius: clamp(28px, 5vw, 32px);
+            padding: clamp(6px, 1.5vw, 10px) clamp(6px, 1.5vw, 10px) clamp(6px, 1.5vw, 10px) clamp(16px, 4vw, 24px);
             border: 1px solid #d4c5a9;
-            border-radius: 24px;
-            box-sizing: border-box;
-            margin: 0 auto;
+            min-height: clamp(48px, 8vh, 64px);
+            height: auto;
+            width: 100%;
         }}
         
-        body.dark .chat-input-wrapper {{
-            background-color: #2a2a4e;
-            border-color: #3a3a5e;
-        }}
-        
-        /* Flex-grow input field */
-        .chat-input-field {{
+        textarea {{
             flex: 1;
-            min-width: 0;
-            min-height: 24px;
-            max-height: 160px;
-            padding: 8px 4px;
-            font-size: 16px;
-            line-height: 1.5;
-            border: none;
-            outline: none;
-            resize: none;
             background: transparent;
-            font-family: 'Inter', sans-serif;
+            border: none;
+            color: #2c2418;
+            font-size: clamp(14px, 4vw, 16px);
+            resize: none;
+            outline: none;
+            padding: clamp(8px, 2vw, 12px) 0;
+            font-family: inherit;
+            width: 100%;
+            min-height: clamp(36px, 6vh, 44px);
+            max-height: 120px;
+            overflow-y: auto;
+            line-height: 1.4;
         }}
         
-        /* Critical: Prevents iOS Safari from forced auto-zooming */
+        /* IMPORTANT: Prevents zoom on mobile */
         @media (max-width: 768px) {{
-            .chat-input-field {{
+            textarea {{
                 font-size: 16px !important;
             }}
         }}
         
-        body.dark .chat-input-field {{
-            color: #e0e0e0;
-        }}
-        
-        .chat-input-field::placeholder {{
+        textarea::placeholder {{
             color: #b8a88a;
+            font-size: clamp(12px, 3.5vw, 14px);
         }}
         
-        /* Fixed-size touch-friendly button */
-        .chat-submit-btn {{
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-shrink: 0;
-            width: 44px;
-            height: 44px;
-            border-radius: 50%;
+        .input-wrapper button {{
+            background: #2c2418;
             border: none;
-            background-color: #2c2418;
-            color: #ffffff;
+            border-radius: clamp(25px, 5vw, 28px);
+            padding: clamp(8px, 2vw, 12px) clamp(16px, 4vw, 28px);
+            color: #f5f0e8;
+            font-weight: 500;
             cursor: pointer;
+            font-size: clamp(12px, 3.5vw, 16px);
+            min-width: clamp(55px, 15vw, 80px);
+            width: auto;
+            white-space: nowrap;
             transition: all 0.2s;
+            flex-shrink: 0;
+            -webkit-tap-highlight-color: transparent;
         }}
         
-        .chat-submit-btn:hover {{
-            background-color: #4a3f2f;
+        .input-wrapper button:hover {{
+            background: #4a3f2f;
             transform: scale(1.02);
         }}
         
-        .chat-submit-btn:active {{
+        .input-wrapper button:active {{
             transform: scale(0.98);
         }}
         
-        body.dark .chat-submit-btn {{
-            background-color: #4a3f2f;
-        }}
-        
-        body.dark .chat-submit-btn:hover {{
-            background-color: #5a4f3f;
-        }}
-        
-        .send-icon {{
-            width: 20px;
-            height: 20px;
-            fill: currentColor;
-        }}
-        
-        /* Mobile adjustments */
+        /* Mobile specific adjustments */
         @media (max-width: 768px) {{
             .input-area {{
                 padding: 10px 12px 16px;
-            }}
-            .chat-input-wrapper {{
-                padding: 6px 10px;
-                border-radius: 28px;
-            }}
-            .chat-input-field {{
-                font-size: 16px !important;
-                padding: 6px 2px;
-            }}
-            .chat-submit-btn {{
-                width: 38px;
-                height: 38px;
-            }}
-            .send-icon {{
-                width: 18px;
-                height: 18px;
             }}
         }}
         
         @media (max-width: 480px) {{
             .input-area {{
                 padding: 8px 10px 14px;
-            }}
-            .chat-input-wrapper {{
-                padding: 5px 8px;
-                gap: 6px;
-                border-radius: 26px;
-            }}
-            .chat-submit-btn {{
-                width: 34px;
-                height: 34px;
-            }}
-            .send-icon {{
-                width: 16px;
-                height: 16px;
             }}
         }}
         
@@ -724,8 +821,12 @@ HTML = f"""
         }}
         
         @keyframes float {{
-            0%, 100% {{ transform: translateY(0); }}
-            50% {{ transform: translateY(-8px); }}
+            0%, 100% {{
+                transform: translateY(0);
+            }}
+            50% {{
+                transform: translateY(-8px);
+            }}
         }}
         
         .welcome h2 {{
@@ -734,8 +835,6 @@ HTML = f"""
             color: #2c2418;
             margin-bottom: 8px;
         }}
-        
-        body.dark .welcome h2 {{ color: #d4c5a9; }}
         
         .welcome p {{
             color: #6a5a4a;
@@ -766,17 +865,6 @@ HTML = f"""
             background: #2c2418;
             color: white;
             border-color: #2c2418;
-        }}
-        
-        body.dark .suggestion {{
-            background: #2a2a4e;
-            border-color: #3a3a5e;
-            color: #e0e0e0;
-        }}
-        
-        body.dark .suggestion:hover {{
-            background: #3a3a5e;
-            color: white;
         }}
     </style>
 </head>
@@ -857,13 +945,9 @@ HTML = f"""
             </div>
             
             <div class="input-area">
-                <div class="chat-input-wrapper">
-                    <textarea class="chat-input-field" id="userInput" placeholder="Ask Yama anything..." rows="1" onkeypress="handleKey(event)"></textarea>
-                    <button class="chat-submit-btn" onclick="sendMessage()" aria-label="Send message">
-                        <svg class="send-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
-                        </svg>
-                    </button>
+                <div class="input-wrapper">
+                    <textarea id="userInput" placeholder="Ask Yama anything..." rows="1" onkeypress="handleKey(event)"></textarea>
+                    <button onclick="sendMessage()">Send</button>
                 </div>
             </div>
         </div>
@@ -1006,17 +1090,17 @@ HTML = f"""
             }}
         }}
         
-        // Auto-adjust height function for textarea
         const textarea = document.getElementById('userInput');
         
+        // Auto-adjust height function
         function autoAdjustHeight() {{
             this.style.height = 'auto';
-            this.style.height = Math.min(this.scrollHeight, 160) + 'px';
+            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
         }}
         
         textarea.addEventListener('input', autoAdjustHeight);
         
-        // Fix for mobile focus - ensures keyboard doesn't break layout
+        // Fix for mobile focus
         textarea.addEventListener('focus', function() {{
             setTimeout(() => {{
                 scrollToBottom();
