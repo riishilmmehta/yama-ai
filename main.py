@@ -203,7 +203,12 @@ HTML = f"""
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
     <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }}
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }}
         
         html, body {{
             height: 100%;
@@ -216,6 +221,106 @@ HTML = f"""
             font-family: 'Inter', sans-serif;
             background: #f5f0e8;
             transition: all 0.3s ease;
+        }}
+        
+        body.dark {{
+            background: #1a1a2e;
+        }}
+        
+        body.dark .app {{
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        }}
+        
+        body.dark .header {{
+            background: rgba(26,26,46,0.95);
+            border-bottom-color: #2a2a4e;
+        }}
+        
+        body.dark .logo h1 {{
+            color: #d4c5a9;
+        }}
+        
+        body.dark .input-wrapper {{
+            background: #2a2a4e;
+            border-color: #3a3a5e;
+        }}
+        
+        body.dark textarea {{
+            color: #e0e0e0;
+        }}
+        
+        body.dark .ai-message .message-content {{
+            background: #2a2a4e !important;
+            color: #e0e0e0 !important;
+        }}
+        
+        body.dark .suggestion {{
+            background: #2a2a4e;
+            border-color: #3a3a5e;
+            color: #e0e0e0;
+        }}
+        
+        body.dark .suggestion:hover {{
+            background: #3a3a5e;
+            color: white;
+        }}
+        
+        body.dark .welcome h2 {{
+            color: #d4c5a9;
+        }}
+        
+        body.dark .welcome p {{
+            color: #8a7a6a;
+        }}
+        
+        body.dark .sidebar {{
+            background: #0f0f23;
+            border-right-color: #2a2a4e;
+        }}
+        
+        body.dark .sidebar-header {{
+            background: #0a0a1a;
+        }}
+        
+        body.dark .history-question {{
+            color: #d4c5a9;
+        }}
+        
+        body.dark .history-time {{
+            color: #6a5a7a;
+        }}
+        
+        body.dark .history-item:hover {{
+            background: rgba(212,197,169,0.08);
+            border-color: #3a3a5e;
+        }}
+        
+        body.dark .clear-history {{
+            color: #d4c5a9;
+            border-color: #3a3a5e;
+        }}
+        
+        body.dark .clear-history:hover {{
+            background: rgba(212,197,169,0.2);
+            border-color: #c4a57b;
+        }}
+        
+        body.dark .new-chat-btn {{
+            background: #3a3a5e;
+            color: #d4c5a9;
+        }}
+        
+        body.dark .new-chat-btn:hover {{
+            background: #4a4a6e;
+        }}
+        
+        body.dark .control-btn {{
+            color: #d4c5a9;
+        }}
+        
+        body.dark .control-btn:hover {{
+            background: #3a3a5e;
+            color: white;
         }}
         
         .login-overlay {{
@@ -249,10 +354,6 @@ HTML = f"""
             display: none;
             height: 100vh;
             background: linear-gradient(135deg, #f5f0e8 0%, #e8e0d5 100%);
-        }}
-        
-        body.dark .app {{
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
         }}
         
         .sidebar {{
@@ -440,11 +541,6 @@ HTML = f"""
             flex-shrink: 0;
         }}
         
-        body.dark .header {{
-            background: rgba(26,26,46,0.95);
-            border-bottom-color: #2a2a4e;
-        }}
-        
         .menu-btn {{
             background: none;
             border: none;
@@ -466,7 +562,6 @@ HTML = f"""
         
         .logo-icon {{ font-size: 1.8rem; }}
         .logo h1 {{ font-family: 'Playfair Display', serif; font-size: 1.3rem; color: #2c2418; }}
-        body.dark .logo h1 {{ color: #d4c5a9; }}
         
         .user-btn {{
             background: none;
@@ -505,8 +600,6 @@ HTML = f"""
         }}
         
         .control-btn:hover {{ background: #d4c5a9; }}
-        body.dark .control-btn {{ color: #d4c5a9; }}
-        body.dark .control-btn:hover {{ background: #3a3a5e; color: white; }}
         
         .messages {{
             flex: 1;
@@ -547,8 +640,6 @@ HTML = f"""
             box-shadow: 0 2px 5px rgba(0,0,0,0.05);
         }}
         
-        body.dark .ai-message .message-content {{ background: #2a2a4e !important; color: #e0e0e0 !important; }}
-        
         .typing {{
             display: none;
             padding: 10px 16px;
@@ -569,7 +660,7 @@ HTML = f"""
         
         @keyframes bounce {{ 0%, 60%, 100% {{ transform: translateY(0); }} 30% {{ transform: translateY(-6px); }} }}
         
-        /* ========== SIMPLE WORKING INPUT AREA ========== */
+        /* ========== SIMPLE AUTO-ADJUST INPUT - WORKS ON ALL DEVICES ========== */
         .input-area {{
             padding: 12px 16px 20px;
             background: linear-gradient(to top, #f5f0e8, transparent);
@@ -579,19 +670,12 @@ HTML = f"""
         .input-wrapper {{
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 10px;
             background: white;
             border-radius: 30px;
-            padding: 8px 8px 8px 20px;
+            padding: 8px 8px 8px 18px;
             border: 1px solid #d4c5a9;
-            min-height: 56px;
-            height: auto;
             width: 100%;
-        }}
-        
-        body.dark .input-wrapper {{
-            background: #2a2a4e;
-            border-color: #3a3a5e;
         }}
         
         textarea {{
@@ -602,74 +686,47 @@ HTML = f"""
             font-size: 16px;
             resize: none;
             outline: none;
-            padding: 12px 0;
+            padding: 10px 0;
             font-family: inherit;
             min-height: 40px;
-            max-height: 120px;
             width: 100%;
-        }}
-        
-        @media (max-width: 768px) {{
-            textarea {{
-                font-size: 16px !important;
-            }}
-        }}
-        
-        body.dark textarea {{
-            color: #e0e0e0;
         }}
         
         textarea::placeholder {{
             color: #b8a88a;
-            font-size: 0.95rem;
         }}
         
         .input-wrapper button {{
             background: #2c2418;
             border: none;
-            border-radius: 28px;
-            padding: 10px 24px;
+            border-radius: 25px;
+            padding: 8px 20px;
             color: #f5f0e8;
             font-weight: 500;
             cursor: pointer;
-            font-size: 0.9rem;
-            min-width: 70px;
+            font-size: 14px;
             white-space: nowrap;
-            transition: all 0.2s;
             flex-shrink: 0;
         }}
         
         .input-wrapper button:hover {{
             background: #4a3f2f;
-            transform: scale(1.02);
         }}
         
-        body.dark .input-wrapper button {{
-            background: #4a3f2f;
-        }}
-        
-        body.dark .input-wrapper button:hover {{
-            background: #5a4f3f;
-        }}
-        
-        /* Responsive adjustments */
         @media (max-width: 768px) {{
             .input-area {{
                 padding: 10px 12px 16px;
             }}
             .input-wrapper {{
-                border-radius: 28px;
-                padding: 6px 6px 6px 16px;
-                min-height: 48px;
+                padding: 6px 6px 6px 14px;
             }}
             textarea {{
-                padding: 10px 0;
-                min-height: 36px;
+                font-size: 16px;
+                padding: 8px 0;
             }}
             .input-wrapper button {{
-                padding: 8px 18px;
-                min-width: 60px;
-                font-size: 0.85rem;
+                padding: 6px 16px;
+                font-size: 13px;
             }}
         }}
         
@@ -678,20 +735,16 @@ HTML = f"""
                 padding: 8px 10px 14px;
             }}
             .input-wrapper {{
-                gap: 8px;
-                border-radius: 26px;
-                padding: 5px 5px 5px 14px;
-                min-height: 44px;
+                gap: 6px;
+                padding: 5px 5px 5px 12px;
             }}
             textarea {{
                 font-size: 15px;
-                padding: 8px 0;
-                min-height: 32px;
+                padding: 7px 0;
             }}
             .input-wrapper button {{
-                padding: 6px 14px;
-                min-width: 55px;
-                font-size: 0.8rem;
+                padding: 5px 12px;
+                font-size: 12px;
             }}
         }}
         
@@ -722,8 +775,6 @@ HTML = f"""
             margin-bottom: 8px;
         }}
         
-        body.dark .welcome h2 {{ color: #d4c5a9; }}
-        
         .welcome p {{
             color: #6a5a4a;
             font-size: 0.85rem;
@@ -753,17 +804,6 @@ HTML = f"""
             background: #2c2418;
             color: white;
             border-color: #2c2418;
-        }}
-        
-        body.dark .suggestion {{
-            background: #2a2a4e;
-            border-color: #3a3a5e;
-            color: #e0e0e0;
-        }}
-        
-        body.dark .suggestion:hover {{
-            background: #3a3a5e;
-            color: white;
         }}
         
         @media (max-width: 768px) {{
@@ -999,10 +1039,9 @@ HTML = f"""
         
         const textarea = document.getElementById('userInput');
         
-        // Auto-adjust height
         textarea.addEventListener('input', function() {{
             this.style.height = 'auto';
-            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+            this.style.height = Math.min(this.scrollHeight, 100) + 'px';
         }});
         
         function handleKey(e) {{
@@ -1120,6 +1159,6 @@ if __name__ == "__main__":
     print("🌐 Open: http://localhost:8000")
     print("🔐 Google Sign-In Working")
     print("📊 Level System Working")
-    print("📱 VISIBLE SEND BUTTON - Auto-adjusts on all devices")
+    print("📱 AUTO-ADJUST INPUT - WORKS ON ALL DEVICES")
     print("="*55 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=10000)
