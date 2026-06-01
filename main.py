@@ -152,7 +152,7 @@ def save_history(email, history):
 # ============ GOOGLE CLIENT ID ============
 GOOGLE_CLIENT_ID = "46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com"
 
-# ============ COMPLETE HTML ============
+# ============ COMPLETE HTML WITH AUTO-ADJUST INPUT ============
 HTML = f"""
 <!DOCTYPE html>
 <html lang="en">
@@ -178,7 +178,6 @@ HTML = f"""
             transition: all 0.3s ease;
         }}
         
-        /* Login Overlay */
         .login-overlay {{
             position: fixed;
             top: 0;
@@ -206,7 +205,6 @@ HTML = f"""
         .login-card h2 {{ font-family: 'Playfair Display', serif; font-size: 1.8rem; margin-bottom: 8px; }}
         .login-card p {{ color: #666; font-size: 0.85rem; margin-bottom: 25px; }}
         
-        /* Main App */
         .app {{
             display: none;
             height: 100vh;
@@ -217,7 +215,6 @@ HTML = f"""
             background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
         }}
         
-        /* Sidebar */
         .sidebar {{
             position: fixed;
             left: 0;
@@ -249,7 +246,6 @@ HTML = f"""
             font-size: 1rem;
         }}
         
-        /* User Profile in Sidebar */
         .user-profile {{
             display: none;
             align-items: center;
@@ -391,7 +387,6 @@ HTML = f"""
         
         .overlay.show {{ display: block; }}
         
-        /* Main Content */
         .main {{
             flex: 1;
             display: flex;
@@ -480,7 +475,6 @@ HTML = f"""
         body.dark .control-btn {{ color: #d4c5a9; }}
         body.dark .control-btn:hover {{ background: #3a3a5e; color: white; }}
         
-        /* Messages */
         .messages {{
             flex: 1;
             overflow-y: auto;
@@ -522,7 +516,6 @@ HTML = f"""
         
         body.dark .ai-message .message-content {{ background: #2a2a4e !important; color: #e0e0e0 !important; }}
         
-        /* Typing */
         .typing {{
             display: none;
             padding: 10px 16px;
@@ -543,61 +536,140 @@ HTML = f"""
         
         @keyframes bounce {{ 0%, 60%, 100% {{ transform: translateY(0); }} 30% {{ transform: translateY(-6px); }} }}
         
-        /* Input Area - FIXED VISIBLE BUTTON */
+        /* ========== AUTO-ADJUST INPUT FIELD ========== */
         .input-area {{
             padding: 12px 16px 20px;
             background: linear-gradient(to top, #f5f0e8, transparent);
             flex-shrink: 0;
         }}
         
-        .input-wrapper {{
+        /* Responsive container that handles all screen variations */
+        .chat-input-wrapper {{
+            display: flex;
+            align-items: flex-end;
+            gap: 8px;
+            width: 100%;
+            max-width: 800px;
+            padding: 8px 12px;
+            background-color: #ffffff;
+            border: 1px solid #d4c5a9;
+            border-radius: 24px;
+            box-sizing: border-box;
+            margin: 0 auto;
+        }}
+        
+        body.dark .chat-input-wrapper {{
+            background-color: #2a2a4e;
+            border-color: #3a3a5e;
+        }}
+        
+        /* Flex-grow input field */
+        .chat-input-field {{
+            flex: 1;
+            min-width: 0;
+            min-height: 24px;
+            max-height: 160px;
+            padding: 8px 4px;
+            font-size: 16px;
+            line-height: 1.5;
+            border: none;
+            outline: none;
+            resize: none;
+            background: transparent;
+            font-family: 'Inter', sans-serif;
+        }}
+        
+        body.dark .chat-input-field {{
+            color: #e0e0e0;
+        }}
+        
+        .chat-input-field::placeholder {{
+            color: #b8a88a;
+        }}
+        
+        /* Fixed-size touch-friendly button */
+        .chat-submit-btn {{
             display: flex;
             align-items: center;
-            gap: 10px;
-            background: white;
-            border-radius: 30px;
-            padding: 6px 6px 6px 18px;
-            border: 1px solid #d4c5a9;
-            min-height: 52px;
-        }}
-        
-        body.dark .input-wrapper {{ background: #2a2a4e; border-color: #3a3a5e; }}
-        
-        textarea {{
-            flex: 1;
-            background: transparent;
-            border: none;
-            color: #2c2418;
-            font-size: 0.9rem;
-            resize: none;
-            outline: none;
-            padding: 10px 0;
-            font-family: inherit;
-            min-height: 40px;
-            max-height: 100px;
-        }}
-        
-        body.dark textarea {{ color: #e0e0e0; }}
-        textarea::placeholder {{ color: #b8a88a; font-size: 0.85rem; }}
-        
-        .send-btn {{
-            background: #2c2418;
-            border: none;
-            border-radius: 28px;
-            padding: 8px 20px;
-            color: #f5f0e8;
-            font-weight: 500;
-            cursor: pointer;
-            font-size: 0.85rem;
-            min-width: 65px;
-            white-space: nowrap;
-            transition: all 0.2s;
+            justify-content: center;
             flex-shrink: 0;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            border: none;
+            background-color: #2c2418;
+            color: #ffffff;
+            cursor: pointer;
+            transition: background-color 0.2s, transform 0.2s;
         }}
         
-        .send-btn:hover {{ background: #4a3f2f; transform: scale(1.02); }}
+        .chat-submit-btn:hover {{
+            background-color: #4a3f2f;
+            transform: scale(1.02);
+        }}
         
-        /* Welcome */
+        body.dark .chat-submit-btn {{
+            background-color: #4a3f2f;
+        }}
+        
+        body.dark .chat-submit-btn:hover {{
+            background-color: #5a4f3f;
+        }}
+        
+        .send-icon {{
+            width: 20px;
+            height: 20px;
+            fill: currentColor;
+        }}
+        
+        /* Mobile adjustments */
+        @media (max-width: 768px) {{
+            .input-area {{
+                padding: 10px 12px 16px;
+            }}
+            .chat-input-wrapper {{
+                padding: 6px 10px;
+                border-radius: 28px;
+            }}
+            .chat-input-field {{
+                font-size: 15px;
+                padding: 6px 2px;
+                min-height: 20px;
+                max-height: 120px;
+            }}
+            .chat-submit-btn {{
+                width: 38px;
+                height: 38px;
+            }}
+            .send-icon {{
+                width: 18px;
+                height: 18px;
+            }}
+        }}
+        
+        @media (max-width: 480px) {{
+            .input-area {{
+                padding: 8px 10px 14px;
+            }}
+            .chat-input-wrapper {{
+                padding: 5px 8px;
+                gap: 6px;
+                border-radius: 26px;
+            }}
+            .chat-input-field {{
+                font-size: 14px;
+                padding: 5px 2px;
+            }}
+            .chat-submit-btn {{
+                width: 34px;
+                height: 34px;
+            }}
+            .send-icon {{
+                width: 16px;
+                height: 16px;
+            }}
+        }}
+        
         .welcome {{
             display: flex;
             flex-direction: column;
@@ -635,7 +707,6 @@ HTML = f"""
         body.dark .suggestion {{ background: #2a2a4e; border-color: #3a3a5e; color: #e0e0e0; }}
         body.dark .suggestion:hover {{ background: #3a3a5e; color: white; }}
         
-        /* Responsive */
         @media (max-width: 768px) {{
             .message-content {{ max-width: 90%; font-size: 0.8rem; }}
             .suggestions {{ display: none; }}
@@ -644,19 +715,6 @@ HTML = f"""
             .logo h1 {{ font-size: 1rem; }}
             .logo-icon {{ font-size: 1.3rem; }}
             .messages {{ padding: 12px; }}
-            .input-area {{ padding: 10px 12px 16px; }}
-            .input-wrapper {{ border-radius: 25px; padding: 5px 5px 5px 14px; min-height: 48px; }}
-            textarea {{ font-size: 0.85rem; padding: 8px 0; min-height: 36px; max-height: 80px; }}
-            .send-btn {{ padding: 7px 16px; min-width: 55px; font-size: 0.8rem; }}
-            .control-btn {{ font-size: 0.9rem; padding: 5px 8px; }}
-        }}
-        
-        @media (max-width: 480px) {{
-            .input-area {{ padding: 8px 10px 14px; }}
-            .input-wrapper {{ gap: 8px; border-radius: 22px; padding: 4px 4px 4px 12px; min-height: 44px; }}
-            textarea {{ font-size: 0.8rem; padding: 7px 0; min-height: 32px; max-height: 70px; }}
-            .send-btn {{ padding: 6px 12px; min-width: 50px; font-size: 0.75rem; }}
-            .control-btn {{ font-size: 0.85rem; padding: 4px 6px; }}
         }}
     </style>
 </head>
@@ -735,9 +793,13 @@ HTML = f"""
             </div>
             
             <div class="input-area">
-                <div class="input-wrapper">
-                    <textarea id="userInput" placeholder="Ask Yama anything..." rows="1" onkeypress="handleKey(event)"></textarea>
-                    <button class="send-btn" onclick="sendMessage()">Send</button>
+                <div class="chat-input-wrapper">
+                    <textarea class="chat-input-field" id="userInput" placeholder="Ask Yama anything..." rows="1" onkeypress="handleKey(event)"></textarea>
+                    <button class="chat-submit-btn" onclick="sendMessage()" aria-label="Send message">
+                        <svg class="send-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+                        </svg>
+                    </button>
                 </div>
             </div>
         </div>
@@ -748,6 +810,15 @@ HTML = f"""
         let hasMessages = false;
         let userLevel = 1;
         let userTitle = "Newbie";
+        
+        // Auto-height adjustment for textarea
+        const tx = document.getElementById('userInput');
+        if (tx) {{
+            tx.addEventListener('input', function() {{
+                this.style.height = 'auto';
+                this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+            }});
+        }}
         
         function toggleTheme() {{
             document.body.classList.toggle('dark');
@@ -896,12 +967,6 @@ HTML = f"""
             }}
         }}
         
-        const textarea = document.getElementById('userInput');
-        textarea.addEventListener('input', function() {{
-            this.style.height = 'auto';
-            this.style.height = Math.min(this.scrollHeight, 100) + 'px';
-        }});
-        
         function handleKey(e) {{
             if (e.key === 'Enter' && !e.shiftKey) {{
                 e.preventDefault();
@@ -911,7 +976,7 @@ HTML = f"""
         
         async function sendMessage() {{
             if (!currentUser) {{ alert('Please sign in first!'); return; }}
-            const message = textarea.value.trim();
+            const message = document.getElementById('userInput').value.trim();
             if (!message) return;
             
             if (!hasMessages) {{
@@ -922,8 +987,8 @@ HTML = f"""
             }}
             
             addMessage(message, 'user');
-            textarea.value = '';
-            textarea.style.height = 'auto';
+            document.getElementById('userInput').value = '';
+            document.getElementById('userInput').style.height = 'auto';
             
             document.getElementById('typing').style.display = 'block';
             scrollToBottom();
@@ -959,7 +1024,8 @@ HTML = f"""
             messages.scrollTop = messages.scrollHeight;
         }}
         
-        textarea.focus();
+        // Focus on input
+        document.getElementById('userInput').focus();
     </script>
 </body>
 </html>
@@ -1017,6 +1083,6 @@ if __name__ == "__main__":
     print("🌐 Open: http://localhost:8000")
     print("🔐 Google Sign-In Working")
     print("📊 Level System Working")
-    print("📱 Auto-Adjust Buttons")
+    print("📱 Auto-Adjust Input Button - PERFECT!")
     print("="*55 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=10000)
