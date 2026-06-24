@@ -192,19 +192,17 @@ def save_history(email, history):
 # ============ GOOGLE CLIENT ID ============
 GOOGLE_CLIENT_ID = "46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com"
 
-# ============ COMPLETE HTML WITH ALL 6 RESPONSIVE PRINCIPLES ============
+# ============ HTML ============
 HTML = f'''
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <!-- PRINCIPLE 1: Viewport Meta Tag -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
     <title>Yama - AI Assistant</title>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
     <style>
-        /* ========== RESET ========== */
         * {{
             margin: 0;
             padding: 0;
@@ -212,24 +210,19 @@ HTML = f'''
             -webkit-tap-highlight-color: transparent;
         }}
         
-        /* ========== BASE ========== */
         html, body {{
             height: 100%;
             overflow: hidden;
             position: fixed;
             width: 100%;
+        }}
+        
+        body {{
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #f5f0e8;
             transition: all 0.3s ease;
         }}
         
-        /* PRINCIPLE 4: Fluid Images */
-        img {{
-            max-width: 100%;
-            height: auto;
-        }}
-        
-        /* ========== DARK MODE ========== */
         body.dark {{
             background: #1a1a2e;
         }}
@@ -358,7 +351,6 @@ HTML = f'''
             color: white;
         }}
         
-        /* ========== LOGIN OVERLAY ========== */
         .login-overlay {{
             position: fixed;
             top: 0;
@@ -400,7 +392,6 @@ HTML = f'''
             margin-bottom: 30px;
         }}
         
-        /* ========== APP ========== */
         .app {{
             display: none;
             height: 100vh;
@@ -410,13 +401,6 @@ HTML = f'''
             overflow: hidden;
         }}
         
-        /* PRINCIPLE 5: FLEXBOX LAYOUT */
-        .app {{
-            display: flex;
-            flex-direction: column;
-        }}
-        
-        /* ========== SIDEBAR ========== */
         .sidebar {{
             position: fixed;
             left: 0;
@@ -589,7 +573,6 @@ HTML = f'''
             display: block;
         }}
         
-        /* ========== MAIN ========== */
         .main {{
             flex: 1;
             display: flex;
@@ -599,32 +582,32 @@ HTML = f'''
             height: 100%;
         }}
         
-        /* PRINCIPLE 5: FLEXBOX */
-        .main {{
-            display: flex;
-            flex-direction: column;
-        }}
-        
-        /* ========== HEADER ========== */
+        /* ========== HEADER - PROPERLY POSITIONED ========== */
         .header {{
-            padding: 12px 16px;
+            padding: clamp(8px, 2vh, 16px) clamp(12px, 3vw, 24px);
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: clamp(8px, 2vw, 16px);
             border-bottom: 1px solid #d4c5a9;
             background: rgba(245,240,232,0.95);
             flex-shrink: 0;
-            min-height: 56px;
+            min-height: clamp(48px, 8vh, 64px);
+            width: 100%;
+            position: relative;
+            z-index: 10;
         }}
         
         .menu-btn {{
             background: none;
             border: none;
-            font-size: 1.3rem;
+            font-size: clamp(1.2rem, 3vw, 1.5rem);
             cursor: pointer;
             color: #6a5a4a;
-            padding: 8px;
+            padding: clamp(6px, 1.5vw, 10px);
             border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }}
         
         .menu-btn:hover {{
@@ -636,17 +619,48 @@ HTML = f'''
             flex: 1;
             display: flex;
             align-items: baseline;
-            gap: 6px;
+            gap: clamp(4px, 1vw, 8px);
+            min-width: 0;
         }}
         
         .logo-icon {{
-            font-size: 1.8rem;
+            font-size: clamp(1.3rem, 3.5vw, 2rem);
         }}
         
         .logo h1 {{
             font-family: 'Playfair Display', serif;
-            font-size: 1.3rem;
+            font-size: clamp(1rem, 2.5vw, 1.6rem);
             color: #2c2418;
+            white-space: nowrap;
+        }}
+        
+        .new-chat-mobile {{
+            background: none;
+            border: none;
+            font-size: clamp(1rem, 2.5vw, 1.2rem);
+            cursor: pointer;
+            padding: clamp(5px, 1.5vw, 8px);
+            border-radius: 10px;
+            color: #6a5a4a;
+            display: none;
+        }}
+        
+        .control-btn {{
+            background: none;
+            border: none;
+            font-size: clamp(1rem, 2.5vw, 1.2rem);
+            cursor: pointer;
+            padding: clamp(5px, 1.5vw, 8px) clamp(8px, 2vw, 12px);
+            border-radius: 20px;
+            color: #6a5a4a;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        
+        .control-btn:hover {{
+            background: #d4c5a9;
         }}
         
         .user-btn {{
@@ -658,50 +672,24 @@ HTML = f'''
         }}
         
         .user-btn img {{
-            width: 35px;
-            height: 35px;
+            width: clamp(30px, 6vw, 38px);
+            height: clamp(30px, 6vw, 38px);
             border-radius: 50%;
             object-fit: cover;
-        }}
-        
-        .new-chat-mobile {{
-            background: none;
-            border: none;
-            font-size: 1.2rem;
-            cursor: pointer;
-            padding: 8px;
-            border-radius: 10px;
-            color: #6a5a4a;
-            display: none;
-        }}
-        
-        .control-btn {{
-            background: none;
-            border: none;
-            font-size: 1.2rem;
-            cursor: pointer;
-            padding: 8px 12px;
-            border-radius: 20px;
-            color: #6a5a4a;
-            transition: all 0.2s;
-        }}
-        
-        .control-btn:hover {{
-            background: #d4c5a9;
         }}
         
         /* ========== MESSAGES ========== */
         .messages {{
             flex: 1;
             overflow-y: auto;
-            padding: 16px;
+            padding: clamp(12px, 3vh, 24px);
             -webkit-overflow-scrolling: touch;
             scroll-behavior: smooth;
             min-height: 0;
         }}
         
         .message {{
-            margin-bottom: 20px;
+            margin-bottom: clamp(16px, 3vh, 24px);
             animation: fadeIn 0.3s ease;
         }}
         
@@ -720,8 +708,8 @@ HTML = f'''
         
         .message-content {{
             display: inline-block;
-            max-width: 85%;
-            font-size: 0.9rem;
+            max-width: min(85%, 600px);
+            font-size: clamp(0.8rem, 2vw, 0.95rem);
             line-height: 1.5;
             color: #2c2418;
             background: transparent !important;
@@ -731,31 +719,30 @@ HTML = f'''
         .user-message .message-content {{
             background: #2c2418 !important;
             color: white !important;
-            padding: 10px 16px !important;
+            padding: clamp(8px, 1.5vw, 12px) clamp(12px, 2.5vw, 18px) !important;
             border-radius: 20px !important;
         }}
         
         .ai-message .message-content {{
             background: white !important;
             color: #2c2418 !important;
-            padding: 12px 18px !important;
+            padding: clamp(10px, 2vw, 14px) clamp(14px, 3vw, 20px) !important;
             border-radius: 20px !important;
             box-shadow: 0 2px 5px rgba(0,0,0,0.05);
         }}
         
-        /* ========== TYPING ========== */
         .typing {{
             display: none;
-            padding: 10px 16px;
+            padding: clamp(8px, 2vh, 12px) clamp(12px, 3vw, 20px);
             gap: 5px;
             color: #888;
-            font-size: 0.8rem;
+            font-size: clamp(0.7rem, 1.5vw, 0.8rem);
             flex-shrink: 0;
         }}
         
         .typing span {{
-            width: 6px;
-            height: 6px;
+            width: clamp(5px, 1.5vw, 7px);
+            height: clamp(5px, 1.5vw, 7px);
             background: #c4a57b;
             border-radius: 50%;
             display: inline-block;
@@ -767,23 +754,22 @@ HTML = f'''
             30% {{ transform: translateY(-6px); }}
         }}
         
-        /* ========== INPUT AREA - PERFECTLY RESPONSIVE ========== */
+        /* ========== INPUT AREA ========== */
         .input-area {{
-            padding: 12px 16px 20px;
+            padding: clamp(8px, 2vh, 12px) clamp(10px, 3vw, 16px) clamp(12px, 3vh, 20px);
             background: linear-gradient(to top, #f5f0e8, transparent);
             flex-shrink: 0;
         }}
         
-        /* PRINCIPLE 2: Flexible Percentages & Max-Widths */
         .input-wrapper {{
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: clamp(8px, 2vw, 12px);
             background: white;
-            border-radius: 30px;
-            padding: 8px 8px 8px 20px;
+            border-radius: clamp(25px, 5vw, 30px);
+            padding: clamp(5px, 1.5vw, 8px) clamp(5px, 1.5vw, 8px) clamp(5px, 1.5vw, 8px) clamp(14px, 3vw, 20px);
             border: 1px solid #d4c5a9;
-            min-height: 56px;
+            min-height: clamp(48px, 10vh, 56px);
             height: auto;
             width: 100%;
             max-width: 800px;
@@ -795,18 +781,17 @@ HTML = f'''
             background: transparent;
             border: none;
             color: #2c2418;
-            font-size: 16px;
+            font-size: clamp(14px, 3.5vw, 16px);
             resize: none;
             outline: none;
-            padding: 12px 0;
+            padding: clamp(8px, 2vw, 12px) 0;
             font-family: inherit;
             width: 100%;
-            min-height: 40px;
+            min-height: clamp(32px, 6vh, 40px);
             max-height: 120px;
             overflow-y: auto;
         }}
         
-        /* PRINCIPLE 1: iOS zoom fix (16px font size) */
         @media (max-width: 768px) {{
             textarea {{
                 font-size: 16px !important;
@@ -815,22 +800,23 @@ HTML = f'''
         
         textarea::placeholder {{
             color: #b8a88a;
-            font-size: 0.95rem;
+            font-size: clamp(12px, 3vw, 14px);
         }}
         
         .input-wrapper button {{
             background: #2c2418;
             border: none;
-            border-radius: 28px;
-            padding: 10px 24px;
+            border-radius: clamp(22px, 4vw, 28px);
+            padding: clamp(6px, 1.5vw, 10px) clamp(14px, 3vw, 24px);
             color: #f5f0e8;
             font-weight: 500;
             cursor: pointer;
-            font-size: 0.9rem;
-            min-width: 70px;
+            font-size: clamp(12px, 3vw, 14px);
+            min-width: clamp(50px, 12vw, 70px);
             white-space: nowrap;
             transition: all 0.2s;
             flex-shrink: 0;
+            -webkit-tap-highlight-color: transparent;
         }}
         
         .input-wrapper button:hover {{
@@ -850,10 +836,11 @@ HTML = f'''
             justify-content: center;
             min-height: 50vh;
             text-align: center;
+            padding: 20px;
         }}
         
         .welcome-icon {{
-            font-size: 3rem;
+            font-size: clamp(2.5rem, 8vw, 3.5rem);
             margin-bottom: 15px;
             animation: float 3s ease-in-out infinite;
         }}
@@ -865,32 +852,32 @@ HTML = f'''
         
         .welcome h2 {{
             font-family: 'Playfair Display', serif;
-            font-size: 2rem;
+            font-size: clamp(1.6rem, 5vw, 2.2rem);
             color: #2c2418;
             margin-bottom: 8px;
         }}
         
         .welcome p {{
             color: #6a5a4a;
-            font-size: 0.85rem;
+            font-size: clamp(0.75rem, 2vw, 0.9rem);
             margin-bottom: 20px;
         }}
         
-        /* ========== SUGGESTIONS ========== */
         .suggestions {{
             display: flex;
             flex-wrap: wrap;
-            gap: 8px;
+            gap: clamp(6px, 1.5vw, 10px);
             justify-content: center;
             margin-top: 15px;
+            padding: 0 10px;
         }}
         
         .suggestion {{
             background: white;
             border: 1px solid #d4c5a9;
             border-radius: 30px;
-            padding: 6px 14px;
-            font-size: 0.75rem;
+            padding: clamp(5px, 1vw, 8px) clamp(10px, 2vw, 16px);
+            font-size: clamp(0.65rem, 1.5vw, 0.8rem);
             color: #2c2418;
             cursor: pointer;
             transition: all 0.2s;
@@ -903,20 +890,178 @@ HTML = f'''
             border-color: #2c2418;
         }}
         
-        /* PRINCIPLE 3: MEDIA QUERIES - RESPONSIVE BREAKPOINTS */
+        /* ========== RESPONSIVE BREAKPOINTS ========== */
         
-        /* Mobile First - Base styles are for mobile */
+        /* Small phones */
+        @media (max-width: 380px) {{
+            .header {{
+                padding: 6px 10px;
+                min-height: 44px;
+                gap: 6px;
+            }}
+            .logo h1 {{
+                font-size: 0.9rem;
+            }}
+            .logo-icon {{
+                font-size: 1.2rem;
+            }}
+            .control-btn {{
+                font-size: 0.85rem;
+                padding: 4px 6px;
+            }}
+            .menu-btn {{
+                font-size: 1rem;
+                padding: 4px 6px;
+            }}
+            .input-area {{
+                padding: 6px 8px 10px;
+            }}
+            .input-wrapper {{
+                padding: 4px 4px 4px 10px;
+                min-height: 40px;
+                gap: 4px;
+            }}
+            textarea {{
+                font-size: 14px !important;
+                padding: 6px 0;
+                min-height: 28px;
+            }}
+            .input-wrapper button {{
+                padding: 4px 10px;
+                font-size: 11px;
+                min-width: 40px;
+            }}
+            .suggestions {{
+                display: none;
+            }}
+            .new-chat-mobile {{
+                display: block;
+            }}
+            .messages {{
+                padding: 8px;
+            }}
+        }}
         
-        /* PRINCIPLE 6: Mobile-First Design */
-        /* Default styles are already optimized for mobile */
+        /* Medium phones */
+        @media (max-width: 480px) {{
+            .header {{
+                padding: 8px 12px;
+                min-height: 48px;
+                gap: 8px;
+            }}
+            .input-area {{
+                padding: 8px 10px 12px;
+            }}
+            .input-wrapper {{
+                padding: 5px 5px 5px 12px;
+                min-height: 44px;
+                gap: 6px;
+                border-radius: 26px;
+            }}
+            textarea {{
+                font-size: 15px !important;
+                padding: 8px 0;
+                min-height: 32px;
+            }}
+            .input-wrapper button {{
+                padding: 6px 12px;
+                font-size: 12px;
+                min-width: 48px;
+            }}
+            .suggestions {{
+                display: none;
+            }}
+            .new-chat-mobile {{
+                display: block;
+            }}
+            .control-btn {{
+                font-size: 0.9rem;
+                padding: 4px 8px;
+            }}
+            .messages {{
+                padding: 10px 12px;
+            }}
+        }}
         
-        /* Tablet */
+        /* Large phones */
+        @media (max-width: 768px) {{
+            .suggestions {{
+                display: none;
+            }}
+            .new-chat-mobile {{
+                display: block;
+            }}
+            .sidebar {{
+                width: min(280px, 80vw);
+            }}
+            .messages {{
+                padding: 12px 16px;
+            }}
+            .message-content {{
+                max-width: 90%;
+                font-size: 0.85rem;
+            }}
+            .header {{
+                padding: 10px 14px;
+            }}
+        }}
+        
+        /* Landscape phones */
+        @media (max-height: 500px) and (orientation: landscape) {{
+            .header {{
+                min-height: 38px;
+                padding: 4px 12px;
+                gap: 6px;
+            }}
+            .logo h1 {{
+                font-size: 0.9rem;
+            }}
+            .logo-icon {{
+                font-size: 1.1rem;
+            }}
+            .messages {{
+                padding: 6px 12px;
+            }}
+            .input-area {{
+                padding: 4px 12px 8px;
+            }}
+            .input-wrapper {{
+                min-height: 36px;
+                padding: 4px 4px 4px 10px;
+            }}
+            textarea {{
+                min-height: 24px;
+                padding: 4px 0;
+                max-height: 60px;
+                font-size: 14px !important;
+            }}
+            .input-wrapper button {{
+                padding: 4px 10px;
+                font-size: 10px;
+                min-width: 36px;
+            }}
+            .welcome {{
+                min-height: 20vh;
+            }}
+            .suggestions {{
+                display: none;
+            }}
+            .control-btn {{
+                font-size: 0.8rem;
+                padding: 3px 6px;
+            }}
+        }}
+        
+        /* Tablets */
         @media (min-width: 769px) and (max-width: 1024px) {{
             .input-wrapper {{
                 max-width: 90%;
             }}
             .messages {{
-                padding: 20px;
+                padding: 16px 24px;
+            }}
+            .header {{
+                padding: 14px 20px;
             }}
         }}
         
@@ -932,168 +1077,9 @@ HTML = f'''
                 padding: 16px 32px;
             }}
         }}
-        
-        /* Small phones (very narrow) */
-        @media (max-width: 380px) {{
-            .header {{
-                padding: 8px 10px;
-                min-height: 48px;
-                gap: 8px;
-            }}
-            .logo h1 {{
-                font-size: 1rem;
-            }}
-            .logo-icon {{
-                font-size: 1.3rem;
-            }}
-            .control-btn {{
-                font-size: 0.9rem;
-                padding: 6px 8px;
-            }}
-            .input-area {{
-                padding: 8px 10px 14px;
-            }}
-            .input-wrapper {{
-                gap: 6px;
-                padding: 5px 5px 5px 12px;
-                min-height: 44px;
-                border-radius: 26px;
-            }}
-            textarea {{
-                font-size: 14px !important;
-                padding: 8px 0;
-                min-height: 32px;
-            }}
-            .input-wrapper button {{
-                padding: 6px 14px;
-                min-width: 50px;
-                font-size: 0.75rem;
-                border-radius: 24px;
-            }}
-            .messages {{
-                padding: 10px;
-            }}
-            .message-content {{
-                font-size: 0.8rem;
-            }}
-            .suggestions {{
-                display: none;
-            }}
-            .new-chat-mobile {{
-                display: block;
-            }}
-        }}
-        
-        /* Medium phones */
-        @media (max-width: 480px) {{
-            .messages {{
-                padding: 12px;
-            }}
-            .input-area {{
-                padding: 10px 12px 16px;
-            }}
-            .input-wrapper {{
-                gap: 8px;
-                padding: 6px 6px 6px 14px;
-                min-height: 48px;
-                border-radius: 28px;
-            }}
-            textarea {{
-                font-size: 15px !important;
-                padding: 10px 0;
-                min-height: 36px;
-            }}
-            .input-wrapper button {{
-                padding: 8px 16px;
-                min-width: 55px;
-                font-size: 0.8rem;
-            }}
-            .suggestions {{
-                display: none;
-            }}
-            .new-chat-mobile {{
-                display: block;
-            }}
-            .control-btn {{
-                font-size: 1rem;
-                padding: 6px 8px;
-            }}
-            .header {{
-                padding: 10px 12px;
-                gap: 10px;
-            }}
-            .logo h1 {{
-                font-size: 1.1rem;
-            }}
-            .logo-icon {{
-                font-size: 1.4rem;
-            }}
-            .message-content {{
-                font-size: 0.85rem;
-                max-width: 90%;
-            }}
-        }}
-        
-        /* Landscape phones */
-        @media (max-height: 500px) and (orientation: landscape) {{
-            .header {{
-                padding: 6px 12px;
-                min-height: 40px;
-            }}
-            .messages {{
-                padding: 8px 12px;
-            }}
-            .input-area {{
-                padding: 6px 12px 10px;
-            }}
-            .input-wrapper {{
-                min-height: 38px;
-                padding: 4px 4px 4px 12px;
-            }}
-            textarea {{
-                padding: 6px 0;
-                min-height: 28px;
-                max-height: 80px;
-                font-size: 15px !important;
-            }}
-            .input-wrapper button {{
-                padding: 4px 12px;
-                min-width: 45px;
-                font-size: 0.7rem;
-            }}
-            .welcome {{
-                min-height: 30vh;
-            }}
-            .suggestions {{
-                display: none;
-            }}
-            .message-content {{
-                font-size: 0.8rem;
-            }}
-        }}
-        
-        /* Large phones and small tablets */
-        @media (min-width: 481px) and (max-width: 768px) {{
-            .input-wrapper {{
-                max-width: 95%;
-            }}
-            .suggestions {{
-                display: none;
-            }}
-            .new-chat-mobile {{
-                display: block;
-            }}
-            .message-content {{
-                max-width: 90%;
-            }}
-            .messages {{
-                padding: 14px 16px;
-            }}
-        }}
     </style>
 </head>
 <body>
-    <!-- ========== LOGIN OVERLAY ========== -->
     <div id="loginOverlay" class="login-overlay">
         <div class="login-card">
             <div class="logo-icon">🏛️</div>
@@ -1117,7 +1103,6 @@ HTML = f'''
         </div>
     </div>
     
-    <!-- ========== APP ========== -->
     <div class="app" id="app">
         <div class="overlay" id="overlay" onclick="closeSidebar()"></div>
         
@@ -1427,6 +1412,6 @@ if __name__ == "__main__":
     print("="*55)
     print("🌐 Open: http://localhost:8000")
     print("📱 Perfect on ALL devices")
-    print("📐 All 6 Responsive Principles Applied")
+    print("📐 Header auto-adjusts on every screen")
     print("="*55 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=10000)
