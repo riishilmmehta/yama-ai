@@ -14,7 +14,7 @@ import secrets
 
 app = FastAPI(title="Yama AI")
 
-# ============ USER DATABASE WITH GOOGLE ============
+# ============ USER DATABASE ============
 user_db = TinyDB('users.json')
 User = Query()
 
