@@ -192,32 +192,42 @@ def save_history(email, history):
 # ============ GOOGLE CLIENT ID ============
 GOOGLE_CLIENT_ID = "46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com"
 
-# ============ HTML ============
+# ============ HTML - FULLY RESPONSIVE ============
 HTML = f'''
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
     <title>Yama - AI Assistant</title>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
     <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }}
+        /* ========== RESET ========== */
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }}
         
+        /* ========== BASE ========== */
         html, body {{
             height: 100%;
             overflow: hidden;
             position: fixed;
             width: 100%;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
         }}
         
         body {{
-            font-family: 'Inter', sans-serif;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #f5f0e8;
             transition: all 0.3s ease;
         }}
         
+        /* ========== DARK MODE ========== */
         body.dark {{
             background: #1a1a2e;
         }}
@@ -346,6 +356,7 @@ HTML = f'''
             color: white;
         }}
         
+        /* ========== LOGIN OVERLAY ========== */
         .login-overlay {{
             position: fixed;
             top: 0;
@@ -357,34 +368,53 @@ HTML = f'''
             display: flex;
             justify-content: center;
             align-items: center;
+            padding: 20px;
         }}
         
         .login-card {{
             background: white;
             border-radius: 30px;
-            padding: 40px;
+            padding: 40px 30px;
             text-align: center;
             max-width: 400px;
-            width: 85%;
+            width: 100%;
             box-shadow: 0 25px 50px rgba(0,0,0,0.2);
         }}
         
-        .login-card .logo-icon {{ font-size: 4rem; margin-bottom: 20px; }}
-        .login-card h2 {{ font-family: 'Playfair Display', serif; font-size: 2rem; margin-bottom: 10px; }}
-        .login-card p {{ color: #666; margin-bottom: 30px; }}
+        .login-card .logo-icon {{
+            font-size: 4rem;
+            margin-bottom: 20px;
+        }}
         
+        .login-card h2 {{
+            font-family: 'Playfair Display', serif;
+            font-size: clamp(1.5rem, 5vw, 2rem);
+            margin-bottom: 10px;
+        }}
+        
+        .login-card p {{
+            color: #666;
+            font-size: clamp(0.85rem, 2vw, 1rem);
+            margin-bottom: 30px;
+        }}
+        
+        /* ========== APP ========== */
         .app {{
             display: none;
             height: 100vh;
+            width: 100vw;
             background: linear-gradient(135deg, #f5f0e8 0%, #e8e0d5 100%);
+            position: relative;
+            overflow: hidden;
         }}
         
+        /* ========== SIDEBAR ========== */
         .sidebar {{
             position: fixed;
             left: 0;
             top: 0;
             bottom: 0;
-            width: 280px;
+            width: min(280px, 75vw);
             background: #2c2418;
             border-right: 1px solid #4a3f2f;
             display: flex;
@@ -395,7 +425,9 @@ HTML = f'''
             box-shadow: 4px 0 20px rgba(0,0,0,0.1);
         }}
         
-        .sidebar.open {{ transform: translateX(0); }}
+        .sidebar.open {{
+            transform: translateX(0);
+        }}
         
         .sidebar-header {{
             padding: 20px;
@@ -407,7 +439,7 @@ HTML = f'''
         .sidebar-header h3 {{
             color: #d4c5a9;
             font-family: 'Playfair Display', serif;
-            font-size: 1rem;
+            font-size: clamp(0.9rem, 2vw, 1rem);
         }}
         
         .user-profile {{
@@ -421,8 +453,8 @@ HTML = f'''
         }}
         
         .user-profile-img {{
-            width: 45px;
-            height: 45px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             object-fit: cover;
         }}
@@ -435,7 +467,7 @@ HTML = f'''
         .user-profile-name {{
             color: #d4c5a9;
             font-weight: 600;
-            font-size: 0.85rem;
+            font-size: clamp(0.8rem, 1.5vw, 0.85rem);
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
@@ -443,7 +475,7 @@ HTML = f'''
         
         .user-profile-email {{
             color: #8a7a6a;
-            font-size: 0.65rem;
+            font-size: clamp(0.6rem, 1vw, 0.65rem);
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
@@ -456,7 +488,7 @@ HTML = f'''
             padding: 6px 12px;
             color: #d4c5a9;
             cursor: pointer;
-            font-size: 0.65rem;
+            font-size: clamp(0.6rem, 1vw, 0.65rem);
             white-space: nowrap;
         }}
         
@@ -482,7 +514,7 @@ HTML = f'''
         }}
         
         .history-question {{
-            font-size: 0.8rem;
+            font-size: clamp(0.7rem, 1.5vw, 0.8rem);
             color: #d4c5a9;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -490,7 +522,7 @@ HTML = f'''
         }}
         
         .history-time {{
-            font-size: 0.6rem;
+            font-size: clamp(0.5rem, 1vw, 0.6rem);
             color: #6a5a4a;
             margin-top: 4px;
         }}
@@ -510,7 +542,7 @@ HTML = f'''
             color: #d4c5a9;
             cursor: pointer;
             width: 100%;
-            font-size: 0.85rem;
+            font-size: clamp(0.8rem, 1.5vw, 0.85rem);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -518,7 +550,9 @@ HTML = f'''
             transition: all 0.2s;
         }}
         
-        .new-chat-btn:hover {{ background: #5a4f3f; }}
+        .new-chat-btn:hover {{
+            background: #5a4f3f;
+        }}
         
         .clear-history {{
             background: rgba(212,197,169,0.1);
@@ -527,7 +561,7 @@ HTML = f'''
             padding: 8px 16px;
             color: #d4c5a9;
             cursor: pointer;
-            font-size: 0.7rem;
+            font-size: clamp(0.6rem, 1vw, 0.7rem);
             margin-top: 10px;
             width: 100%;
         }}
@@ -543,8 +577,11 @@ HTML = f'''
             z-index: 999;
         }}
         
-        .overlay.show {{ display: block; }}
+        .overlay.show {{
+            display: block;
+        }}
         
+        /* ========== MAIN ========== */
         .main {{
             flex: 1;
             display: flex;
@@ -554,27 +591,32 @@ HTML = f'''
             height: 100%;
         }}
         
+        /* ========== HEADER ========== */
         .header {{
-            padding: 12px 16px;
+            padding: clamp(8px, 2vh, 12px) clamp(12px, 3vw, 16px);
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: clamp(8px, 2vw, 12px);
             border-bottom: 1px solid #d4c5a9;
             background: rgba(245,240,232,0.95);
             flex-shrink: 0;
+            min-height: 56px;
         }}
         
         .menu-btn {{
             background: none;
             border: none;
-            font-size: 1.3rem;
+            font-size: clamp(1.2rem, 3vw, 1.3rem);
             cursor: pointer;
             color: #6a5a4a;
             padding: 8px;
             border-radius: 10px;
         }}
         
-        .menu-btn:hover {{ background: #d4c5a9; color: #2c2418; }}
+        .menu-btn:hover {{
+            background: #d4c5a9;
+            color: #2c2418;
+        }}
         
         .logo {{
             flex: 1;
@@ -583,19 +625,27 @@ HTML = f'''
             gap: 6px;
         }}
         
-        .logo-icon {{ font-size: 1.8rem; }}
-        .logo h1 {{ font-family: 'Playfair Display', serif; font-size: 1.3rem; color: #2c2418; }}
+        .logo-icon {{
+            font-size: clamp(1.4rem, 3.5vw, 1.8rem);
+        }}
+        
+        .logo h1 {{
+            font-family: 'Playfair Display', serif;
+            font-size: clamp(1.1rem, 2.5vw, 1.3rem);
+            color: #2c2418;
+        }}
         
         .user-btn {{
             background: none;
             border: none;
             cursor: pointer;
             display: none;
+            padding: 4px;
         }}
         
         .user-btn img {{
-            width: 35px;
-            height: 35px;
+            width: clamp(30px, 6vw, 35px);
+            height: clamp(30px, 6vw, 35px);
             border-radius: 50%;
             object-fit: cover;
         }}
@@ -603,9 +653,9 @@ HTML = f'''
         .new-chat-mobile {{
             background: none;
             border: none;
-            font-size: 1.2rem;
+            font-size: clamp(1rem, 2.5vw, 1.2rem);
             cursor: pointer;
-            padding: 8px;
+            padding: 6px;
             border-radius: 10px;
             color: #6a5a4a;
             display: none;
@@ -614,9 +664,9 @@ HTML = f'''
         .control-btn {{
             background: none;
             border: none;
-            font-size: 1.2rem;
+            font-size: clamp(1rem, 2.5vw, 1.2rem);
             cursor: pointer;
-            padding: 8px 12px;
+            padding: clamp(5px, 1.5vw, 8px) clamp(8px, 2vw, 12px);
             border-radius: 20px;
             color: #6a5a4a;
             transition: all 0.2s;
@@ -626,29 +676,38 @@ HTML = f'''
             background: #d4c5a9;
         }}
         
+        /* ========== MESSAGES ========== */
         .messages {{
             flex: 1;
             overflow-y: auto;
-            padding: 16px;
+            padding: clamp(12px, 3vh, 16px);
             -webkit-overflow-scrolling: touch;
             scroll-behavior: smooth;
             min-height: 0;
         }}
         
-        .message {{ margin-bottom: 20px; animation: fadeIn 0.3s ease; }}
+        .message {{
+            margin-bottom: clamp(16px, 3vh, 20px);
+            animation: fadeIn 0.3s ease;
+        }}
         
         @keyframes fadeIn {{
             from {{ opacity: 0; transform: translateY(10px); }}
             to {{ opacity: 1; transform: translateY(0); }}
         }}
         
-        .user-message {{ text-align: right; }}
-        .ai-message {{ text-align: left; }}
+        .user-message {{
+            text-align: right;
+        }}
+        
+        .ai-message {{
+            text-align: left;
+        }}
         
         .message-content {{
             display: inline-block;
-            max-width: 85%;
-            font-size: 0.9rem;
+            max-width: min(85%, 600px);
+            font-size: clamp(0.8rem, 2vw, 0.9rem);
             line-height: 1.5;
             color: #2c2418;
             background: transparent !important;
@@ -658,30 +717,31 @@ HTML = f'''
         .user-message .message-content {{
             background: #2c2418 !important;
             color: white !important;
-            padding: 10px 16px !important;
+            padding: clamp(8px, 1.5vw, 10px) clamp(12px, 2.5vw, 16px) !important;
             border-radius: 20px !important;
         }}
         
         .ai-message .message-content {{
             background: white !important;
             color: #2c2418 !important;
-            padding: 12px 18px !important;
+            padding: clamp(10px, 2vw, 12px) clamp(14px, 3vw, 18px) !important;
             border-radius: 20px !important;
             box-shadow: 0 2px 5px rgba(0,0,0,0.05);
         }}
         
+        /* ========== TYPING ========== */
         .typing {{
             display: none;
-            padding: 10px 16px;
+            padding: clamp(8px, 2vh, 10px) clamp(12px, 3vw, 16px);
             gap: 5px;
             color: #888;
-            font-size: 0.8rem;
+            font-size: clamp(0.7rem, 1.5vw, 0.8rem);
             flex-shrink: 0;
         }}
         
         .typing span {{
-            width: 6px;
-            height: 6px;
+            width: clamp(5px, 1.5vw, 6px);
+            height: clamp(5px, 1.5vw, 6px);
             background: #c4a57b;
             border-radius: 50%;
             display: inline-block;
@@ -693,8 +753,9 @@ HTML = f'''
             30% {{ transform: translateY(-6px); }}
         }}
         
+        /* ========== INPUT AREA - FULLY RESPONSIVE ========== */
         .input-area {{
-            padding: 12px 16px 20px;
+            padding: clamp(8px, 2vh, 12px) clamp(10px, 3vw, 16px) clamp(12px, 3vh, 20px);
             background: linear-gradient(to top, #f5f0e8, transparent);
             flex-shrink: 0;
         }}
@@ -702,13 +763,16 @@ HTML = f'''
         .input-wrapper {{
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: clamp(8px, 2vw, 12px);
             background: white;
-            border-radius: 30px;
-            padding: 8px 8px 8px 20px;
+            border-radius: clamp(25px, 5vw, 30px);
+            padding: clamp(5px, 1.5vw, 8px) clamp(5px, 1.5vw, 8px) clamp(5px, 1.5vw, 8px) clamp(14px, 3vw, 20px);
             border: 1px solid #d4c5a9;
-            min-height: 56px;
+            min-height: clamp(48px, 10vh, 56px);
             height: auto;
+            width: 100%;
+            max-width: 800px;
+            margin: 0 auto;
         }}
         
         textarea {{
@@ -716,33 +780,43 @@ HTML = f'''
             background: transparent;
             border: none;
             color: #2c2418;
-            font-size: 1rem;
+            font-size: clamp(14px, 3.5vw, 16px);
             resize: none;
             outline: none;
-            padding: 12px 0;
+            padding: clamp(8px, 2vw, 12px) 0;
             font-family: inherit;
             width: 100%;
-            min-height: 40px;
+            min-height: clamp(32px, 6vh, 40px);
             max-height: 120px;
             overflow-y: auto;
         }}
         
-        textarea::placeholder {{ color: #b8a88a; font-size: 0.95rem; }}
+        /* iOS zoom fix */
+        @media (max-width: 768px) {{
+            textarea {{
+                font-size: 16px !important;
+            }}
+        }}
+        
+        textarea::placeholder {{
+            color: #b8a88a;
+            font-size: clamp(12px, 3vw, 14px);
+        }}
         
         .input-wrapper button {{
             background: #2c2418;
             border: none;
-            border-radius: 28px;
-            padding: 10px 24px;
+            border-radius: clamp(22px, 4vw, 28px);
+            padding: clamp(6px, 1.5vw, 10px) clamp(14px, 3vw, 24px);
             color: #f5f0e8;
             font-weight: 500;
             cursor: pointer;
-            font-size: 0.9rem;
-            min-width: 70px;
-            width: auto;
+            font-size: clamp(12px, 3vw, 14px);
+            min-width: clamp(50px, 12vw, 70px);
             white-space: nowrap;
             transition: all 0.2s;
             flex-shrink: 0;
+            -webkit-tap-highlight-color: transparent;
         }}
         
         .input-wrapper button:hover {{
@@ -750,6 +824,11 @@ HTML = f'''
             transform: scale(1.02);
         }}
         
+        .input-wrapper button:active {{
+            transform: scale(0.98);
+        }}
+        
+        /* ========== WELCOME ========== */
         .welcome {{
             display: flex;
             flex-direction: column;
@@ -760,7 +839,7 @@ HTML = f'''
         }}
         
         .welcome-icon {{
-            font-size: 3rem;
+            font-size: clamp(2.5rem, 8vw, 3rem);
             margin-bottom: 15px;
             animation: float 3s ease-in-out infinite;
         }}
@@ -772,34 +851,37 @@ HTML = f'''
         
         .welcome h2 {{
             font-family: 'Playfair Display', serif;
-            font-size: 2rem;
+            font-size: clamp(1.6rem, 5vw, 2rem);
             color: #2c2418;
             margin-bottom: 8px;
         }}
         
         .welcome p {{
             color: #6a5a4a;
-            font-size: 0.85rem;
+            font-size: clamp(0.75rem, 2vw, 0.85rem);
             margin-bottom: 20px;
         }}
         
+        /* ========== SUGGESTIONS ========== */
         .suggestions {{
             display: flex;
             flex-wrap: wrap;
-            gap: 8px;
+            gap: clamp(6px, 1.5vw, 8px);
             justify-content: center;
             margin-top: 15px;
+            padding: 0 10px;
         }}
         
         .suggestion {{
             background: white;
             border: 1px solid #d4c5a9;
             border-radius: 30px;
-            padding: 6px 14px;
-            font-size: 0.75rem;
+            padding: clamp(5px, 1vw, 6px) clamp(10px, 2vw, 14px);
+            font-size: clamp(0.65rem, 1.5vw, 0.75rem);
             color: #2c2418;
             cursor: pointer;
             transition: all 0.2s;
+            white-space: nowrap;
         }}
         
         .suggestion:hover {{
@@ -808,38 +890,152 @@ HTML = f'''
             border-color: #2c2418;
         }}
         
-        @media (max-width: 768px) {{
-            .message-content {{ max-width: 90%; font-size: 0.85rem; }}
-            .suggestions {{ display: none; }}
-            .new-chat-mobile {{ display: block; }}
-            .header {{ padding: 10px 12px; }}
-            .logo h1 {{ font-size: 1.1rem; }}
-            .logo-icon {{ font-size: 1.4rem; }}
-            .messages {{ padding: 12px; }}
-            .input-area {{ padding: 10px 12px 16px; }}
-            .input-wrapper {{ border-radius: 28px; padding: 6px 6px 6px 16px; min-height: 48px; }}
-            textarea {{ font-size: 0.9rem; padding: 10px 0; min-height: 36px; max-height: 100px; }}
-            .input-wrapper button {{ padding: 8px 18px; min-width: 60px; font-size: 0.85rem; }}
-            .control-btn {{ font-size: 1rem; padding: 6px 10px; }}
+        /* ========== RESPONSIVE BREAKPOINTS ========== */
+        /* Mobile S (small phones) */
+        @media (max-width: 380px) {{
+            .header {{
+                padding: 6px 10px;
+                min-height: 44px;
+            }}
+            .logo h1 {{
+                font-size: 1rem;
+            }}
+            .control-btn {{
+                font-size: 0.9rem;
+                padding: 4px 6px;
+            }}
+            .input-area {{
+                padding: 6px 8px 10px;
+            }}
+            .input-wrapper {{
+                padding: 4px 4px 4px 10px;
+                min-height: 40px;
+                gap: 4px;
+            }}
+            textarea {{
+                font-size: 14px !important;
+                padding: 6px 0;
+                min-height: 28px;
+            }}
+            .input-wrapper button {{
+                padding: 4px 10px;
+                font-size: 11px;
+                min-width: 40px;
+            }}
+            .suggestions {{
+                display: none;
+            }}
         }}
         
-        @media (min-width: 769px) {{
-            .input-wrapper {{ border-radius: 32px; padding: 10px 10px 10px 24px; min-height: 64px; }}
-            textarea {{ font-size: 1rem; padding: 14px 0; min-height: 44px; max-height: 140px; }}
-            .input-wrapper button {{ padding: 12px 28px; min-width: 80px; font-size: 1rem; }}
-        }}
-        
+        /* Mobile M (medium phones) */
         @media (max-width: 480px) {{
-            .input-area {{ padding: 8px 10px 12px; }}
-            .input-wrapper {{ gap: 8px; border-radius: 26px; padding: 5px 5px 5px 14px; min-height: 44px; }}
-            textarea {{ font-size: 0.85rem; padding: 8px 0; min-height: 32px; max-height: 80px; }}
-            .input-wrapper button {{ padding: 7px 14px; min-width: 55px; font-size: 0.8rem; }}
-            .control-btn {{ font-size: 0.9rem; padding: 5px 8px; }}
+            .header {{
+                padding: 8px 12px;
+            }}
+            .input-area {{
+                padding: 8px 10px 12px;
+            }}
+            .input-wrapper {{
+                padding: 4px 4px 4px 12px;
+                min-height: 44px;
+                gap: 6px;
+            }}
+            textarea {{
+                font-size: 15px !important;
+                padding: 8px 0;
+                min-height: 32px;
+            }}
+            .input-wrapper button {{
+                padding: 6px 12px;
+                font-size: 12px;
+                min-width: 48px;
+            }}
+            .suggestions {{
+                display: none;
+            }}
+            .new-chat-mobile {{
+                display: block;
+            }}
+            .control-btn {{
+                font-size: 0.9rem;
+                padding: 4px 6px;
+            }}
+        }}
+        
+        /* Mobile L (large phones) */
+        @media (max-width: 768px) {{
+            .suggestions {{
+                display: none;
+            }}
+            .new-chat-mobile {{
+                display: block;
+            }}
+            .sidebar {{
+                width: min(280px, 80vw);
+            }}
+            .messages {{
+                padding: 12px;
+            }}
+            .message-content {{
+                max-width: 90%;
+                font-size: 0.85rem;
+            }}
+        }}
+        
+        /* Tablets */
+        @media (min-width: 769px) and (max-width: 1024px) {{
+            .input-wrapper {{
+                max-width: 90%;
+            }}
+            .suggestions {{
+                gap: 10px;
+            }}
+        }}
+        
+        /* Desktop */
+        @media (min-width: 1025px) {{
+            .input-wrapper {{
+                max-width: 800px;
+            }}
+            .suggestions {{
+                gap: 12px;
+            }}
+        }}
+        
+        /* Landscape phones */
+        @media (max-height: 500px) and (orientation: landscape) {{
+            .header {{
+                min-height: 40px;
+                padding: 4px 12px;
+            }}
+            .messages {{
+                padding: 8px 12px;
+            }}
+            .input-area {{
+                padding: 4px 12px 8px;
+            }}
+            .input-wrapper {{
+                min-height: 36px;
+            }}
+            textarea {{
+                min-height: 24px;
+                padding: 4px 0;
+            }}
+            .input-wrapper button {{
+                padding: 4px 12px;
+                font-size: 11px;
+            }}
+            .welcome {{
+                min-height: 30vh;
+            }}
+            .suggestions {{
+                display: none;
+            }}
         }}
     </style>
 </head>
 <body>
-    <!-- LOGIN OVERLAY -->
+    <!-- ========== LOGIN OVERLAY ========== -->
     <div id="loginOverlay" class="login-overlay">
         <div class="login-card">
             <div class="logo-icon">🏛️</div>
@@ -863,7 +1059,7 @@ HTML = f'''
         </div>
     </div>
     
-    <!-- MAIN APP -->
+    <!-- ========== APP ========== -->
     <div class="app" id="app">
         <div class="overlay" id="overlay" onclick="closeSidebar()"></div>
         
@@ -873,7 +1069,7 @@ HTML = f'''
                 <div class="user-profile" id="userProfile"></div>
             </div>
             <div class="history-list" id="historyList">
-                <div style="color: #6a5a4a; text-align: center; padding: 20px;">No conversations yet</div>
+                <div style="color: #6a5a4a; text-align: center; padding: 20px; font-size: 0.75rem;">No conversations yet</div>
             </div>
             <div class="sidebar-footer">
                 <button class="new-chat-btn" onclick="newChat()">➕ New Chat</button>
@@ -1027,7 +1223,7 @@ HTML = f'''
             const history = await res.json();
             const container = document.getElementById('historyList');
             if (history.length === 0) {{
-                container.innerHTML = '<div style=\"color:#6a5a4a;text-align:center;padding:20px;\">No conversations yet</div>';
+                container.innerHTML = '<div style=\"color:#6a5a4a;text-align:center;padding:20px;font-size:0.75rem;\">No conversations yet</div>';
                 return;
             }}
             let html = '';
@@ -1169,11 +1365,10 @@ async def clear_history_endpoint():
 
 if __name__ == "__main__":
     print("\n" + "="*55)
-    print("🏛️ YAMA AI - WITH GOOGLE SIGN-IN")
+    print("🏛️ YAMA AI - FULLY RESPONSIVE")
     print("="*55)
     print("🌐 Open: http://localhost:8000")
-    print("🔐 Google Sign-In Working")
-    print("📊 Level System Working")
-    print("📱 Input UNCHANGED")
+    print("📱 Perfect on ALL devices")
+    print("📐 Responsive: 380px to 4K")
     print("="*55 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=10000)
