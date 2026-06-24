@@ -192,7 +192,7 @@ def save_history(email, history):
 # ============ GOOGLE CLIENT ID ============
 GOOGLE_CLIENT_ID = "46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com"
 
-# ============ HTML ============
+# ============ COMPLETE HTML WITH PERFECT MOBILE FIX ============
 HTML = f'''
 <!DOCTYPE html>
 <html lang="en">
@@ -210,14 +210,14 @@ HTML = f'''
             -webkit-tap-highlight-color: transparent;
         }}
         
+        /* ========== FIXED HTML, BODY ========== */
         html, body {{
-            height: 100%;
-            overflow: hidden;
-            position: fixed;
+            margin: 0;
+            padding: 0;
             width: 100%;
-        }}
-        
-        body {{
+            height: 100%;
+            overflow-x: hidden;
+            overflow-y: auto;
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #f5f0e8;
             transition: all 0.3s ease;
@@ -393,12 +393,13 @@ HTML = f'''
         }}
         
         .app {{
-            display: none;
-            height: 100vh;
-            width: 100vw;
+            height: 100dvh;
+            min-height: 100vh;
+            width: 100%;
             background: linear-gradient(135deg, #f5f0e8 0%, #e8e0d5 100%);
+            display: flex;
+            flex-direction: column;
             position: relative;
-            overflow: hidden;
         }}
         
         .sidebar {{
@@ -573,16 +574,18 @@ HTML = f'''
             display: block;
         }}
         
+        /* ========== MAIN - FIXED ========== */
         .main {{
             flex: 1;
             display: flex;
             flex-direction: column;
+            min-height: 0;
+            height: 100%;
             width: 100%;
             overflow: hidden;
-            height: 100%;
         }}
         
-        /* ========== HEADER - PROPERLY POSITIONED ========== */
+        /* ========== HEADER ========== */
         .header {{
             padding: clamp(8px, 2vh, 16px) clamp(12px, 3vw, 24px);
             display: flex;
@@ -683,6 +686,7 @@ HTML = f'''
             flex: 1;
             overflow-y: auto;
             padding: clamp(12px, 3vh, 24px);
+            padding-bottom: clamp(80px, 20vh, 120px);
             -webkit-overflow-scrolling: touch;
             scroll-behavior: smooth;
             min-height: 0;
@@ -754,11 +758,20 @@ HTML = f'''
             30% {{ transform: translateY(-6px); }}
         }}
         
-        /* ========== INPUT AREA ========== */
+        /* ========== INPUT AREA - STICKY BOTTOM ========== */
         .input-area {{
+            position: sticky;
+            bottom: 0;
+            z-index: 100;
+            background: #f5f0e8;
             padding: clamp(8px, 2vh, 12px) clamp(10px, 3vw, 16px) clamp(12px, 3vh, 20px);
-            background: linear-gradient(to top, #f5f0e8, transparent);
             flex-shrink: 0;
+            border-top: 1px solid rgba(212,197,169,0.3);
+        }}
+        
+        body.dark .input-area {{
+            background: #1a1a2e;
+            border-top-color: rgba(42,42,78,0.3);
         }}
         
         .input-wrapper {{
@@ -774,6 +787,11 @@ HTML = f'''
             width: 100%;
             max-width: 800px;
             margin: 0 auto;
+        }}
+        
+        body.dark .input-wrapper {{
+            background: #2a2a4e;
+            border-color: #3a3a5e;
         }}
         
         textarea {{
@@ -798,6 +816,10 @@ HTML = f'''
             }}
         }}
         
+        body.dark textarea {{
+            color: #e0e0e0;
+        }}
+        
         textarea::placeholder {{
             color: #b8a88a;
             font-size: clamp(12px, 3vw, 14px);
@@ -819,9 +841,17 @@ HTML = f'''
             -webkit-tap-highlight-color: transparent;
         }}
         
+        body.dark .input-wrapper button {{
+            background: #4a3f2f;
+        }}
+        
         .input-wrapper button:hover {{
             background: #4a3f2f;
             transform: scale(1.02);
+        }}
+        
+        body.dark .input-wrapper button:hover {{
+            background: #5a4f3f;
         }}
         
         .input-wrapper button:active {{
@@ -884,15 +914,93 @@ HTML = f'''
             white-space: nowrap;
         }}
         
+        body.dark .suggestion {{
+            background: #2a2a4e;
+            border-color: #3a3a5e;
+            color: #e0e0e0;
+        }}
+        
         .suggestion:hover {{
             background: #2c2418;
             color: white;
             border-color: #2c2418;
         }}
         
+        body.dark .suggestion:hover {{
+            background: #3a3a5e;
+            color: white;
+        }}
+        
         /* ========== RESPONSIVE BREAKPOINTS ========== */
         
+        /* Mobile */
+        @media (max-width: 768px) {{
+            .messages {{
+                padding-bottom: 100px;
+            }}
+            
+            .input-area {{
+                padding-bottom: env(safe-area-inset-bottom);
+            }}
+            
+            .suggestions {{
+                display: none;
+            }}
+            .new-chat-mobile {{
+                display: block;
+            }}
+            .sidebar {{
+                width: min(280px, 80vw);
+            }}
+            .message-content {{
+                max-width: 90%;
+                font-size: 0.85rem;
+            }}
+            .messages {{
+                padding: 12px 16px;
+            }}
+            .header {{
+                padding: 10px 14px;
+            }}
+        }}
+        
         /* Small phones */
+        @media (max-width: 480px) {{
+            .header {{
+                padding: 8px 12px;
+                min-height: 48px;
+                gap: 8px;
+            }}
+            .input-area {{
+                padding: 8px 10px 12px;
+            }}
+            .input-wrapper {{
+                padding: 5px 5px 5px 12px;
+                min-height: 44px;
+                gap: 6px;
+                border-radius: 26px;
+            }}
+            textarea {{
+                font-size: 15px !important;
+                padding: 8px 0;
+                min-height: 32px;
+            }}
+            .input-wrapper button {{
+                padding: 6px 12px;
+                font-size: 12px;
+                min-width: 48px;
+            }}
+            .control-btn {{
+                font-size: 0.9rem;
+                padding: 4px 8px;
+            }}
+            .messages {{
+                padding: 10px 12px;
+                padding-bottom: 100px;
+            }}
+        }}
+        
+        /* Very small phones */
         @media (max-width: 380px) {{
             .header {{
                 padding: 6px 10px;
@@ -931,78 +1039,9 @@ HTML = f'''
                 font-size: 11px;
                 min-width: 40px;
             }}
-            .suggestions {{
-                display: none;
-            }}
-            .new-chat-mobile {{
-                display: block;
-            }}
             .messages {{
                 padding: 8px;
-            }}
-        }}
-        
-        /* Medium phones */
-        @media (max-width: 480px) {{
-            .header {{
-                padding: 8px 12px;
-                min-height: 48px;
-                gap: 8px;
-            }}
-            .input-area {{
-                padding: 8px 10px 12px;
-            }}
-            .input-wrapper {{
-                padding: 5px 5px 5px 12px;
-                min-height: 44px;
-                gap: 6px;
-                border-radius: 26px;
-            }}
-            textarea {{
-                font-size: 15px !important;
-                padding: 8px 0;
-                min-height: 32px;
-            }}
-            .input-wrapper button {{
-                padding: 6px 12px;
-                font-size: 12px;
-                min-width: 48px;
-            }}
-            .suggestions {{
-                display: none;
-            }}
-            .new-chat-mobile {{
-                display: block;
-            }}
-            .control-btn {{
-                font-size: 0.9rem;
-                padding: 4px 8px;
-            }}
-            .messages {{
-                padding: 10px 12px;
-            }}
-        }}
-        
-        /* Large phones */
-        @media (max-width: 768px) {{
-            .suggestions {{
-                display: none;
-            }}
-            .new-chat-mobile {{
-                display: block;
-            }}
-            .sidebar {{
-                width: min(280px, 80vw);
-            }}
-            .messages {{
-                padding: 12px 16px;
-            }}
-            .message-content {{
-                max-width: 90%;
-                font-size: 0.85rem;
-            }}
-            .header {{
-                padding: 10px 14px;
+                padding-bottom: 80px;
             }}
         }}
         
@@ -1021,6 +1060,7 @@ HTML = f'''
             }}
             .messages {{
                 padding: 6px 12px;
+                padding-bottom: 80px;
             }}
             .input-area {{
                 padding: 4px 12px 8px;
@@ -1408,10 +1448,12 @@ async def clear_history_endpoint():
 
 if __name__ == "__main__":
     print("\n" + "="*55)
-    print("🏛️ YAMA AI - FULLY RESPONSIVE")
+    print("🏛️ YAMA AI - PERFECT MOBILE VIEW")
     print("="*55)
     print("🌐 Open: http://localhost:8000")
     print("📱 Perfect on ALL devices")
-    print("📐 Header auto-adjusts on every screen")
+    print("✅ Sticky input area")
+    print("✅ Safe area support")
+    print("✅ Proper scrolling")
     print("="*55 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=10000)
