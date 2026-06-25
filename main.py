@@ -26,8 +26,10 @@ REQUEST_TIMEOUT = 10
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 executor = ThreadPoolExecutor(max_workers=5)
 
-# ============ GOOGLE OAUTH CONFIG ============
-GOOGLE_CLIENT_ID = "46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com"
+# ============ GOOGLE OAUTH CONFIG (FIXED WITH CORRECT CLIENT ID) ============
+# Using the exact Client ID from your Google Cloud Console screenshot:
+# Client ID: 4615226032-411aiprsbes52knkch3hlj7reqc6eb.apps.googleusercontent.com
+GOOGLE_CLIENT_ID = "4615226032-411aiprsbes52knkch3hlj7reqc6eb.apps.googleusercontent.com"
 GOOGLE_CLIENT_SECRET = "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"
 
 # ============ CACHE SYSTEM ============
@@ -114,7 +116,7 @@ def update_user_stats(session_id):
         return {"count": new_count, "level": new_level, "title": new_title}
     return {"count": 0, "level": 1, "title": "🌟 Newbie Chatter"}
 
-# ============ GOOGLE SIGN-IN HANDLERS (FIXED) ============
+# ============ GOOGLE SIGN-IN HANDLERS ============
 @app.post("/google_login")
 async def google_login(request: Request):
     try:
@@ -125,8 +127,7 @@ async def google_login(request: Request):
         if not google_token:
             return JSONResponse({"error": "No token provided", "success": False}, status_code=400)
         
-        # Verify the token with Google using the correct endpoint
-        # Use the tokeninfo endpoint to verify the ID token
+        # Verify the token with Google
         response = requests.get(
             'https://oauth2.googleapis.com/tokeninfo',
             params={'id_token': google_token},
@@ -523,7 +524,7 @@ def save_history(session_id, history):
     with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-# ============ ORIGINAL HTML WITH GOOGLE SIGN-IN ADDED ============
+# ============ ORIGINAL HTML WITH GOOGLE SIGN-IN (FIXED CLIENT ID) ============
 HTML = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -1217,12 +1218,16 @@ HTML = '''
         let googleUser = null;
         let googleInitialized = false;
         
-        // ============ GOOGLE SIGN-IN (FIXED) ============
+        // ============ GOOGLE SIGN-IN (FIXED WITH CORRECT CLIENT ID) ============
+        // Using the exact Client ID from your Google Cloud Console:
+        // Client ID: 4615226032-411aiprsbes52knkch3hlj7reqc6eb.apps.googleusercontent.com
+        const GOOGLE_CLIENT_ID = '4615226032-411aiprsbes52knkch3hlj7reqc6eb.apps.googleusercontent.com';
+        
         function initGoogleSignIn() {
             if (typeof google !== 'undefined' && google.accounts) {
-                console.log('Initializing Google Sign-In...');
+                console.log('Initializing Google Sign-In with Client ID:', GOOGLE_CLIENT_ID);
                 google.accounts.id.initialize({
-                    client_id: '46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com',
+                    client_id: GOOGLE_CLIENT_ID,
                     callback: handleGoogleCredentialResponse,
                     auto_select: false,
                     cancel_on_tap_outside: true
@@ -1243,7 +1248,7 @@ HTML = '''
                             width: 180
                         }
                     );
-                    console.log('Google button rendered');
+                    console.log('Google button rendered successfully');
                 }
                 
                 googleInitialized = true;
@@ -1584,7 +1589,7 @@ if __name__ == "__main__":
     print("🏛️ YAMA AI - BACKEND INTELLIGENCE UPGRADE")
     print("="*55)
     print("🌐 Open: http://localhost:10000")
-    print("🔐 Google Sign-In Added (FIXED!)")
+    print("🔐 Google Sign-In Added (CLIENT ID FIXED!)")
     print("📌 What's New:")
     print("  • Multi-source search (reads multiple webpages)")
     print("  • Better content extraction")
