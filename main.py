@@ -27,6 +27,8 @@ USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 executor = ThreadPoolExecutor(max_workers=5)
 
 # ============ GOOGLE OAUTH CONFIG ============
+# IMPORTANT: Use the EXACT Client ID from your Google Cloud Console
+# Based on your screenshot: 4615226032-411aiprsbes52knkch3hlj7reqc6eb.apps.googleusercontent.com
 GOOGLE_CLIENT_ID = "4615226032-411aiprsbes52knkch3hlj7reqc6eb.apps.googleusercontent.com"
 GOOGLE_CLIENT_SECRET = "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"
 
@@ -125,6 +127,7 @@ async def google_login(request: Request):
         if not google_token:
             return JSONResponse({"error": "No token provided", "success": False}, status_code=400)
         
+        # Verify the token with Google
         response = requests.get(
             'https://oauth2.googleapis.com/tokeninfo',
             params={'id_token': google_token},
@@ -137,10 +140,12 @@ async def google_login(request: Request):
         
         user_info = response.json()
         
+        # Verify the audience matches our client ID
         if user_info.get('aud') != GOOGLE_CLIENT_ID:
             print(f"Audience mismatch: {user_info.get('aud')} != {GOOGLE_CLIENT_ID}")
             return JSONResponse({"error": "Invalid audience", "success": False}, status_code=401)
         
+        # Get or create user with Google info
         user = user_db.get(User.session_id == session_id)
         if not user:
             user_id = secrets.token_urlsafe(16)
@@ -1335,7 +1340,10 @@ HTML = '''
         let loginOverlay = document.getElementById('loginOverlay');
         let app = document.getElementById('app');
         
+        // IMPORTANT: Use the EXACT Client ID from your Google Cloud Console
         const GOOGLE_CLIENT_ID = '4615226032-411aiprsbes52knkch3hlj7reqc6eb.apps.googleusercontent.com';
+        
+        console.log('Using Google Client ID:', GOOGLE_CLIENT_ID);
         
         // ============ GOOGLE SIGN-IN ============
         function initGoogleSignIn() {
@@ -1705,14 +1713,10 @@ async def health():
 
 if __name__ == "__main__":
     print("\n" + "="*55)
-    print("🏛️ YAMA AI - GOOGLE LOGIN POPUP")
+    print("🏛️ YAMA AI - GOOGLE LOGIN POPUP (FIXED)")
     print("="*55)
     print("🌐 Open: http://localhost:10000")
-    print("🔐 Features:")
-    print("  • Login popup on first visit")
-    print("  • Profile picture in top-right corner")
-    print("  • Click profile for sign out option")
-    print("  • Dark/Light theme support")
-    print("  • All existing AI features preserved")
+    print("🔐 Client ID:", GOOGLE_CLIENT_ID)
+    print("📌 Make sure this matches your Google Cloud Console!")
     print("="*55 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=10000)
