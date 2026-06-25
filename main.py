@@ -26,6 +26,10 @@ REQUEST_TIMEOUT = 10
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 executor = ThreadPoolExecutor(max_workers=5)
 
+# ============ GOOGLE OAUTH CONFIG ============
+GOOGLE_CLIENT_ID = "46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com"
+GOOGLE_CLIENT_SECRET = "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"
+
 # ============ CACHE SYSTEM ============
 class SearchCache:
     def __init__(self):
@@ -75,7 +79,8 @@ def get_or_create_user(session_id):
             "level": 1,
             "title": "🌟 Newbie Chatter",
             "created_at": datetime.now().isoformat(),
-            "last_seen": datetime.now().isoformat()
+            "last_seen": datetime.now().isoformat(),
+            "google_user": None
         })
         user = user_db.get(User.session_id == session_id)
     else:
@@ -108,6 +113,90 @@ def update_user_stats(session_id):
         
         return {"count": new_count, "level": new_level, "title": new_title}
     return {"count": 0, "level": 1, "title": "🌟 Newbie Chatter"}
+
+# ============ GOOGLE SIGN-IN HANDLERS ============
+@app.post("/google_login")
+async def google_login(request: Request):
+    data = await request.json()
+    google_token = data.get('id_token')
+    session_id = data.get('session_id', 'default')
+    
+    if not google_token:
+        return JSONResponse({"error": "No token provided"}, status_code=400)
+    
+    try:
+        # Verify the token with Google
+        response = requests.post(
+            'https://oauth2.googleapis.com/tokeninfo',
+            params={'id_token': google_token}
+        )
+        
+        if response.status_code != 200:
+            return JSONResponse({"error": "Invalid token"}, status_code=401)
+        
+        user_info = response.json()
+        
+        # Get or create user with Google info
+        user = user_db.get(User.session_id == session_id)
+        if not user:
+            user_id = secrets.token_urlsafe(16)
+            user_db.insert({
+                "session_id": session_id,
+                "user_id": user_id,
+                "message_count": 0,
+                "level": 1,
+                "title": "🌟 Newbie Chatter",
+                "created_at": datetime.now().isoformat(),
+                "last_seen": datetime.now().isoformat(),
+                "google_user": {
+                    "email": user_info.get('email'),
+                    "name": user_info.get('name'),
+                    "picture": user_info.get('picture'),
+                    "google_id": user_info.get('sub')
+                }
+            })
+        else:
+            # Update Google info if user exists
+            user_db.update({
+                "google_user": {
+                    "email": user_info.get('email'),
+                    "name": user_info.get('name'),
+                    "picture": user_info.get('picture'),
+                    "google_id": user_info.get('sub')
+                },
+                "last_seen": datetime.now().isoformat()
+            }, User.session_id == session_id)
+        
+        return JSONResponse({
+            "success": True,
+            "user": user_info.get('name'),
+            "email": user_info.get('email'),
+            "picture": user_info.get('picture')
+        })
+        
+    except Exception as e:
+        print(f"Google login error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get("/google_user")
+async def get_google_user(session_id: str = "default"):
+    user = user_db.get(User.session_id == session_id)
+    if user and user.get("google_user"):
+        return JSONResponse({
+            "logged_in": True,
+            "name": user["google_user"].get("name"),
+            "email": user["google_user"].get("email"),
+            "picture": user["google_user"].get("picture")
+        })
+    return JSONResponse({"logged_in": False})
+
+@app.post("/google_logout")
+async def google_logout(request: Request):
+    data = await request.json()
+    session_id = data.get('session_id', 'default')
+    
+    user_db.update({"google_user": None}, User.session_id == session_id)
+    return JSONResponse({"success": True})
 
 # ============ ENHANCED SEARCH FUNCTIONS ============
 
@@ -415,7 +504,7 @@ def save_history(session_id, history):
     with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-# ============ ORIGINAL HTML (PRESERVED EXACTLY) ============
+# ============ ORIGINAL HTML WITH GOOGLE SIGN-IN ADDED ============
 HTML = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -424,6 +513,8 @@ HTML = '''
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Yama - AI Assistant</title>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <!-- Google Sign-In -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
         
@@ -943,6 +1034,62 @@ HTML = '''
             border-color: #2c2418;
         }
         
+        /* Google Sign-In Styles */
+        .google-btn-container {
+            margin: 10px 0 5px 0;
+            display: flex;
+            justify-content: center;
+            min-height: 40px;
+        }
+        
+        .user-profile {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 12px 4px 4px;
+            border-radius: 30px;
+            background: rgba(44, 36, 24, 0.08);
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 1px solid transparent;
+        }
+        
+        .user-profile:hover {
+            background: rgba(44, 36, 24, 0.15);
+            border-color: #d4c5a9;
+        }
+        
+        body.dark .user-profile {
+            background: rgba(212, 197, 169, 0.1);
+        }
+        
+        body.dark .user-profile:hover {
+            background: rgba(212, 197, 169, 0.2);
+            border-color: #3a3a5e;
+        }
+        
+        .user-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2px solid #d4c5a9;
+        }
+        
+        .user-name {
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: #2c2418;
+            max-width: 80px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        body.dark .user-name {
+            color: #d4c5a9;
+        }
+        
         @media (max-width: 768px) {
             .message-content { max-width: 90%; font-size: 0.85rem; }
             .suggestions { display: none; }
@@ -956,6 +1103,9 @@ HTML = '''
             textarea { font-size: 0.9rem; padding: 10px 0; min-height: 36px; max-height: 100px; }
             .input-wrapper button { padding: 8px 18px; min-width: 60px; font-size: 0.85rem; }
             .control-btn { font-size: 1rem; padding: 6px 10px; }
+            .user-name { max-width: 50px; font-size: 0.7rem; }
+            .user-avatar { width: 28px; height: 28px; }
+            .google-btn-container { min-height: 32px; margin: 5px 0; }
         }
         
         @media (min-width: 769px) {
@@ -970,6 +1120,8 @@ HTML = '''
             textarea { font-size: 0.85rem; padding: 8px 0; min-height: 32px; max-height: 80px; }
             .input-wrapper button { padding: 7px 14px; min-width: 55px; font-size: 0.8rem; }
             .control-btn { font-size: 0.9rem; padding: 5px 8px; }
+            .user-name { max-width: 40px; font-size: 0.65rem; }
+            .user-avatar { width: 24px; height: 24px; }
         }
     </style>
 </head>
@@ -996,6 +1148,9 @@ HTML = '''
                 <div class="logo" id="logo">
                     <span class="logo-icon">🏛️</span>
                     <h1>YAMA</h1>
+                </div>
+                <div id="userProfileContainer">
+                    <!-- Google Sign-In button or user profile will be rendered here -->
                 </div>
                 <button class="new-chat-mobile" onclick="newChat()">➕</button>
                 <button class="control-btn" onclick="toggleTheme()" title="Dark/Light Mode">🌓</button>
@@ -1032,10 +1187,172 @@ HTML = '''
     <script>
         let sessionId = 'session_' + Date.now();
         let hasMessages = false;
+        let googleUser = null;
+        
+        // ============ GOOGLE SIGN-IN ============
+        function initGoogleSignIn() {
+            if (typeof google !== 'undefined' && google.accounts) {
+                google.accounts.id.initialize({
+                    client_id: '46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com',
+                    callback: handleGoogleCredentialResponse,
+                    auto_select: false,
+                    cancel_on_tap_outside: true
+                });
+                
+                // Render the sign-in button
+                google.accounts.id.renderButton(
+                    document.getElementById('userProfileContainer'),
+                    { 
+                        type: 'standard',
+                        theme: document.body.classList.contains('dark') ? 'filled_black' : 'outline',
+                        size: 'medium',
+                        text: 'signin_with',
+                        shape: 'pill',
+                        logo_alignment: 'left',
+                        width: 180
+                    }
+                );
+                
+                // Check if user is already logged in
+                checkGoogleUser();
+            } else {
+                console.log('Google Sign-In script not loaded yet, retrying...');
+                setTimeout(initGoogleSignIn, 500);
+            }
+        }
+        
+        async function handleGoogleCredentialResponse(response) {
+            console.log('Google Sign-In successful');
+            
+            try {
+                const res = await fetch('/google_login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        id_token: response.credential,
+                        session_id: sessionId
+                    })
+                });
+                
+                const data = await res.json();
+                if (data.success) {
+                    googleUser = data;
+                    updateUIForLoggedInUser(data);
+                    // Add a welcome message
+                    addMessage(`👋 Welcome back, ${data.user}! You're now signed in with Google.`, 'ai');
+                    scrollToBottom();
+                } else {
+                    console.error('Login failed:', data);
+                }
+            } catch (error) {
+                console.error('Error during Google login:', error);
+            }
+        }
+        
+        async function checkGoogleUser() {
+            try {
+                const res = await fetch('/google_user?session_id=' + encodeURIComponent(sessionId));
+                const data = await res.json();
+                if (data.logged_in) {
+                    googleUser = data;
+                    updateUIForLoggedInUser(data);
+                }
+            } catch (error) {
+                console.error('Error checking Google user:', error);
+            }
+        }
+        
+        function updateUIForLoggedInUser(data) {
+            const container = document.getElementById('userProfileContainer');
+            container.innerHTML = `
+                <div class="user-profile" onclick="logoutGoogle()" title="Click to sign out">
+                    <img src="${data.picture || 'https://ui-avatars.com/api/?name=' + encodeURIComponent(data.name || 'User')}" 
+                         class="user-avatar" alt="Profile">
+                    <span class="user-name">${data.name || 'User'}</span>
+                </div>
+            `;
+            // Also hide the Google button if it was showing
+        }
+        
+        async function logoutGoogle() {
+            if (!confirm('Sign out from Google?')) return;
+            
+            try {
+                await fetch('/google_logout', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session_id: sessionId })
+                });
+                
+                googleUser = null;
+                // Re-render the Google button
+                const container = document.getElementById('userProfileContainer');
+                container.innerHTML = '';
+                if (typeof google !== 'undefined' && google.accounts) {
+                    google.accounts.id.renderButton(
+                        container,
+                        { 
+                            type: 'standard',
+                            theme: document.body.classList.contains('dark') ? 'filled_black' : 'outline',
+                            size: 'medium',
+                            text: 'signin_with',
+                            shape: 'pill',
+                            logo_alignment: 'left',
+                            width: 180
+                        }
+                    );
+                }
+                addMessage('👋 You have been signed out.', 'ai');
+                scrollToBottom();
+            } catch (error) {
+                console.error('Error during logout:', error);
+            }
+        }
+        
+        // Listen for dark mode changes to update Google button theme
+        function updateGoogleButtonTheme() {
+            const isDark = document.body.classList.contains('dark');
+            const container = document.getElementById('userProfileContainer');
+            // Only re-render if no user is logged in
+            if (!googleUser && container) {
+                container.innerHTML = '';
+                if (typeof google !== 'undefined' && google.accounts) {
+                    google.accounts.id.renderButton(
+                        container,
+                        { 
+                            type: 'standard',
+                            theme: isDark ? 'filled_black' : 'outline',
+                            size: 'medium',
+                            text: 'signin_with',
+                            shape: 'pill',
+                            logo_alignment: 'left',
+                            width: 180
+                        }
+                    );
+                }
+            }
+        }
+        
+        // Override toggleTheme to update Google button
+        const originalToggleTheme = toggleTheme;
+        toggleTheme = function() {
+            originalToggleTheme();
+            updateGoogleButtonTheme();
+        };
+        
+        // ============ END GOOGLE SIGN-IN ============
+        
+        // Load Google Sign-In when page loads
+        window.onload = function() {
+            initGoogleSignIn();
+            loadHistory();
+            textarea.focus();
+        };
         
         function toggleTheme() {
             document.body.classList.toggle('dark');
             localStorage.setItem('theme', document.body.classList.contains('dark') ? 'dark' : 'light');
+            updateGoogleButtonTheme();
         }
         
         function exportChat() {
@@ -1044,7 +1361,7 @@ HTML = '''
             messages.forEach(msg => {
                 const sender = msg.classList.contains('user-message') ? 'You' : 'Yama';
                 const text = msg.querySelector('.message-content').innerText;
-                exportText += `${sender}: ${text}\n\n`;
+                exportText += `${sender}: ${text}\\n\\n`;
             });
             const blob = new Blob([exportText], {type: 'text/plain'});
             const a = document.createElement('a');
@@ -1164,7 +1481,7 @@ HTML = '''
             content.className = 'message-content';
             // Make URLs clickable
             let formattedText = text.replace(/\\n/g, '<br>').replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>');
-            formattedText = formattedText.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+            formattedText = formattedText.replace(/(https?:\\/\\/[^\\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
             content.innerHTML = formattedText;
             div.appendChild(content);
             messages.appendChild(div);
@@ -1175,9 +1492,6 @@ HTML = '''
             const messages = document.getElementById('messages');
             messages.scrollTop = messages.scrollHeight;
         }
-        
-        loadHistory();
-        textarea.focus();
     </script>
 </body>
 </html>
@@ -1225,6 +1539,7 @@ if __name__ == "__main__":
     print("🏛️ YAMA AI - BACKEND INTELLIGENCE UPGRADE")
     print("="*55)
     print("🌐 Open: http://localhost:10000")
+    print("🔐 Google Sign-In Added!")
     print("📌 What's New (Behind the Scenes):")
     print("  • Multi-source search (reads multiple webpages)")
     print("  • Better content extraction")
@@ -1233,6 +1548,7 @@ if __name__ == "__main__":
     print("  • Follow-up question suggestions")
     print("  • Clickable source links")
     print("  • Faster response times")
+    print("  • Google Sign-In with user profiles")
     print("="*55)
     print("✨ Same Yama look and feel - Just smarter!")
     print("="*55 + "\n")
