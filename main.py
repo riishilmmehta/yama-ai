@@ -26,12 +26,6 @@ REQUEST_TIMEOUT = 10
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 executor = ThreadPoolExecutor(max_workers=5)
 
-# ============ GOOGLE OAUTH CONFIG ============
-# IMPORTANT: Use the EXACT Client ID from your Google Cloud Console
-# Based on your screenshot: 4615226032-411aiprsbes52knkch3hlj7reqc6eb.apps.googleusercontent.com
-GOOGLE_CLIENT_ID = "4615226032-411aiprsbes52knkch3hlj7reqc6eb.apps.googleusercontent.com"
-GOOGLE_CLIENT_SECRET = "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"
-
 # ============ CACHE SYSTEM ============
 class SearchCache:
     def __init__(self):
@@ -81,8 +75,7 @@ def get_or_create_user(session_id):
             "level": 1,
             "title": "🌟 Newbie Chatter",
             "created_at": datetime.now().isoformat(),
-            "last_seen": datetime.now().isoformat(),
-            "google_user": None
+            "last_seen": datetime.now().isoformat()
         })
         user = user_db.get(User.session_id == session_id)
     else:
@@ -116,117 +109,24 @@ def update_user_stats(session_id):
         return {"count": new_count, "level": new_level, "title": new_title}
     return {"count": 0, "level": 1, "title": "🌟 Newbie Chatter"}
 
-# ============ GOOGLE SIGN-IN HANDLERS ============
-@app.post("/google_login")
-async def google_login(request: Request):
-    try:
-        data = await request.json()
-        google_token = data.get('id_token')
-        session_id = data.get('session_id', 'default')
-        
-        if not google_token:
-            return JSONResponse({"error": "No token provided", "success": False}, status_code=400)
-        
-        # Verify the token with Google
-        response = requests.get(
-            'https://oauth2.googleapis.com/tokeninfo',
-            params={'id_token': google_token},
-            timeout=10
-        )
-        
-        if response.status_code != 200:
-            print(f"Token verification failed: {response.text}")
-            return JSONResponse({"error": "Invalid token", "success": False}, status_code=401)
-        
-        user_info = response.json()
-        
-        # Verify the audience matches our client ID
-        if user_info.get('aud') != GOOGLE_CLIENT_ID:
-            print(f"Audience mismatch: {user_info.get('aud')} != {GOOGLE_CLIENT_ID}")
-            return JSONResponse({"error": "Invalid audience", "success": False}, status_code=401)
-        
-        # Get or create user with Google info
-        user = user_db.get(User.session_id == session_id)
-        if not user:
-            user_id = secrets.token_urlsafe(16)
-            user_db.insert({
-                "session_id": session_id,
-                "user_id": user_id,
-                "message_count": 0,
-                "level": 1,
-                "title": "🌟 Newbie Chatter",
-                "created_at": datetime.now().isoformat(),
-                "last_seen": datetime.now().isoformat(),
-                "google_user": {
-                    "email": user_info.get('email'),
-                    "name": user_info.get('name'),
-                    "picture": user_info.get('picture'),
-                    "google_id": user_info.get('sub')
-                }
-            })
-        else:
-            user_db.update({
-                "google_user": {
-                    "email": user_info.get('email'),
-                    "name": user_info.get('name'),
-                    "picture": user_info.get('picture'),
-                    "google_id": user_info.get('sub')
-                },
-                "last_seen": datetime.now().isoformat()
-            }, User.session_id == session_id)
-        
-        return JSONResponse({
-            "success": True,
-            "user": user_info.get('name'),
-            "email": user_info.get('email'),
-            "picture": user_info.get('picture')
-        })
-        
-    except Exception as e:
-        print(f"Google login error: {e}")
-        return JSONResponse({"error": str(e), "success": False}, status_code=500)
-
-@app.get("/google_user")
-async def get_google_user(session_id: str = "default"):
-    try:
-        user = user_db.get(User.session_id == session_id)
-        if user and user.get("google_user"):
-            return JSONResponse({
-                "logged_in": True,
-                "name": user["google_user"].get("name"),
-                "email": user["google_user"].get("email"),
-                "picture": user["google_user"].get("picture")
-            })
-        return JSONResponse({"logged_in": False})
-    except Exception as e:
-        print(f"Error getting Google user: {e}")
-        return JSONResponse({"logged_in": False})
-
-@app.post("/google_logout")
-async def google_logout(request: Request):
-    try:
-        data = await request.json()
-        session_id = data.get('session_id', 'default')
-        user_db.update({"google_user": None}, User.session_id == session_id)
-        return JSONResponse({"success": True})
-    except Exception as e:
-        print(f"Logout error: {e}")
-        return JSONResponse({"success": False}, status_code=500)
-
 # ============ ENHANCED SEARCH FUNCTIONS ============
 
 def clean_text(text: str) -> str:
+    """Clean extracted text"""
     text = re.sub(r'\s+', ' ', text)
     text = re.sub(r'[^\w\s.,!?-]', '', text)
     return text.strip()
 
 def extract_main_content(soup: BeautifulSoup) -> str:
+    """Extract main content from webpage - improved scraping"""
+    # Remove unwanted elements
     for tag in soup(['script', 'style', 'nav', 'footer', 'header', 'aside', 
                      'form', 'button', 'iframe', 'noscript', 'advertisement']):
         tag.decompose()
     
     content_parts = []
     
+    # Try article first
     article = soup.find('article')
     if article:
         for p in article.find_all('p'):
@@ -234,6 +134,7 @@ def extract_main_content(soup: BeautifulSoup) -> str:
             if len(text) > 30:
                 content_parts.append(text)
     
+    # Try main content
     if not content_parts:
         main = soup.find('main') or soup.find('div', {'role': 'main'})
         if main:
@@ -242,6 +143,7 @@ def extract_main_content(soup: BeautifulSoup) -> str:
                 if len(text) > 30:
                     content_parts.append(text)
     
+    # Try content containers
     if not content_parts:
         content_divs = soup.find_all(['div', 'section'], class_=re.compile(r'content|article|post|entry|body', re.I))
         for div in content_divs[:5]:
@@ -250,15 +152,18 @@ def extract_main_content(soup: BeautifulSoup) -> str:
                 if len(text) > 30:
                     content_parts.append(text)
     
+    # Fallback to paragraphs
     if not content_parts:
         for p in soup.find_all('p'):
             text = clean_text(p.get_text())
             if len(text) > 50:
                 content_parts.append(text)
     
+    # Limit to 30 paragraphs
     return ' '.join(content_parts[:30])
 
 def search_web(query: str) -> List[Dict]:
+    """Search the web with caching"""
     cached = cache.get_search(query)
     if cached:
         return cached
@@ -286,6 +191,7 @@ def search_web(query: str) -> List[Dict]:
     return results
 
 def read_full_webpage(url: str) -> Optional[str]:
+    """Read webpage with caching"""
     cached = cache.get_webpage(url)
     if cached:
         return cached
@@ -308,6 +214,7 @@ def read_full_webpage(url: str) -> Optional[str]:
     return None
 
 def read_multiple_pages(urls: List[str], max_pages: int = MAX_READ_PAGES) -> List[Dict]:
+    """Read multiple webpages concurrently"""
     results = []
     urls_to_read = urls[:max_pages]
     
@@ -332,8 +239,12 @@ def read_multiple_pages(urls: List[str], max_pages: int = MAX_READ_PAGES) -> Lis
     return results
 
 def generate_combined_summary(query: str, search_results: List[Dict], webpage_contents: List[Dict]) -> str:
+    """Generate improved summary from multiple sources"""
+    
+    # Extract key information from all sources
     all_text = ' '.join([wc['content'] for wc in webpage_contents[:3]])
     
+    # Find relevant sentences
     query_words = set(query.lower().split())
     sentences = re.split(r'[.!?]+', all_text)
     relevant_sentences = []
@@ -343,8 +254,10 @@ def generate_combined_summary(query: str, search_results: List[Dict], webpage_co
         if len(sentence_words.intersection(query_words)) >= 2:
             relevant_sentences.append(sentence.strip())
     
+    # Build response
     response = ""
     
+    # Main answer
     if relevant_sentences:
         main_answer = relevant_sentences[0]
         main_answer = clean_text(main_answer)
@@ -354,6 +267,7 @@ def generate_combined_summary(query: str, search_results: List[Dict], webpage_co
     elif search_results:
         response += f"📌 {search_results[0].get('snippet', '')}\n\n"
     
+    # Additional details
     if len(relevant_sentences) > 1:
         response += "📖 **More details:**\n"
         for sentence in relevant_sentences[1:4]:
@@ -362,6 +276,7 @@ def generate_combined_summary(query: str, search_results: List[Dict], webpage_co
                 response += f"• {clean_s}\n"
         response += "\n"
     
+    # Key points
     key_points = []
     for sentence in relevant_sentences[4:8]:
         clean_s = clean_text(sentence)
@@ -374,6 +289,7 @@ def generate_combined_summary(query: str, search_results: List[Dict], webpage_co
             response += f"• {point}\n"
         response += "\n"
     
+    # Sources (clickable)
     if webpage_contents:
         response += "📚 **Sources:**\n"
         for i, wc in enumerate(webpage_contents[:5], 1):
@@ -383,6 +299,7 @@ def generate_combined_summary(query: str, search_results: List[Dict], webpage_co
     return response
 
 def generate_follow_ups(query: str) -> List[str]:
+    """Generate follow-up questions"""
     lower_query = query.lower()
     
     if 'what' in lower_query or 'who' in lower_query or 'when' in lower_query:
@@ -410,7 +327,7 @@ def generate_follow_ups(query: str) -> List[str]:
             "Tell me more"
         ]
 
-# ============ RESPONSE FUNCTION ============
+# ============ RESPONSE FUNCTION (PRESERVING ORIGINAL FORMAT) ============
 
 def get_response(message, session_id):
     msg = message.strip().lower()
@@ -418,6 +335,7 @@ def get_response(message, session_id):
     stats = update_user_stats(session_id)
     user = user_db.get(User.session_id == session_id)
     
+    # Math
     math_match = re.search(r'(\d+)\s*([\+\-\*\/])\s*(\d+)', msg)
     if math_match:
         try:
@@ -434,20 +352,25 @@ def get_response(message, session_id):
         except:
             pass
     
+    # Greetings
     if msg in ['hi', 'hello', 'hey', 'sup', 'yo']:
         return f"👋 Hello! You are a **{stats['title']}** (Level {stats['level']}) with {stats['count']} messages!\n\nHow can I help you today?"
     
     if 'how are you' in msg:
         return f"😊 I'm doing great! Thanks for asking! You're a {stats['title']} with {stats['count']} messages!"
     
+    # ============ ENHANCED SEARCH ============
+    # Search the web
     search_results = search_web(message)
     
     if not search_results:
         return f"I searched for '{message}' but found no results."
     
+    # Read multiple webpages
     urls = [r['url'] for r in search_results[:MAX_READ_PAGES]]
     webpage_contents = read_multiple_pages(urls, max_pages=MAX_READ_PAGES)
     
+    # Fallback to snippets if no webpage content
     if not webpage_contents:
         for r in search_results[:3]:
             webpage_contents.append({
@@ -455,13 +378,20 @@ def get_response(message, session_id):
                 "content": r['snippet']
             })
     
+    # Generate combined summary
     summary = generate_combined_summary(message, search_results, webpage_contents)
+    
+    # Generate follow-ups
     follow_ups = generate_follow_ups(message)
     
+    # Build response (preserving original format)
     response = f"🔍 **Search results for: {message}**\n\n"
     response += f"📊 **Your Stats:** Level {stats['level']} - {stats['title']} ({stats['count']} messages)\n\n"
+    
+    # Add the combined summary
     response += summary
     
+    # Add follow-up suggestions
     if follow_ups:
         response += "\n💡 **You might also ask:**\n"
         for q in follow_ups[:3]:
@@ -469,7 +399,7 @@ def get_response(message, session_id):
     
     return response
 
-# ============ HISTORY ============
+# ============ HISTORY (PRESERVING ORIGINAL) ============
 
 def load_history(session_id):
     safe_id = session_id.replace('-', '_').replace('.', '_')
@@ -485,7 +415,7 @@ def save_history(session_id, history):
     with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-# ============ HTML WITH LOGIN POPUP ============
+# ============ ORIGINAL HTML (PRESERVED EXACTLY) ============
 HTML = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -494,7 +424,6 @@ HTML = '''
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Yama - AI Assistant</title>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
-    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
         
@@ -637,90 +566,6 @@ HTML = '''
         body.dark .control-btn:hover {
             background: #3a3a5e;
             color: white;
-        }
-        
-        /* Login Overlay Styles */
-        .login-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0,0,0,0.7);
-            backdrop-filter: blur(10px);
-            z-index: 9999;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: all 0.5s ease;
-        }
-        
-        .login-overlay.hidden {
-            opacity: 0;
-            pointer-events: none;
-        }
-        
-        .login-box {
-            background: white;
-            border-radius: 30px;
-            padding: 50px 40px 40px;
-            max-width: 420px;
-            width: 90%;
-            text-align: center;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            animation: slideUp 0.6s ease;
-        }
-        
-        body.dark .login-box {
-            background: #1a1a2e;
-            border: 1px solid #3a3a5e;
-        }
-        
-        @keyframes slideUp {
-            from { transform: translateY(50px); opacity: 0; }
-            to { transform: translateY(0); opacity: 1; }
-        }
-        
-        .login-box .logo-icon {
-            font-size: 4rem;
-            margin-bottom: 10px;
-        }
-        
-        .login-box h1 {
-            font-family: 'Playfair Display', serif;
-            font-size: 2.5rem;
-            color: #2c2418;
-            margin-bottom: 8px;
-        }
-        
-        body.dark .login-box h1 {
-            color: #d4c5a9;
-        }
-        
-        .login-box p {
-            color: #6a5a4a;
-            font-size: 0.95rem;
-            margin-bottom: 30px;
-        }
-        
-        body.dark .login-box p {
-            color: #8a7a6a;
-        }
-        
-        .login-box .google-btn-container {
-            display: flex;
-            justify-content: center;
-            min-height: 50px;
-        }
-        
-        .login-box .sub-text {
-            font-size: 0.7rem;
-            color: #b8a88a;
-            margin-top: 20px;
-        }
-        
-        body.dark .login-box .sub-text {
-            color: #6a5a7a;
         }
         
         .app {
@@ -1098,130 +943,6 @@ HTML = '''
             border-color: #2c2418;
         }
         
-        /* User Profile in Top Corner */
-        .user-profile-container {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            cursor: pointer;
-            position: relative;
-        }
-        
-        .user-profile-circle {
-            width: 36px;
-            height: 36px;
-            border-radius: 50%;
-            border: 2px solid #d4c5a9;
-            object-fit: cover;
-            transition: all 0.2s;
-            background: #2c2418;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-size: 0.8rem;
-            font-weight: 600;
-        }
-        
-        .user-profile-circle:hover {
-            transform: scale(1.05);
-            border-color: #c4a57b;
-        }
-        
-        .user-profile-circle.default {
-            background: #4a3f2f;
-            font-size: 1.2rem;
-        }
-        
-        body.dark .user-profile-circle {
-            border-color: #3a3a5e;
-        }
-        
-        .profile-dropdown {
-            position: absolute;
-            top: 45px;
-            right: 0;
-            background: white;
-            border-radius: 16px;
-            padding: 12px 0;
-            min-width: 180px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
-            display: none;
-            z-index: 100;
-            border: 1px solid #e8e0d5;
-        }
-        
-        body.dark .profile-dropdown {
-            background: #1a1a2e;
-            border-color: #3a3a5e;
-        }
-        
-        .profile-dropdown.show {
-            display: block;
-            animation: slideDown 0.2s ease;
-        }
-        
-        @keyframes slideDown {
-            from { transform: translateY(-10px); opacity: 0; }
-            to { transform: translateY(0); opacity: 1; }
-        }
-        
-        .profile-dropdown-item {
-            padding: 10px 20px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            color: #2c2418;
-            font-size: 0.85rem;
-            cursor: pointer;
-            transition: all 0.2s;
-            border: none;
-            background: none;
-            width: 100%;
-            text-align: left;
-        }
-        
-        body.dark .profile-dropdown-item {
-            color: #d4c5a9;
-        }
-        
-        .profile-dropdown-item:hover {
-            background: rgba(44, 36, 24, 0.08);
-        }
-        
-        body.dark .profile-dropdown-item:hover {
-            background: rgba(212, 197, 169, 0.08);
-        }
-        
-        .profile-dropdown-item .user-info {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-        }
-        
-        .profile-dropdown-item .user-name-display {
-            font-weight: 600;
-        }
-        
-        .profile-dropdown-item .user-email-display {
-            font-size: 0.7rem;
-            color: #8a7a6a;
-        }
-        
-        body.dark .profile-dropdown-item .user-email-display {
-            color: #6a5a7a;
-        }
-        
-        .profile-dropdown-divider {
-            height: 1px;
-            background: #e8e0d5;
-            margin: 6px 0;
-        }
-        
-        body.dark .profile-dropdown-divider {
-            background: #3a3a5e;
-        }
-        
         @media (max-width: 768px) {
             .message-content { max-width: 90%; font-size: 0.85rem; }
             .suggestions { display: none; }
@@ -1235,10 +956,6 @@ HTML = '''
             textarea { font-size: 0.9rem; padding: 10px 0; min-height: 36px; max-height: 100px; }
             .input-wrapper button { padding: 8px 18px; min-width: 60px; font-size: 0.85rem; }
             .control-btn { font-size: 1rem; padding: 6px 10px; }
-            .user-profile-circle { width: 30px; height: 30px; font-size: 0.7rem; }
-            .login-box { padding: 30px 20px 25px; }
-            .login-box h1 { font-size: 2rem; }
-            .login-box .logo-icon { font-size: 3rem; }
         }
         
         @media (min-width: 769px) {
@@ -1253,27 +970,11 @@ HTML = '''
             textarea { font-size: 0.85rem; padding: 8px 0; min-height: 32px; max-height: 80px; }
             .input-wrapper button { padding: 7px 14px; min-width: 55px; font-size: 0.8rem; }
             .control-btn { font-size: 0.9rem; padding: 5px 8px; }
-            .user-profile-circle { width: 26px; height: 26px; font-size: 0.6rem; }
-            .login-box { padding: 25px 15px 20px; }
-            .login-box h1 { font-size: 1.8rem; }
-            .login-box .logo-icon { font-size: 2.5rem; }
         }
     </style>
 </head>
 <body>
-    <!-- Login Overlay -->
-    <div class="login-overlay" id="loginOverlay">
-        <div class="login-box">
-            <div class="logo-icon">🏛️</div>
-            <h1>Yama AI</h1>
-            <p>Sign in to start your AI journey</p>
-            <div class="google-btn-container" id="loginGoogleBtn"></div>
-            <div class="sub-text">Secure login with your Google account</div>
-        </div>
-    </div>
-
-    <!-- Main App -->
-    <div class="app" id="app" style="display:none;">
+    <div class="app">
         <div class="overlay" id="overlay" onclick="closeSidebar()"></div>
         
         <div class="sidebar" id="sidebar">
@@ -1295,9 +996,6 @@ HTML = '''
                 <div class="logo" id="logo">
                     <span class="logo-icon">🏛️</span>
                     <h1>YAMA</h1>
-                </div>
-                <div class="user-profile-container" id="profileContainer">
-                    <!-- Profile will be rendered here -->
                 </div>
                 <button class="new-chat-mobile" onclick="newChat()">➕</button>
                 <button class="control-btn" onclick="toggleTheme()" title="Dark/Light Mode">🌓</button>
@@ -1330,215 +1028,34 @@ HTML = '''
             </div>
         </div>
     </div>
-
+    
     <script>
         let sessionId = 'session_' + Date.now();
         let hasMessages = false;
-        let googleUser = null;
-        let isLoggedIn = false;
-        let googleInitialized = false;
-        let loginOverlay = document.getElementById('loginOverlay');
-        let app = document.getElementById('app');
         
-        // IMPORTANT: Use the EXACT Client ID from your Google Cloud Console
-        const GOOGLE_CLIENT_ID = '4615226032-411aiprsbes52knkch3hlj7reqc6eb.apps.googleusercontent.com';
-        
-        console.log('Using Google Client ID:', GOOGLE_CLIENT_ID);
-        
-        // ============ GOOGLE SIGN-IN ============
-        function initGoogleSignIn() {
-            if (typeof google !== 'undefined' && google.accounts) {
-                console.log('Initializing Google Sign-In...');
-                google.accounts.id.initialize({
-                    client_id: GOOGLE_CLIENT_ID,
-                    callback: handleGoogleCredentialResponse,
-                    auto_select: false,
-                    cancel_on_tap_outside: true
-                });
-                
-                // Render login button in overlay
-                const loginBtn = document.getElementById('loginGoogleBtn');
-                if (loginBtn) {
-                    google.accounts.id.renderButton(
-                        loginBtn,
-                        { 
-                            type: 'standard',
-                            theme: 'outline',
-                            size: 'large',
-                            text: 'signin_with',
-                            shape: 'pill',
-                            logo_alignment: 'left',
-                            width: 280
-                        }
-                    );
-                    console.log('Login button rendered');
-                }
-                
-                googleInitialized = true;
-                
-                // Check if user is already logged in
-                checkGoogleUser();
-            } else {
-                console.log('Google Sign-In script not loaded, retrying...');
-                setTimeout(initGoogleSignIn, 500);
-            }
-        }
-        
-        async function handleGoogleCredentialResponse(response) {
-            console.log('Google Sign-In credential received');
-            
-            try {
-                const res = await fetch('/google_login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        id_token: response.credential,
-                        session_id: sessionId
-                    })
-                });
-                
-                const data = await res.json();
-                console.log('Login response:', data);
-                
-                if (data.success) {
-                    googleUser = data;
-                    isLoggedIn = true;
-                    hideLoginOverlay();
-                    updateProfileUI(data);
-                    addMessage(`👋 Welcome, ${data.user}! You're signed in with Google.`, 'ai');
-                    scrollToBottom();
-                } else {
-                    console.error('Login failed:', data.error);
-                    alert('Login failed: ' + (data.error || 'Please try again'));
-                }
-            } catch (error) {
-                console.error('Error during Google login:', error);
-                alert('Error connecting to Google. Please try again.');
-            }
-        }
-        
-        async function checkGoogleUser() {
-            try {
-                const res = await fetch('/google_user?session_id=' + encodeURIComponent(sessionId));
-                const data = await res.json();
-                if (data.logged_in) {
-                    googleUser = data;
-                    isLoggedIn = true;
-                    hideLoginOverlay();
-                    updateProfileUI(data);
-                    console.log('User already logged in:', data.name);
-                }
-            } catch (error) {
-                console.error('Error checking Google user:', error);
-            }
-        }
-        
-        function hideLoginOverlay() {
-            loginOverlay.classList.add('hidden');
-            app.style.display = 'flex';
-            setTimeout(() => {
-                loginOverlay.style.display = 'none';
-            }, 500);
-        }
-        
-        function updateProfileUI(data) {
-            const container = document.getElementById('profileContainer');
-            const initial = data.name ? data.name.charAt(0).toUpperCase() : 'U';
-            const hasPicture = data.picture && data.picture.startsWith('http');
-            
-            container.innerHTML = `
-                <div class="user-profile-container" onclick="toggleProfileDropdown()">
-                    ${hasPicture ? 
-                        `<img src="${data.picture}" class="user-profile-circle" alt="Profile">` :
-                        `<div class="user-profile-circle default">${initial}</div>`
-                    }
-                </div>
-                <div class="profile-dropdown" id="profileDropdown">
-                    <div class="profile-dropdown-item" style="cursor:default;">
-                        <div class="user-info">
-                            <span class="user-name-display">${data.name || 'User'}</span>
-                            <span class="user-email-display">${data.email || ''}</span>
-                        </div>
-                    </div>
-                    <div class="profile-dropdown-divider"></div>
-                    <button class="profile-dropdown-item" onclick="logoutGoogle()">
-                        🚪 Sign Out
-                    </button>
-                </div>
-            `;
-        }
-        
-        function toggleProfileDropdown() {
-            const dropdown = document.getElementById('profileDropdown');
-            if (dropdown) {
-                dropdown.classList.toggle('show');
-            }
-        }
-        
-        // Close dropdown when clicking outside
-        document.addEventListener('click', function(event) {
-            const container = document.getElementById('profileContainer');
-            if (container && !container.contains(event.target)) {
-                const dropdown = document.getElementById('profileDropdown');
-                if (dropdown) {
-                    dropdown.classList.remove('show');
-                }
-            }
-        });
-        
-        async function logoutGoogle() {
-            if (!confirm('Sign out from Google?')) return;
-            
-            try {
-                await fetch('/google_logout', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ session_id: sessionId })
-                });
-                
-                googleUser = null;
-                isLoggedIn = false;
-                
-                // Show login overlay again
-                loginOverlay.style.display = 'flex';
-                loginOverlay.classList.remove('hidden');
-                app.style.display = 'none';
-                
-                // Reset profile
-                document.getElementById('profileContainer').innerHTML = '';
-                
-                addMessage('👋 You have been signed out.', 'ai');
-                scrollToBottom();
-            } catch (error) {
-                console.error('Error during logout:', error);
-            }
-        }
-        
-        // ============ THEME ============
         function toggleTheme() {
             document.body.classList.toggle('dark');
             localStorage.setItem('theme', document.body.classList.contains('dark') ? 'dark' : 'light');
         }
         
-        const savedTheme = localStorage.getItem('theme');
-        if (savedTheme === 'dark') {
-            document.body.classList.add('dark');
-        }
-        
-        // ============ CHAT FUNCTIONS ============
         function exportChat() {
             const messages = document.querySelectorAll('.message');
             let exportText = '';
             messages.forEach(msg => {
                 const sender = msg.classList.contains('user-message') ? 'You' : 'Yama';
                 const text = msg.querySelector('.message-content').innerText;
-                exportText += `${sender}: ${text}\\n\\n`;
+                exportText += `${sender}: ${text}\n\n`;
             });
             const blob = new Blob([exportText], {type: 'text/plain'});
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
             a.download = `yama_chat_${new Date().toISOString()}.txt`;
             a.click();
+        }
+        
+        const savedTheme = localStorage.getItem('theme');
+        if (savedTheme === 'dark') {
+            document.body.classList.add('dark');
         }
         
         function newChat() {
@@ -1609,11 +1126,6 @@ HTML = '''
         }
         
         async function sendMessage() {
-            if (!isLoggedIn) {
-                alert('Please sign in with Google first!');
-                return;
-            }
-            
             const message = textarea.value.trim();
             if (!message) return;
             
@@ -1650,8 +1162,9 @@ HTML = '''
             div.className = `message ${sender}-message`;
             const content = document.createElement('div');
             content.className = 'message-content';
+            // Make URLs clickable
             let formattedText = text.replace(/\\n/g, '<br>').replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>');
-            formattedText = formattedText.replace(/(https?:\\/\\/[^\\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+            formattedText = formattedText.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
             content.innerHTML = formattedText;
             div.appendChild(content);
             messages.appendChild(div);
@@ -1663,12 +1176,8 @@ HTML = '''
             messages.scrollTop = messages.scrollHeight;
         }
         
-        // ============ INIT ============
-        window.onload = function() {
-            initGoogleSignIn();
-            loadHistory();
-            textarea.focus();
-        };
+        loadHistory();
+        textarea.focus();
     </script>
 </body>
 </html>
@@ -1713,10 +1222,18 @@ async def health():
 
 if __name__ == "__main__":
     print("\n" + "="*55)
-    print("🏛️ YAMA AI - GOOGLE LOGIN POPUP (FIXED)")
+    print("🏛️ YAMA AI - BACKEND INTELLIGENCE UPGRADE")
     print("="*55)
     print("🌐 Open: http://localhost:10000")
-    print("🔐 Client ID:", GOOGLE_CLIENT_ID)
-    print("📌 Make sure this matches your Google Cloud Console!")
+    print("📌 What's New (Behind the Scenes):")
+    print("  • Multi-source search (reads multiple webpages)")
+    print("  • Better content extraction")
+    print("  • Search result caching")
+    print("  • Webpage content caching")
+    print("  • Follow-up question suggestions")
+    print("  • Clickable source links")
+    print("  • Faster response times")
+    print("="*55)
+    print("✨ Same Yama look and feel - Just smarter!")
     print("="*55 + "\n")
-    uvicorn.run(app, host="0.0.0.0", port=10000)
+    uvicorn.run(app, host="0.0.0.0", port=10000)                                                                                                                                     can you add google sing in in this cold make sure that donot change anything just only add google sign in and u dont have permision to touch anything elese Client ID
