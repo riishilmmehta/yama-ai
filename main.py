@@ -1236,4 +1236,4 @@ if __name__ == "__main__":
     print("="*55)
     print("✨ Same Yama look and feel - Just smarter!")
     print("="*55 + "\n")
-    uvicorn.run(app, host="0.0.0.0", port=10000)                                                                                                                                     can you add google sing in in this cold make sure that donot change anything just only add google sign in and u dont have permision to touch anything elese Client ID
+    uvicorn.run(app, host="0.0.0.0", port=10000)
