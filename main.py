@@ -215,6 +215,20 @@ def read_full_webpage_improved(url: str) -> Optional[str]:
     except:
         return None
 
+# ============ MAKE URLS CLICKABLE ============
+def make_urls_clickable(text: str) -> str:
+    """Convert URLs in text to clickable HTML links"""
+    # Pattern to match URLs
+    url_pattern = r'(https?://[^\s]+)'
+    
+    def replace_url(match):
+        url = match.group(1)
+        # Clean up URL (remove trailing punctuation)
+        url_clean = url.rstrip('.,;:!?')
+        return f'<a href="{url_clean}" target="_blank" rel="noopener noreferrer">{url_clean}</a>'
+    
+    return re.sub(url_pattern, replace_url, text)
+
 # ============ ADVANCED ANSWER GENERATION ============
 def generate_advanced_answer(query: str, search_results: List[Dict], context_history: List[Dict]) -> str:
     """Generate structured, professional answer with confidence scores"""
@@ -269,7 +283,9 @@ def generate_advanced_answer(query: str, search_results: List[Dict], context_his
     if source_cards:
         answer_parts.append(f"🔗 **Sources**\n{source_cards}")
     
-    return "\n".join(answer_parts)
+    # Join all parts and make URLs clickable
+    full_answer = "\n".join(answer_parts)
+    return make_urls_clickable(full_answer)
 
 def generate_quick_answer(query: str, sources: List[Dict]) -> str:
     """Generate a concise quick answer"""
@@ -367,12 +383,14 @@ Confidence Level: {agreement['level']}
 {agreement['agreement']}"""
 
 def generate_source_cards(sources: List[Dict]) -> str:
-    """Generate source cards with quality scores"""
+    """Generate source cards with clickable URLs"""
     cards = []
     for i, source in enumerate(sources[:6], 1):
         quality = source.get('quality_score', 0)
         category = source.get('quality_category', 'Unknown')
-        cards.append(f"{i}. **{source['title']}** (⭐ {quality}% - {category})\n   {source['url']}")
+        url = source['url']
+        # Make the URL clickable in the source card
+        cards.append(f"{i}. **{source['title']}** (⭐ {quality}% - {category})\n   <a href=\"{url}\" target=\"_blank\" rel=\"noopener noreferrer\">{url}</a>")
     return "\n\n".join(cards)
 
 # ============ FOLLOW-UP ENGINE ============
@@ -543,7 +561,8 @@ def get_response(message, email):
     
     follow_ups = generate_follow_ups(resolved_message)
     if follow_ups:
-        response += "\n\n💭 **Follow-up Questions:**\n" + "\n".join([f"• {q}" for q in follow_ups[:4]])
+        follow_up_text = "\n\n💭 **Follow-up Questions:**\n" + "\n".join([f"• {q}" for q in follow_ups[:4]])
+        response += follow_up_text
     
     response += f"\n\n📊 **{user_name}'s Stats:** Level {stats['level']} - {stats['title']} ({stats['count']} messages)"
     
@@ -1990,5 +2009,6 @@ if __name__ == "__main__":
     print("✅ PERFORMANCE OPTIMIZATION")
     print("✅ ANALYTICS TRACKING")
     print("✅ PROFESSIONAL ASSISTANT BEHAVIOR")
+    print("✅ CLICKABLE SOURCE LINKS")
     print("="*55 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=10000)
