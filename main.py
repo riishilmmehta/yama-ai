@@ -542,11 +542,11 @@ def get_response(message, email, regenerate=False):
             pass
     
     # Greetings
-    if msg in ['hi', 'hello', 'hey', 'sup', 'yo']:
+    if msg in ['hi', 'hello', 'hey', 'sup', 'yo', 'hii', 'hey dude', 'hie', 'hiee']:
         return f"👋 Hello {user_name}! You are a **{stats['title']}** (Level {stats['level']}) with {stats['count']} messages!\n\nHow can I help you today?"
     
     if 'how are you' in msg:
-        return f"😊 I'm doing great! Thanks for asking, {user_name}!"
+        return f"😊 I'm doing great! Thanks for asking, what about you dear, {user_name}!"
     
     # Resolve references using context
     context = context_memory.get_context(email)
