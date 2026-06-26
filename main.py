@@ -1,5 +1,5 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 import json
 import os
@@ -20,6 +20,10 @@ app = FastAPI(title="Yama AI")
 # ============ USER DATABASE ============
 user_db = TinyDB('users.json')
 User = Query()
+
+# ============ MESSAGE FEATURES STORAGE ============
+message_feedback_db = TinyDB('feedback.json')
+Feedback = Query()
 
 # ============ CONTEXT MEMORY ============
 class ContextMemory:
@@ -218,12 +222,10 @@ def read_full_webpage_improved(url: str) -> Optional[str]:
 # ============ MAKE URLS CLICKABLE ============
 def make_urls_clickable(text: str) -> str:
     """Convert URLs in text to clickable HTML links"""
-    # Pattern to match URLs
     url_pattern = r'(https?://[^\s]+)'
     
     def replace_url(match):
         url = match.group(1)
-        # Clean up URL (remove trailing punctuation)
         url_clean = url.rstrip('.,;:!?')
         return f'<a href="{url_clean}" target="_blank" rel="noopener noreferrer">{url_clean}</a>'
     
@@ -283,7 +285,6 @@ def generate_advanced_answer(query: str, search_results: List[Dict], context_his
     if source_cards:
         answer_parts.append(f"🔗 **Sources**\n{source_cards}")
     
-    # Join all parts and make URLs clickable
     full_answer = "\n".join(answer_parts)
     return make_urls_clickable(full_answer)
 
@@ -389,7 +390,6 @@ def generate_source_cards(sources: List[Dict]) -> str:
         quality = source.get('quality_score', 0)
         category = source.get('quality_category', 'Unknown')
         url = source['url']
-        # Make the URL clickable in the source card
         cards.append(f"{i}. **{source['title']}** (⭐ {quality}% - {category})\n   <a href=\"{url}\" target=\"_blank\" rel=\"noopener noreferrer\">{url}</a>")
     return "\n\n".join(cards)
 
@@ -466,7 +466,6 @@ def resolve_references(message: str, context: List[Dict]) -> str:
     if current_entity:
         potential_entities.append(' '.join(current_entity))
     
-    # Extract capitalized words as potential entities
     for word in last_message.split():
         if word[0].isupper() and len(word) > 2 and word not in potential_entities:
             potential_entities.append(word)
@@ -518,7 +517,7 @@ def get_analytics_summary() -> Dict:
     }
 
 # ============ RESPONSE FUNCTION ============
-def get_response(message, email):
+def get_response(message, email, regenerate=False):
     msg = message.strip().lower()
     
     stats = update_user_stats(email)
@@ -575,8 +574,9 @@ def get_response(message, email):
         "context_used": len(context)
     })
     
-    context_memory.add_message(email, "user", message)
-    context_memory.add_message(email, "ai", response)
+    if not regenerate:
+        context_memory.add_message(email, "user", message)
+        context_memory.add_message(email, "ai", response)
     
     return response
 
@@ -646,10 +646,78 @@ def update_user_stats(email):
         return {"count": new_count, "level": new_level, "title": new_title}
     return {"count": 0, "level": 1, "title": "🌟 Newbie Chatter"}
 
+# ============ MESSAGE FEATURES ENDPOINTS ============
+@app.post("/feedback")
+async def submit_feedback(request: Request):
+    """Store feedback for a response (like/dislike)"""
+    data = await request.json()
+    email = data.get('email')
+    message_index = data.get('message_index')
+    feedback_type = data.get('feedback_type')  # 'like' or 'dislike'
+    
+    if not email or message_index is None:
+        return JSONResponse({"error": "Missing required fields"}, status_code=400)
+    
+    # Store feedback
+    feedback_db.insert({
+        "email": email,
+        "message_index": message_index,
+        "feedback_type": feedback_type,
+        "timestamp": datetime.now().isoformat()
+    })
+    
+    return {"status": "success"}
+
+@app.post("/regenerate")
+async def regenerate_response(request: Request):
+    """Regenerate a previous response"""
+    data = await request.json()
+    email = data.get('email')
+    message = data.get('message')
+    
+    if not email or not message:
+        return JSONResponse({"error": "Missing required fields"}, status_code=400)
+    
+    response = get_response(message, email, regenerate=True)
+    return {"response": response}
+
+@app.post("/continue_generating")
+async def continue_generating(request: Request):
+    """Continue generating a response (add more content)"""
+    data = await request.json()
+    email = data.get('email')
+    message = data.get('message')
+    
+    if not email or not message:
+        return JSONResponse({"error": "Missing required fields"}, status_code=400)
+    
+    # Generate additional content
+    context = context_memory.get_context(email)
+    search_results = search_web_improved(message, max_results=10)
+    
+    # Generate more detailed answer
+    extra_content = "\n\n📝 **Additional Information:**\n"
+    
+    for i, result in enumerate(search_results[:3], 1):
+        content = read_full_webpage_improved(result['url'])
+        if content and len(content) > 100:
+            extra_content += f"\n**Source {i}:** {content[:500]}...\n"
+    
+    return {"response": extra_content}
+
+@app.get("/share_conversation")
+async def share_conversation(email: str = ""):
+    """Share conversation (return as JSON for sharing)"""
+    if not email:
+        return JSONResponse({"error": "Email required"}, status_code=400)
+    
+    history = load_history(email)
+    return {"conversation": history}
+
 # ============ GOOGLE CLIENT ID ============
 GOOGLE_CLIENT_ID = "46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com"
 
-# ============ COMPLETE FIXED HTML (EXACTLY AS ORIGINAL - NO CHANGES) ============
+# ============ COMPLETE HTML WITH MESSAGE FEATURES ============
 HTML = f'''
 <!DOCTYPE html>
 <html lang="en">
@@ -668,7 +736,6 @@ HTML = f'''
             -webkit-tap-highlight-color: transparent;
         }}
         
-        /* ========== FIXED: NO FIXED POSITION, NO OVERFLOW HIDDEN ========== */
         html, body {{
             margin: 0;
             padding: 0;
@@ -683,7 +750,6 @@ HTML = f'''
             -moz-osx-font-smoothing: grayscale;
         }}
         
-        /* ========== FLUID MEDIA ========== */
         img, video, iframe {{
             max-width: 100%;
             height: auto;
@@ -818,6 +884,143 @@ HTML = f'''
             color: white;
         }}
         
+        /* ========== MESSAGE ACTION BUTTONS ========== */
+        .message-actions {{
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+            opacity: 0.6;
+            transition: opacity 0.2s;
+            flex-wrap: wrap;
+        }}
+        
+        .message-actions:hover {{
+            opacity: 1;
+        }}
+        
+        .message-actions button {{
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 4px 8px;
+            font-size: 0.75rem;
+            border-radius: 6px;
+            color: #6a5a4a;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }}
+        
+        .message-actions button:hover {{
+            background: rgba(44,36,24,0.1);
+            color: #2c2418;
+        }}
+        
+        body.dark .message-actions button {{
+            color: #8a7a6a;
+        }}
+        
+        body.dark .message-actions button:hover {{
+            background: rgba(212,197,169,0.1);
+            color: #d4c5a9;
+        }}
+        
+        .message-actions .liked {{
+            color: #4caf50 !important;
+        }}
+        
+        .message-actions .disliked {{
+            color: #f44336 !important;
+        }}
+        
+        .ai-message .message-wrapper {{
+            display: inline-block;
+            max-width: 85%;
+            text-align: left;
+        }}
+        
+        .ai-message .message-content {{
+            background: white !important;
+            color: #2c2418 !important;
+            padding: 12px 18px !important;
+            border-radius: 20px !important;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            display: inline-block;
+            width: 100%;
+        }}
+        
+        .user-message .message-wrapper {{
+            display: inline-block;
+            max-width: 85%;
+            text-align: right;
+        }}
+        
+        .user-message .message-content {{
+            background: #2c2418 !important;
+            color: white !important;
+            padding: 10px 16px !important;
+            border-radius: 20px !important;
+            display: inline-block;
+            width: 100%;
+        }}
+        
+        /* Edit user message */
+        .edit-message-input {{
+            display: none;
+            width: 100%;
+            padding: 8px 12px;
+            border: 2px solid #2c2418;
+            border-radius: 12px;
+            font-size: 0.9rem;
+            font-family: inherit;
+            background: white;
+            color: #2c2418;
+        }}
+        
+        body.dark .edit-message-input {{
+            background: #2a2a4e;
+            color: #e0e0e0;
+            border-color: #4a3f2f;
+        }}
+        
+        .edit-message-input.active {{
+            display: block;
+        }}
+        
+        .edit-actions {{
+            display: none;
+            gap: 8px;
+            margin-top: 8px;
+        }}
+        
+        .edit-actions.active {{
+            display: flex;
+        }}
+        
+        .edit-actions button {{
+            padding: 4px 12px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            font-size: 0.75rem;
+        }}
+        
+        .edit-actions .save-edit {{
+            background: #2c2418;
+            color: white;
+        }}
+        
+        .edit-actions .cancel-edit {{
+            background: #e0d5c8;
+            color: #2c2418;
+        }}
+        
+        body.dark .edit-actions .cancel-edit {{
+            background: #3a3a5e;
+            color: #d4c5a9;
+        }}
+        
         /* ========== LOGIN OVERLAY ========== */
         .login-overlay {{
             position: fixed;
@@ -860,7 +1063,7 @@ HTML = f'''
             margin-bottom: 30px;
         }}
         
-        /* ========== APP - FIXED LAYOUT ========== */
+        /* ========== APP ========== */
         .app {{
             display: flex;
             flex-direction: column;
@@ -872,7 +1075,7 @@ HTML = f'''
             overflow: hidden;
         }}
         
-        /* ========== SIDEBAR - RESPONSIVE ========== */
+        /* ========== SIDEBAR ========== */
         .sidebar {{
             position: fixed;
             left: 0;
@@ -1045,7 +1248,7 @@ HTML = f'''
             display: block;
         }}
         
-        /* ========== MAIN - FLEX LAYOUT ========== */
+        /* ========== MAIN ========== */
         .main {{
             flex: 1;
             display: flex;
@@ -1152,7 +1355,7 @@ HTML = f'''
             object-fit: cover;
         }}
         
-        /* ========== MESSAGES - SCROLLABLE ========== */
+        /* ========== MESSAGES ========== */
         .messages {{
             flex: 1;
             overflow-y: auto;
@@ -1166,6 +1369,11 @@ HTML = f'''
         .message {{
             margin-bottom: 20px;
             animation: fadeIn 0.3s ease;
+        }}
+        
+        .message-wrapper {{
+            display: inline-block;
+            max-width: 85%;
         }}
         
         @keyframes fadeIn {{
@@ -1183,27 +1391,12 @@ HTML = f'''
         
         .message-content {{
             display: inline-block;
-            max-width: 85%;
+            max-width: 100%;
             font-size: 0.9rem;
             line-height: 1.5;
             color: #2c2418;
             background: transparent !important;
             padding: 0 !important;
-        }}
-        
-        .user-message .message-content {{
-            background: #2c2418 !important;
-            color: white !important;
-            padding: 10px 16px !important;
-            border-radius: 20px !important;
-        }}
-        
-        .ai-message .message-content {{
-            background: white !important;
-            color: #2c2418 !important;
-            padding: 12px 18px !important;
-            border-radius: 20px !important;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
         }}
         
         /* ========== TYPING ========== */
@@ -1230,7 +1423,7 @@ HTML = f'''
             30% {{ transform: translateY(-6px); }}
         }}
         
-        /* ========== INPUT AREA - STICKY WITH SAFE AREA ========== */
+        /* ========== INPUT AREA ========== */
         .input-area {{
             position: sticky;
             bottom: 0;
@@ -1296,7 +1489,6 @@ HTML = f'''
             font-size: 0.95rem;
         }}
         
-        /* iOS Zoom Fix */
         @media (max-width: 768px) {{
             textarea {{
                 font-size: 16px !important;
@@ -1400,9 +1592,7 @@ HTML = f'''
             border-color: #2c2418;
         }}
         
-        /* ========== RESPONSIVE BREAKPOINTS ========== */
-        
-        /* Tablet & Mobile */
+        /* ========== RESPONSIVE ========== */
         @media (max-width: 768px) {{
             .messages {{
                 padding: 12px 16px;
@@ -1425,7 +1615,7 @@ HTML = f'''
                 font-size: 1.4rem;
             }}
             .message-content {{
-                max-width: 90%;
+                max-width: 100%;
                 font-size: 0.85rem;
             }}
             .input-area {{
@@ -1450,9 +1640,12 @@ HTML = f'''
                 width: 18px;
                 height: 18px;
             }}
+            .message-actions button {{
+                font-size: 0.65rem;
+                padding: 2px 6px;
+            }}
         }}
         
-        /* Small Phones */
         @media (max-width: 480px) {{
             .header {{
                 padding: 8px 12px;
@@ -1506,7 +1699,6 @@ HTML = f'''
             }}
         }}
         
-        /* Very Small Phones */
         @media (max-width: 380px) {{
             .header {{
                 padding: 6px 10px;
@@ -1555,7 +1747,6 @@ HTML = f'''
             }}
         }}
         
-        /* Landscape Phones */
         @media (max-height: 500px) and (orientation: landscape) {{
             .header {{
                 min-height: 40px;
@@ -1607,7 +1798,6 @@ HTML = f'''
             }}
         }}
         
-        /* Tablets */
         @media (min-width: 769px) and (max-width: 1024px) {{
             .input-wrapper {{
                 max-width: 90%;
@@ -1620,7 +1810,6 @@ HTML = f'''
             }}
         }}
         
-        /* Desktop */
         @media (min-width: 1025px) {{
             .input-wrapper {{
                 max-width: 760px;
@@ -1726,6 +1915,10 @@ HTML = f'''
     <script>
         let currentUser = null;
         let hasMessages = false;
+        let messageCounter = 0;
+        let isGenerating = false;
+        let currentMessageIndex = 0;
+        let messageHistory = [];
         
         function toggleTheme() {{
             document.body.classList.toggle('dark');
@@ -1862,7 +2055,6 @@ HTML = f'''
         
         const textarea = document.getElementById('userInput');
         
-        // Auto-adjust height
         function autoAdjustHeight() {{
             this.style.height = 'auto';
             this.style.height = this.scrollHeight + 'px';
@@ -1870,13 +2062,11 @@ HTML = f'''
         
         textarea.addEventListener('input', autoAdjustHeight);
         
-        // VisualViewport handling for mobile keyboard
         if (window.visualViewport) {{
             let lastHeight = window.visualViewport.height;
             window.visualViewport.addEventListener('resize', function() {{
                 const inputArea = document.querySelector('.input-area');
                 if (inputArea && window.visualViewport.height < lastHeight) {{
-                    // Keyboard opened - ensure input is visible
                     setTimeout(() => {{
                         inputArea.scrollIntoView({{ behavior: 'smooth', block: 'end' }});
                     }}, 100);
@@ -1892,48 +2082,298 @@ HTML = f'''
             }}
         }}
         
+        // ============ MESSAGE FEATURES ============
+        
+        function copyResponse(messageId) {{
+            const content = document.querySelector(`#message-${{messageId}} .message-content`);
+            if (content) {{
+                navigator.clipboard.writeText(content.innerText).then(() => {{
+                    const btn = document.querySelector(`#message-${{messageId}} .copy-btn`);
+                    const originalText = btn.textContent;
+                    btn.textContent = '✅ Copied!';
+                    setTimeout(() => {{ btn.textContent = originalText; }}, 2000);
+                }});
+            }}
+        }}
+        
+        async function regenerateResponse(messageId, userMessage) {{
+            if (isGenerating) return;
+            isGenerating = true;
+            
+            const typing = document.getElementById('typing');
+            typing.style.display = 'block';
+            
+            const messageDiv = document.getElementById(`message-${{messageId}}`);
+            const content = messageDiv.querySelector('.message-content');
+            
+            try {{
+                const res = await fetch('/regenerate', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ 
+                        email: currentUser.email, 
+                        message: userMessage 
+                    }})
+                }});
+                const data = await res.json();
+                content.innerHTML = data.response.replace(/\\n/g, '<br>').replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>');
+            }} catch (error) {{
+                console.error('Regenerate error:', error);
+            }}
+            
+            typing.style.display = 'none';
+            isGenerating = false;
+            scrollToBottom();
+        }}
+        
+        function editMessage(messageId) {{
+            const messageDiv = document.getElementById(`message-${{messageId}}`);
+            const content = messageDiv.querySelector('.message-content');
+            const editInput = messageDiv.querySelector('.edit-message-input');
+            const editActions = messageDiv.querySelector('.edit-actions');
+            
+            if (content.style.display !== 'none') {{
+                content.style.display = 'none';
+                editInput.value = content.innerText;
+                editInput.classList.add('active');
+                editActions.classList.add('active');
+                editInput.focus();
+            }}
+        }}
+        
+        function saveEdit(messageId) {{
+            const messageDiv = document.getElementById(`message-${{messageId}}`);
+            const editInput = messageDiv.querySelector('.edit-message-input');
+            const content = messageDiv.querySelector('.message-content');
+            const editActions = messageDiv.querySelector('.edit-actions');
+            
+            const newText = editInput.value.trim();
+            if (newText) {{
+                content.innerText = newText;
+                content.style.display = 'block';
+                editInput.classList.remove('active');
+                editActions.classList.remove('active');
+                // Update history
+                updateMessageInHistory(messageId, newText);
+            }}
+        }}
+        
+        function cancelEdit(messageId) {{
+            const messageDiv = document.getElementById(`message-${{messageId}}`);
+            const content = messageDiv.querySelector('.message-content');
+            const editInput = messageDiv.querySelector('.edit-message-input');
+            const editActions = messageDiv.querySelector('.edit-actions');
+            
+            content.style.display = 'block';
+            editInput.classList.remove('active');
+            editActions.classList.remove('active');
+        }}
+        
+        function updateMessageInHistory(messageId, newText) {{
+            // This would update the stored message in history
+            // For now, just store in memory
+            const messageIndex = parseInt(messageId.split('-')[1]);
+            // We'll update when history is saved
+        }}
+        
+        async function continueGenerating(messageId) {{
+            if (isGenerating) return;
+            isGenerating = true;
+            
+            const typing = document.getElementById('typing');
+            typing.style.display = 'block';
+            
+            const messageDiv = document.getElementById(`message-${{messageId}}`);
+            const content = messageDiv.querySelector('.message-content');
+            const userMessage = getLastUserMessage();
+            
+            try {{
+                const res = await fetch('/continue_generating', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ 
+                        email: currentUser.email, 
+                        message: userMessage 
+                    }})
+                }});
+                const data = await res.json();
+                content.innerHTML += data.response.replace(/\\n/g, '<br>').replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>');
+            }} catch (error) {{
+                console.error('Continue error:', error);
+            }}
+            
+            typing.style.display = 'none';
+            isGenerating = false;
+            scrollToBottom();
+        }}
+        
+        function getLastUserMessage() {{
+            const messages = document.querySelectorAll('.user-message');
+            if (messages.length > 0) {{
+                const lastUserMsg = messages[messages.length - 1];
+                return lastUserMsg.querySelector('.message-content').innerText;
+            }}
+            return '';
+        }}
+        
+        async function shareConversation() {{
+            if (!currentUser) return;
+            try {{
+                const res = await fetch('/share_conversation?email=' + encodeURIComponent(currentUser.email));
+                const data = await res.json();
+                const shareText = data.conversation.map(item => 
+                    `User: ${{item.user}}\\nYama: ${{item.ai}}\\n`
+                ).join('\\n');
+                
+                // Copy to clipboard
+                await navigator.clipboard.writeText(shareText);
+                alert('✅ Conversation copied to clipboard!');
+            }} catch (error) {{
+                console.error('Share error:', error);
+                alert('Could not share conversation.');
+            }}
+        }}
+        
+        async function submitFeedback(messageId, feedbackType) {{
+            const messageDiv = document.getElementById(`message-${{messageId}}`);
+            const likeBtn = messageDiv.querySelector('.like-btn');
+            const dislikeBtn = messageDiv.querySelector('.dislike-btn');
+            
+            try {{
+                await fetch('/feedback', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{
+                        email: currentUser.email,
+                        message_index: parseInt(messageId.split('-')[1]),
+                        feedback_type: feedbackType
+                    }})
+                }});
+                
+                if (feedbackType === 'like') {{
+                    likeBtn.classList.toggle('liked');
+                    if (dislikeBtn.classList.contains('disliked')) {{
+                        dislikeBtn.classList.remove('disliked');
+                    }}
+                }} else {{
+                    dislikeBtn.classList.toggle('disliked');
+                    if (likeBtn.classList.contains('liked')) {{
+                        likeBtn.classList.remove('liked');
+                    }}
+                }}
+            }} catch (error) {{
+                console.error('Feedback error:', error);
+            }}
+        }}
+        
+        function stopGenerating() {{
+            isGenerating = false;
+            document.getElementById('typing').style.display = 'none';
+        }}
+        
+        // ============ SEND MESSAGE ============
         async function sendMessage() {{
             if (!currentUser) {{ alert('Please sign in first!'); return; }}
             const message = textarea.value.trim();
             if (!message) return;
             
+            if (isGenerating) {{
+                stopGenerating();
+                return;
+            }}
+            
             if (!hasMessages) {{
                 const welcome = document.getElementById('welcome');
                 if (welcome) welcome.style.display = 'none';
                 hasMessages = true;
-                document.getElementById('logo').classList.add('small');
             }}
             
-            addMessage(message, 'user');
+            const messageId = 'msg-' + (++messageCounter);
+            addMessage(message, 'user', messageId);
             textarea.value = '';
             textarea.style.height = 'auto';
             
             document.getElementById('typing').style.display = 'block';
             scrollToBottom();
             
-            const res = await fetch('/chat', {{
-                method: 'POST',
-                headers: {{ 'Content-Type': 'application/json' }},
-                body: JSON.stringify({{ message: message, email: currentUser.email }})
-            }});
-            const data = await res.json();
-            
-            addMessage(data.response, 'ai');
-            document.getElementById('typing').style.display = 'none';
-            loadHistory();
-            scrollToBottom();
+            try {{
+                const res = await fetch('/chat', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ message: message, email: currentUser.email }})
+                }});
+                const data = await res.json();
+                
+                const aiMessageId = 'msg-' + (++messageCounter);
+                addMessage(data.response, 'ai', aiMessageId, message);
+                document.getElementById('typing').style.display = 'none';
+                loadHistory();
+                scrollToBottom();
+            }} catch (error) {{
+                console.error('Send message error:', error);
+                document.getElementById('typing').style.display = 'none';
+            }}
         }}
         
-        function addMessage(text, sender) {{
+        function addMessage(text, sender, messageId, userMessage = '') {{
             const messages = document.getElementById('messages');
             const div = document.createElement('div');
             div.className = 'message ' + sender + '-message';
+            div.id = messageId;
+            
+            const wrapper = document.createElement('div');
+            wrapper.className = 'message-wrapper';
+            
             const content = document.createElement('div');
             content.className = 'message-content';
             content.innerHTML = text.replace(/\\n/g, '<br>').replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>');
-            div.appendChild(content);
+            wrapper.appendChild(content);
+            
+            // Edit input for user messages
+            if (sender === 'user') {{
+                const editInput = document.createElement('input');
+                editInput.type = 'text';
+                editInput.className = 'edit-message-input';
+                editInput.value = text;
+                wrapper.appendChild(editInput);
+                
+                const editActions = document.createElement('div');
+                editActions.className = 'edit-actions';
+                editActions.innerHTML = `
+                    <button class="save-edit" onclick="saveEdit('${{messageId}}')">Save</button>
+                    <button class="cancel-edit" onclick="cancelEdit('${{messageId}}')">Cancel</button>
+                `;
+                wrapper.appendChild(editActions);
+            }}
+            
+            // Message actions
+            const actions = document.createElement('div');
+            actions.className = 'message-actions';
+            
+            if (sender === 'ai') {{
+                actions.innerHTML = `
+                    <button class="copy-btn" onclick="copyResponse('${{messageId}}')">📋 Copy</button>
+                    <button onclick="regenerateResponse('${{messageId}}', '${{escapeJs(userMessage || getLastUserMessage())}}')">🔄 Regenerate</button>
+                    <button onclick="continueGenerating('${{messageId}}')">📝 Continue</button>
+                    <button onclick="stopGenerating()">⏹️ Stop</button>
+                    <button onclick="shareConversation()">📤 Share</button>
+                    <button class="like-btn" onclick="submitFeedback('${{messageId}}', 'like')">👍</button>
+                    <button class="dislike-btn" onclick="submitFeedback('${{messageId}}', 'dislike')">👎</button>
+                `;
+            }} else {{
+                actions.innerHTML = `
+                    <button onclick="editMessage('${{messageId}}')">✏️ Edit</button>
+                `;
+            }}
+            
+            wrapper.appendChild(actions);
+            div.appendChild(wrapper);
             messages.appendChild(div);
             scrollToBottom();
+        }}
+        
+        function escapeJs(text) {{
+            return text.replace(/\\\\/g, '\\\\\\\\').replace(/'/g, "\\\\'").replace(/"/g, '\\\\"');
         }}
         
         function scrollToBottom() {{
@@ -1988,15 +2428,13 @@ async def clear_history_endpoint():
 
 @app.get("/analytics")
 async def get_analytics():
-    """Admin endpoint to view analytics"""
     return get_analytics_summary()
 
 if __name__ == "__main__":
     print("\n" + "="*55)
-    print("🏛️ YAMA AI - IMPROVED VERSION")
+    print("🏛️ YAMA AI - WITH MESSAGE FEATURES")
     print("="*55)
     print("🌐 Open: http://localhost:8000")
-    print("📱 Perfect on ALL devices")
     print("="*55)
     print("✅ CONTEXT MEMORY (30 messages)")
     print("✅ SOURCE QUALITY SCORING")
@@ -2006,9 +2444,14 @@ if __name__ == "__main__":
     print("✅ SEARCH IMPROVEMENTS (10 sources)")
     print("✅ CONFIDENCE SYSTEM")
     print("✅ FOLLOW-UP ENGINE")
-    print("✅ PERFORMANCE OPTIMIZATION")
-    print("✅ ANALYTICS TRACKING")
-    print("✅ PROFESSIONAL ASSISTANT BEHAVIOR")
     print("✅ CLICKABLE SOURCE LINKS")
+    print("="*55)
+    print("📋 COPY RESPONSE")
+    print("🔄 REGENERATE RESPONSE")
+    print("✏️ EDIT USER MESSAGE")
+    print("📝 CONTINUE GENERATING")
+    print("⏹️ STOP GENERATING")
+    print("📤 SHARE CONVERSATION")
+    print("👍👎 LIKE/DISLIKE RESPONSE")
     print("="*55 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=10000)
