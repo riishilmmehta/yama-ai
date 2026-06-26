@@ -26,12 +26,12 @@ user_db = TinyDB('users.json')
 User = Query()
 
 # ============ CONTEXT MEMORY ============
-conversation_context = defaultdict(list)  # email -> list of messages
+conversation_context = defaultdict(list)
 MAX_CONTEXT = 30
 
 # ============ CACHE ============
 cache = {}
-CACHE_TTL = 3600  # 1 hour
+CACHE_TTL = 3600
 
 # ============ ANALYTICS ============
 analytics = {
@@ -46,104 +46,63 @@ analytics = {
 
 # ============ SOURCE CLASSIFICATION ============
 def classify_source(url: str) -> Dict[str, Any]:
-    """Classify source type and return reliability score"""
     parsed = urlparse(url)
     domain = parsed.netloc.lower()
-    path = parsed.path.lower()
-    full_url = url.lower()
     
-    # Default
-    classification = {
-        "type": "Unknown",
-        "score": 40,
-        "emoji": "🔍"
-    }
+    classification = {"type": "Unknown", "score": 40, "emoji": "🔍"}
     
-    # Government
     if domain.endswith('.gov') or 'gov' in domain:
         classification = {"type": "Government", "score": 100, "emoji": "🏛️"}
-    # Educational
     elif domain.endswith('.edu') or '.ac.' in domain:
         classification = {"type": "Educational", "score": 95, "emoji": "🎓"}
-    # Research
-    elif any(x in domain for x in ['arxiv', 'pubmed', 'researchgate', 'scholar', 'acm', 'ieee', 'nature', 'science', 'springer', 'elsevier', 'sagepub', 'taylorandfrancis']):
+    elif any(x in domain for x in ['arxiv', 'pubmed', 'researchgate', 'scholar', 'acm', 'ieee', 'nature', 'science']):
         classification = {"type": "Research", "score": 90, "emoji": "📚"}
-    # Official Company
-    elif any(x in domain for x in ['microsoft', 'apple', 'google', 'amazon', 'facebook', 'twitter', 'linkedin', 'github', 'stackoverflow']):
-        classification = {"type": "Official Company", "score": 90, "emoji": "🏢"}
-    # News
-    elif any(x in domain for x in ['news', 'times', 'post', 'bbc', 'cnn', 'reuters', 'apnews', 'guardian', 'nytimes', 'washingtonpost', 'bloomberg', 'forbes']):
+    elif any(x in domain for x in ['microsoft', 'apple', 'google', 'amazon', 'github', 'stackoverflow']):
+        classification = {"type": "Official", "score": 90, "emoji": "🏢"}
+    elif any(x in domain for x in ['news', 'bbc', 'cnn', 'reuters', 'apnews', 'guardian', 'nytimes']):
         classification = {"type": "News", "score": 80, "emoji": "📰"}
-    # Community
-    elif any(x in domain for x in ['reddit', 'quora', 'stackexchange', 'github', 'medium', 'wikipedia']):
+    elif any(x in domain for x in ['reddit', 'quora', 'stackexchange', 'wikipedia']):
         classification = {"type": "Community", "score": 60, "emoji": "👥"}
-    # Blog
-    elif 'blog' in domain or 'wordpress' in domain or '.blog' in domain:
+    elif 'blog' in domain or 'wordpress' in domain:
         classification = {"type": "Blog", "score": 50, "emoji": "📝"}
     
     return classification
 
-# ============ IMPROVED CONTENT EXTRACTION ============
+# ============ CONTENT EXTRACTION ============
 def clean_html_content(soup):
-    """Remove unwanted elements from HTML"""
-    # Remove script, style, and other non-content elements
     for tag in soup(['script', 'style', 'noscript', 'iframe', 'svg', 'meta', 'link']):
         tag.decompose()
     
-    # Remove navigation elements
-    for tag in soup.find_all(['nav', 'header', 'footer', 'aside', 'main']):
+    for tag in soup.find_all(['nav', 'header', 'footer', 'aside']):
         tag.decompose()
     
-    # Remove elements with common class/id names indicating noise
-    noise_patterns = [
-        'nav', 'navigation', 'menu', 'sidebar', 'widget', 'footer', 'header', 
-        'cookie', 'popup', 'ad', 'advertisement', 'banner', 'modal', 'overlay',
-        'subscribe', 'newsletter', 'social', 'comments', 'related', 'similar',
-        'recommended', 'share', 'promo', 'signup', 'newsletter', 'email',
-        'search', 'tags', 'categories', 'author-bio', 'disclaimer'
-    ]
+    noise_patterns = ['cookie', 'popup', 'ad', 'banner', 'modal', 'overlay', 'subscribe', 'newsletter', 'social', 'comments', 'related', 'recommended']
     
     for pattern in noise_patterns:
-        # Remove by class
         for element in soup.find_all(class_=re.compile(pattern, re.I)):
             element.decompose()
-        # Remove by id
         for element in soup.find_all(id=re.compile(pattern, re.I)):
-            element.decompose()
-    
-    # Remove empty elements
-    for element in soup.find_all():
-        if not element.get_text(strip=True):
             element.decompose()
     
     return soup
 
 def extract_main_content(soup):
-    """Extract only meaningful article content"""
     soup = clean_html_content(soup)
-    
     content_parts = []
     
-    # Try multiple strategies
-    # Strategy 1: Find article or main content
-    article = (soup.find('article') or 
-               soup.find('main') or 
-               soup.find('div', class_=re.compile(r'article|content|main|post|entry|body', re.I)))
+    article = soup.find('article') or soup.find('main') or soup.find('div', class_=re.compile(r'article|content|main|post|entry', re.I))
     
     if article:
-        # Get all paragraphs with sufficient length
         for p in article.find_all('p'):
             text = p.get_text(strip=True)
-            if len(text) > 30:  # Filter out short snippets
+            if len(text) > 30:
                 content_parts.append(text)
     else:
-        # Strategy 2: Get all meaningful paragraphs
         for p in soup.find_all('p'):
             text = p.get_text(strip=True)
-            if len(text) > 50 and not re.search(r'cookie|advertisement|subscribe|newsletter|copyright|privacy', text, re.I):
+            if len(text) > 50 and not re.search(r'cookie|advertisement|subscribe', text, re.I):
                 content_parts.append(text)
     
-    # Remove duplicates while preserving order
     seen = set()
     unique_parts = []
     for part in content_parts:
@@ -151,38 +110,25 @@ def extract_main_content(soup):
             seen.add(part)
             unique_parts.append(part)
     
-    # Join and clean
-    text = ' '.join(unique_parts[:15])  # Limit to first 15 paragraphs
+    text = ' '.join(unique_parts[:15])
     text = re.sub(r'\s+', ' ', text)
-    text = re.sub(r'\n\s*\n', '\n\n', text)
-    
-    return text[:3000]  # Limit length
+    return text[:3000]
 
 def read_full_webpage(url):
-    """Read webpage with improved extraction"""
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
         response = requests.get(url, headers=headers, timeout=8)
         response.raise_for_status()
-        
         soup = BeautifulSoup(response.text, 'html.parser')
         content = extract_main_content(soup)
-        
-        if len(content) < 50:  # Too short, probably junk
-            return None
-        
-        return content
+        return content if len(content) > 50 else None
     except:
         return None
 
 # ============ PARALLEL PAGE READING ============
 def read_pages_parallel(urls, max_workers=5):
-    """Read multiple pages in parallel"""
     results = {}
     failed = []
-    
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_url = {executor.submit(read_full_webpage, url): url for url in urls}
         for future in as_completed(future_to_url):
@@ -195,34 +141,27 @@ def read_pages_parallel(urls, max_workers=5):
                     failed.append(url)
             except:
                 failed.append(url)
-    
     return results, failed
 
-# ============ SEARCH WITH RANKING ============
+# ============ SEARCH ============
 def search_web(query):
-    """Search with ranking and duplicate removal"""
     results = []
     try:
         with DDGS() as ddgs:
             search_results = list(ddgs.text(query, max_results=15))
-            
-            # Track unique domains
             seen_domains = set()
             scored_results = []
             
-            for r in search_results[:12]:  # Get 12 results
+            for r in search_results[:12]:
                 url = r.get('href', '')
                 if not url:
                     continue
-                
-                # Skip duplicates
                 domain = re.sub(r'^https?://', '', url).split('/')[0]
                 if domain in seen_domains:
                     continue
                 seen_domains.add(domain)
                 
                 classification = classify_source(url)
-                
                 scored_results.append({
                     "title": r.get('title', ''),
                     "snippet": r.get('body', '')[:300],
@@ -233,135 +172,55 @@ def search_web(query):
                     "emoji": classification["emoji"]
                 })
             
-            # Sort by score
             scored_results.sort(key=lambda x: x['score'], reverse=True)
-            
-            # Take top 8 for reading
             results = scored_results[:8]
     except Exception as e:
         print(f"Search error: {e}")
     return results
 
-# ============ SOURCE AGREEMENT SYSTEM ============
+# ============ SOURCE AGREEMENT ============
 def check_source_agreement(content_parts: Dict[str, str]) -> Dict[str, Any]:
-    """Check if multiple sources agree"""
     if not content_parts:
-        return {"boost": 1.0, "agreement_data": {}, "agreement_level": "No Data"}
+        return {"boost": 1.0, "agreement_level": "No Data"}
     
-    # Extract key claims
     claims = defaultdict(list)
-    all_sentences = []
-    
     for url, content in content_parts.items():
         sentences = re.split(r'[.!?]+', content)
         for sentence in sentences:
             sentence = sentence.strip()
             if len(sentence) > 30 and len(sentence) < 200:
-                all_sentences.append(sentence)
-                # Use key phrase as identifier
                 key = ' '.join(sentence.split()[:5])
-                claims[key].append({
-                    'url': url,
-                    'sentence': sentence
-                })
+                claims[key].append({'url': url, 'sentence': sentence})
     
-    # Calculate agreement
-    agreement_count = 0
+    agreement_count = sum(1 for entries in claims.values() if len(entries) >= 3)
     total_claims = len(claims)
-    
-    for key, entries in claims.items():
-        if len(entries) >= 3:
-            agreement_count += 1
-    
     agreement_ratio = agreement_count / total_claims if total_claims > 0 else 0
     
-    # Determine agreement level
     if agreement_ratio >= 0.5:
-        boost = 1.3
-        level = "High Agreement"
+        return {"boost": 1.3, "agreement_level": "High Agreement"}
     elif agreement_ratio >= 0.3:
-        boost = 1.15
-        level = "Medium Agreement"
-    else:
-        boost = 1.0
-        level = "Low Agreement"
-    
-    return {
-        "boost": boost,
-        "agreement_level": level,
-        "agreement_ratio": agreement_ratio,
-        "total_claims": total_claims,
-        "agreement_count": agreement_count
-    }
+        return {"boost": 1.15, "agreement_level": "Medium Agreement"}
+    return {"boost": 1.0, "agreement_level": "Low Agreement"}
 
-# ============ CONFIDENCE SYSTEM ============
-def calculate_confidence(
-    num_sources: int,
-    source_scores: List[int],
-    agreement_data: Dict[str, Any],
-    content_lengths: List[int]
-) -> Dict[str, Any]:
-    """Calculate real confidence score"""
-    
-    # Factor 1: Number of sources (max 8)
+# ============ CONFIDENCE ============
+def calculate_confidence(num_sources, source_scores, agreement_data, content_lengths):
     source_factor = min(num_sources / 8, 1.0) * 30
-    
-    # Factor 2: Source quality
     avg_quality = sum(source_scores) / len(source_scores) if source_scores else 0
     quality_factor = (avg_quality / 100) * 30
-    
-    # Factor 3: Source agreement
     agreement_boost = agreement_data.get("boost", 1.0)
-    agreement_factor = (agreement_boost - 1) * 30 + 15  # Base 15, boost up to 30
-    
-    # Factor 4: Content completeness
+    agreement_factor = (agreement_boost - 1) * 30 + 15
     avg_length = sum(content_lengths) / len(content_lengths) if content_lengths else 0
-    if avg_length > 1000:
-        completeness = 1.0
-    elif avg_length > 500:
-        completeness = 0.8
-    elif avg_length > 200:
-        completeness = 0.5
-    else:
-        completeness = 0.3
+    completeness = 1.0 if avg_length > 1000 else 0.8 if avg_length > 500 else 0.5 if avg_length > 200 else 0.3
     completeness_factor = completeness * 15
     
-    # Calculate final confidence
     confidence = min(99, source_factor + quality_factor + agreement_factor + completeness_factor)
     
-    # Determine level
-    if confidence >= 85:
-        level = "Very High"
-    elif confidence >= 70:
-        level = "High"
-    elif confidence >= 55:
-        level = "Medium"
-    elif confidence >= 40:
-        level = "Low"
-    else:
-        level = "Very Low"
+    level = "Very High" if confidence >= 85 else "High" if confidence >= 70 else "Medium" if confidence >= 55 else "Low" if confidence >= 40 else "Very Low"
     
-    return {
-        "score": round(confidence, 1),
-        "level": level,
-        "details": {
-            "source_count": num_sources,
-            "avg_source_quality": round(avg_quality, 1),
-            "agreement_level": agreement_data.get("agreement_level", "No Data"),
-            "completeness": round(completeness * 100, 1)
-        }
-    }
+    return {"score": round(confidence, 1), "level": level}
 
-# ============ RESPONSE STRUCTURE ============
-def generate_structured_answer(
-    query: str,
-    search_results: List[Dict],
-    page_contents: Dict[str, str],
-    failed_sources: List[str],
-    confidence_data: Dict[str, Any]
-) -> Dict[str, Any]:
-    """Generate structured answer with JSON response"""
-    
+# ============ RESPONSE GENERATION ============
+def generate_structured_answer(query, search_results, page_contents, failed_sources, confidence_data):
     answer = {
         "quick_answer": "",
         "detailed_explanation": "",
@@ -373,33 +232,22 @@ def generate_structured_answer(
     }
     
     if not page_contents:
-        # No content found
         answer["quick_answer"] = f"I searched for '{query}' but found no usable content. Please try rephrasing your question."
         return answer
     
-    # Extract content from sources
     contents = list(page_contents.values())
     
-    # Get quick answer (first meaningful sentence from best source)
-    best_source = search_results[0] if search_results else None
-    best_content = contents[0] if contents else ""
+    if contents:
+        first_sentence = contents[0].split('.')[0] + '.'
+        answer["quick_answer"] = first_sentence if len(first_sentence) > 20 else contents[0][:200] + '...'
     
-    if best_content:
-        first_sentence = best_content.split('.')[0] + '.'
-        if len(first_sentence) > 20:
-            answer["quick_answer"] = first_sentence
-        else:
-            answer["quick_answer"] = best_content[:200] + '...'
-    
-    # Detailed explanation (combine multiple sources)
     explanation_parts = []
-    for i, content in enumerate(contents[:3]):  # Use first 3 sources
+    for content in contents[:3]:
         sentences = content.split('. ')
         if len(sentences) > 3:
             explanation_parts.append('. '.join(sentences[:3]) + '.')
     
     if explanation_parts:
-        # Remove duplicates
         unique_parts = []
         seen = set()
         for part in explanation_parts:
@@ -408,11 +256,10 @@ def generate_structured_answer(
                 unique_parts.append(part)
         answer["detailed_explanation"] = ' '.join(unique_parts[:2])[:800]
     
-    # Key facts (extract from all sources)
     facts = set()
-    for content in contents[:5]:  # Use first 5 sources
+    for content in contents[:5]:
         sentences = content.split('. ')
-        for sentence in sentences[:3]:  # First 3 sentences from each
+        for sentence in sentences[:3]:
             sentence = sentence.strip()
             if len(sentence) > 20 and len(sentence) < 200:
                 facts.add(sentence)
@@ -420,15 +267,13 @@ def generate_structured_answer(
                 break
         if len(facts) >= 6:
             break
-    
     answer["key_facts"] = list(facts)[:6]
     
-    # Analysis
     source_count = len(page_contents)
     avg_quality = sum(s.get('score', 40) for s in search_results[:source_count]) / source_count if source_count > 0 else 40
     
     analysis_parts = [
-        f"• {source_count} sources were successfully analyzed for this query.",
+        f"• {source_count} sources were successfully analyzed.",
         f"• Average source quality: {round(avg_quality)}%.",
         f"• {len(failed_sources)} sources were unavailable."
     ]
@@ -442,67 +287,33 @@ def generate_structured_answer(
     
     answer["analysis"] = '\n'.join(analysis_parts)
     
-    # Sources with detailed info
-    for i, result in enumerate(search_results[:5]):  # Show top 5 sources
-        source_info = {
+    for result in search_results[:5]:
+        answer["sources"].append({
             "title": result.get('title', ''),
             "url": result.get('url', ''),
             "domain": result.get('domain', ''),
             "type": result.get('type', 'Unknown'),
             "score": result.get('score', 40),
             "emoji": result.get('emoji', '🔍')
-        }
-        answer["sources"].append(source_info)
+        })
     
     return answer
 
-# ============ FOLLOW-UP QUESTIONS ============
-def generate_follow_up(query: str, answer_data: Dict[str, Any]) -> List[str]:
-    """Generate intelligent follow-up questions"""
+# ============ FOLLOW-UP ============
+def generate_follow_up(query):
     follow_ups = []
-    
-    # Dynamic follow-ups based on query type
     if 'what' in query.lower() or 'who' in query.lower():
-        follow_ups.extend([
-            "Explain this in simple terms",
-            "Give me real-world examples",
-            "What are the main advantages and disadvantages?"
-        ])
-    
+        follow_ups.extend(["Explain in simple terms", "Give real-world examples", "Advantages and disadvantages?"])
     if 'how' in query.lower():
-        follow_ups.extend([
-            "What are the key steps?",
-            "Are there any tools or resources for this?",
-            "What are common mistakes to avoid?"
-        ])
-    
+        follow_ups.extend(["What are the key steps?", "Any tools for this?", "Common mistakes?"])
     if 'why' in query.lower():
-        follow_ups.extend([
-            "What are the reasons?",
-            "Are there alternative perspectives?",
-            "What does the research say?"
-        ])
-    
-    if 'when' in query.lower() or 'where' in query.lower():
-        follow_ups.extend([
-            "What is the significance?",
-            "How is this relevant today?",
-            "What are the implications?"
-        ])
-    
-    # Default follow-ups if not enough
+        follow_ups.extend(["What are the reasons?", "Alternative perspectives?", "What does research say?"])
     if len(follow_ups) < 3:
-        follow_ups.extend([
-            "Tell me more about this topic",
-            "What are the latest updates?",
-            "How is this connected to other topics?"
-        ])
-    
+        follow_ups.extend(["Tell me more", "Latest updates", "How is this relevant?"])
     return follow_ups[:4]
 
-# ============ CONTEXT MANAGEMENT ============
-def update_context(email: str, user_msg: str, ai_response: str):
-    """Update conversation context"""
+# ============ CONTEXT ============
+def update_context(email, user_msg, ai_response):
     if email:
         context = conversation_context[email]
         context.append({"user": user_msg, "ai": ai_response, "timestamp": datetime.now().isoformat()})
@@ -510,37 +321,19 @@ def update_context(email: str, user_msg: str, ai_response: str):
             context = context[-MAX_CONTEXT:]
         conversation_context[email] = context
 
-def get_context(email: str) -> List[Dict]:
-    """Get current conversation context"""
-    if email:
-        return conversation_context.get(email, [])
-    return []
+def get_context(email):
+    return conversation_context.get(email, []) if email else []
 
-def resolve_references(query: str, context: List[Dict]) -> str:
-    """Resolve references in follow-up questions"""
+def resolve_references(query, context):
     if not context:
         return query
     
     resolved = query
-    
-    # Check if query contains references
-    reference_patterns = {
-        r'\bit\b': None,
-        r'\bthey\b': None,
-        r'\bthem\b': None,
-        r'\bthis\b': None,
-        r'\bthat\b': None,
-        r'\bthose\b': None,
-        r'\bthese\b': None,
-        r'\bit\s+is\b': None,
-        r'\bit\s+was\b': None,
-        r'\bit\s+has\b': None
-    }
+    reference_patterns = [r'\bit\b', r'\bthey\b', r'\bthem\b', r'\bthis\b', r'\bthat\b', r'\bthose\b', r'\bthese\b']
     
     has_reference = any(re.search(pattern, resolved, re.I) for pattern in reference_patterns)
     
     if has_reference and context:
-        # Get the last 3 user messages as context
         last_messages = []
         for msg in reversed(context):
             if msg.get('user'):
@@ -549,61 +342,43 @@ def resolve_references(query: str, context: List[Dict]) -> str:
                 break
         
         if last_messages:
-            # Extract main topic from last messages
             topic_parts = []
             for msg in last_messages:
-                # Extract key nouns (simplified)
                 words = msg.split()
-                key_words = []
-                for word in words:
-                    if len(word) > 3 and word.lower() not in ['what', 'why', 'how', 'when', 'where', 'who', 'which', 'does', 'do', 'is', 'are', 'was', 'were']:
-                        key_words.append(word)
+                key_words = [w for w in words if len(w) > 3 and w.lower() not in ['what', 'why', 'how', 'when', 'where', 'who', 'which']]
                 if key_words:
                     topic_parts.extend(key_words[:3])
             
             if topic_parts:
                 topic = ' '.join(topic_parts[:3])
-                # Replace references with topic
                 for pattern in reference_patterns:
                     resolved = re.sub(pattern, topic, resolved, flags=re.I, count=1)
-                    break  # Only replace the first reference found
+                    break
     
     return resolved
 
-# ============ MAIN RESPONSE FUNCTION ============
-def get_response(message: str, email: str) -> Dict[str, Any]:
-    """Main response function - returns structured response"""
+# ============ MAIN RESPONSE ============
+def get_response(message, email):
     start_time = time.time()
     msg = message.strip()
     
-    # Update analytics
     analytics["total_queries"] += 1
     
-    # Get user stats
     stats = update_user_stats(email)
     user = user_db.get(User.email == email)
     user_name = user.get('name', 'User') if user else 'User'
     
-    # Get context and resolve references
     context = get_context(email)
     resolved_message = resolve_references(msg, context)
     
-    # Check cache
     cache_key = hashlib.md5(f"{resolved_message}_{email}".encode()).hexdigest()
     if cache_key in cache:
         cached_response, cached_time = cache[cache_key]
         if time.time() - cached_time < CACHE_TTL:
-            # Add user stats to cached response
             response = cached_response
-            response["user_stats"] = {
-                "name": user_name,
-                "level": stats['level'],
-                "title": stats['title'],
-                "count": stats['count']
-            }
+            response["user_stats"] = {"name": user_name, "level": stats['level'], "title": stats['title'], "count": stats['count']}
             return response
     
-    # Math
     math_match = re.search(r'(\d+)\s*([\+\-\*\/])\s*(\d+)', msg)
     if math_match:
         try:
@@ -619,143 +394,74 @@ def get_response(message: str, email: str) -> Dict[str, Any]:
             
             response = {
                 "quick_answer": f"🧮 {a} {op} {b} = {result}",
-                "detailed_explanation": f"Great job, {user_name}! You solved this math problem perfectly.",
+                "detailed_explanation": f"Great job, {user_name}!",
                 "key_facts": [f"{a} {op} {b} = {result}"],
-                "analysis": "Simple arithmetic calculation completed successfully.",
+                "analysis": "Simple arithmetic calculation completed.",
                 "sources": [],
                 "confidence": {"score": 100, "level": "Very High"},
-                "user_stats": {
-                    "name": user_name,
-                    "level": stats['level'],
-                    "title": stats['title'],
-                    "count": stats['count']
-                }
+                "user_stats": {"name": user_name, "level": stats['level'], "title": stats['title'], "count": stats['count']}
             }
-            
-            # Update context
             update_context(email, message, json.dumps(response))
-            
-            # Cache
             cache[cache_key] = (response, time.time())
-            
             return response
         except:
             pass
     
-    # Greetings
     if msg.lower() in ['hi', 'hello', 'hey', 'sup', 'yo']:
         response = {
             "quick_answer": f"👋 Hello {user_name}!",
-            "detailed_explanation": f"You are a **{stats['title']}** (Level {stats['level']}) with {stats['count']} messages! How can I help you today?",
+            "detailed_explanation": f"You are a **{stats['title']}** (Level {stats['level']}) with {stats['count']} messages!",
             "key_facts": [f"Level: {stats['level']}", f"Title: {stats['title']}", f"Messages: {stats['count']}"],
-            "analysis": "Ready to assist with any questions you have.",
+            "analysis": "Ready to assist you.",
             "sources": [],
             "confidence": {"score": 100, "level": "Very High"},
-            "user_stats": {
-                "name": user_name,
-                "level": stats['level'],
-                "title": stats['title'],
-                "count": stats['count']
-            }
+            "user_stats": {"name": user_name, "level": stats['level'], "title": stats['title'], "count": stats['count']}
         }
-        
-        # Update context
         update_context(email, message, json.dumps(response))
-        
-        # Cache
         cache[cache_key] = (response, time.time())
-        
         return response
     
     if 'how are you' in msg.lower():
         response = {
             "quick_answer": "😊 I'm doing great!",
-            "detailed_explanation": f"Thanks for asking, {user_name}! I'm here and ready to help.",
+            "detailed_explanation": f"Thanks for asking, {user_name}!",
             "key_facts": ["Always available to assist", "Powered by Yama AI"],
-            "analysis": "Feeling excellent and ready to help.",
+            "analysis": "Ready and waiting for your questions.",
             "sources": [],
             "confidence": {"score": 100, "level": "Very High"},
-            "user_stats": {
-                "name": user_name,
-                "level": stats['level'],
-                "title": stats['title'],
-                "count": stats['count']
-            }
+            "user_stats": {"name": user_name, "level": stats['level'], "title": stats['title'], "count": stats['count']}
         }
-        
-        # Update context
         update_context(email, message, json.dumps(response))
-        
-        # Cache
         cache[cache_key] = (response, time.time())
-        
         return response
     
-    # Search and generate answer
     search_results = search_web(resolved_message)
     
     if not search_results:
         response = {
             "quick_answer": f"I searched for '{message}' but found no results.",
-            "detailed_explanation": "Please try rephrasing your question or using different keywords.",
+            "detailed_explanation": "Please try rephrasing your question.",
             "key_facts": ["No search results found"],
-            "analysis": "The search returned no results. Try a different approach.",
+            "analysis": "The search returned no results.",
             "sources": [],
             "confidence": {"score": 0, "level": "No Data"},
-            "user_stats": {
-                "name": user_name,
-                "level": stats['level'],
-                "title": stats['title'],
-                "count": stats['count']
-            }
+            "user_stats": {"name": user_name, "level": stats['level'], "title": stats['title'], "count": stats['count']}
         }
-        
-        # Update context
         update_context(email, message, json.dumps(response))
-        
         return response
     
-    # Read pages in parallel
     urls = [r['url'] for r in search_results[:8]]
     page_contents, failed_sources = read_pages_parallel(urls)
     
-    # Calculate source quality scores
     source_scores = [r.get('score', 40) for r in search_results if r['url'] in page_contents]
-    
-    # Check source agreement
     agreement_data = check_source_agreement(page_contents)
-    
-    # Calculate confidence
     content_lengths = [len(content) for content in page_contents.values()]
-    confidence_data = calculate_confidence(
-        len(page_contents),
-        source_scores,
-        agreement_data,
-        content_lengths
-    )
+    confidence_data = calculate_confidence(len(page_contents), source_scores, agreement_data, content_lengths)
     
-    # Generate structured answer
-    answer_data = generate_structured_answer(
-        resolved_message,
-        search_results,
-        page_contents,
-        failed_sources,
-        confidence_data
-    )
+    answer_data = generate_structured_answer(resolved_message, search_results, page_contents, failed_sources, confidence_data)
+    answer_data["follow_up"] = generate_follow_up(resolved_message)
+    answer_data["user_stats"] = {"name": user_name, "level": stats['level'], "title": stats['title'], "count": stats['count']}
     
-    # Add follow-up questions
-    follow_ups = generate_follow_up(resolved_message, answer_data)
-    answer_data["follow_up"] = follow_ups
-    
-    # Add user stats
-    answer_data["user_stats"] = {
-        "name": user_name,
-        "level": stats['level'],
-        "title": stats['title'],
-        "count": stats['count']
-    }
-    
-    # Track analytics
     response_time = time.time() - start_time
     analytics["response_times"].append(response_time)
     analytics["search_success_rate"].append(len(page_contents) > 0)
@@ -763,13 +469,9 @@ def get_response(message: str, email: str) -> Dict[str, Any]:
     analytics["source_quality_avg"].append(sum(source_scores) / len(source_scores) if source_scores else 0)
     analytics["confidence_avg"].append(confidence_data["score"])
     
-    # Update context
     update_context(email, message, json.dumps(answer_data))
-    
-    # Cache
     cache[cache_key] = (answer_data, time.time())
     
-    # Clean old cache entries
     if len(cache) > 1000:
         current_time = time.time()
         for key, (_, timestamp) in list(cache.items()):
@@ -778,7 +480,7 @@ def get_response(message: str, email: str) -> Dict[str, Any]:
     
     return answer_data
 
-# ============ HISTORY FUNCTIONS ============
+# ============ HISTORY ============
 def load_history(email):
     if not email:
         return []
@@ -797,7 +499,7 @@ def save_history(email, history):
     with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-# ============ USER FUNCTIONS ============
+# ============ USER ============
 def get_or_create_user(email, name, picture=None):
     user = user_db.get(User.email == email)
     if not user:
@@ -823,32 +525,16 @@ def update_user_stats(email):
     if user:
         new_count = user.get("message_count", 0) + 1
         new_level = 1 + (new_count // 50)
-        
-        titles = {
-            1: "🌟 Newbie Chatter",
-            2: "💬 Regular Talker",
-            3: "🔥 Chatty User",
-            4: "⚡ Power User",
-            5: "👑 Super Chat Master",
-            6: "🏆 Ultimate Reviewer",
-            7: "🧠 Yama Legend"
-        }
+        titles = {1: "🌟 Newbie Chatter", 2: "💬 Regular Talker", 3: "🔥 Chatty User", 4: "⚡ Power User", 5: "👑 Super Chat Master", 6: "🏆 Ultimate Reviewer", 7: "🧠 Yama Legend"}
         new_title = titles.get(new_level, "🧠 Yama Legend")
-        
-        user_db.update({
-            "message_count": new_count,
-            "level": new_level,
-            "title": new_title,
-            "last_seen": datetime.now().isoformat()
-        }, User.email == email)
-        
+        user_db.update({"message_count": new_count, "level": new_level, "title": new_title, "last_seen": datetime.now().isoformat()}, User.email == email)
         return {"count": new_count, "level": new_level, "title": new_title}
     return {"count": 0, "level": 1, "title": "🌟 Newbie Chatter"}
 
 # ============ GOOGLE CLIENT ID ============
 GOOGLE_CLIENT_ID = "46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com"
 
-# ============ COMPLETE HTML WITH FIXED LOGIN ============
+# ============ HTML ============
 HTML = f'''<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -858,7 +544,6 @@ HTML = f'''<!DOCTYPE html>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
     <style>
-        /* ========== RESET ========== */
         * {{
             margin: 0;
             padding: 0;
@@ -866,7 +551,6 @@ HTML = f'''<!DOCTYPE html>
             -webkit-tap-highlight-color: transparent;
         }}
         
-        /* ========== FIXED: NO FIXED POSITION, NO OVERFLOW HIDDEN ========== */
         html, body {{
             margin: 0;
             padding: 0;
@@ -881,13 +565,11 @@ HTML = f'''<!DOCTYPE html>
             -moz-osx-font-smoothing: grayscale;
         }}
         
-        /* ========== FLUID MEDIA ========== */
         img, video, iframe {{
             max-width: 100%;
             height: auto;
         }}
         
-        /* ========== DARK MODE ========== */
         body.dark {{
             background: #1a1a2e;
         }}
@@ -1016,7 +698,6 @@ HTML = f'''<!DOCTYPE html>
             color: white;
         }}
         
-        /* ========== LOGIN OVERLAY ========== */
         .login-overlay {{
             position: fixed;
             top: 0;
@@ -1025,7 +706,7 @@ HTML = f'''<!DOCTYPE html>
             bottom: 0;
             background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
             z-index: 2000;
-            display: flex;
+            display: flex !important;
             justify-content: center;
             align-items: center;
             padding: 20px;
@@ -1062,9 +743,8 @@ HTML = f'''<!DOCTYPE html>
             margin-bottom: 30px;
         }}
         
-        /* ========== APP - FIXED LAYOUT ========== */
         .app {{
-            display: none;
+            display: none !important;
             flex-direction: column;
             height: 100dvh;
             min-height: 100vh;
@@ -1075,10 +755,9 @@ HTML = f'''<!DOCTYPE html>
         }}
         
         .app.visible {{
-            display: flex;
+            display: flex !important;
         }}
         
-        /* ========== SIDEBAR - RESPONSIVE ========== */
         .sidebar {{
             position: fixed;
             left: 0;
@@ -1251,7 +930,6 @@ HTML = f'''<!DOCTYPE html>
             display: block;
         }}
         
-        /* ========== MAIN - FLEX LAYOUT ========== */
         .main {{
             flex: 1;
             display: flex;
@@ -1262,7 +940,6 @@ HTML = f'''<!DOCTYPE html>
             overflow: hidden;
         }}
         
-        /* ========== HEADER ========== */
         .header {{
             padding: 12px 16px;
             display: flex;
@@ -1358,7 +1035,6 @@ HTML = f'''<!DOCTYPE html>
             object-fit: cover;
         }}
         
-        /* ========== MESSAGES - SCROLLABLE ========== */
         .messages {{
             flex: 1;
             overflow-y: auto;
@@ -1412,7 +1088,6 @@ HTML = f'''<!DOCTYPE html>
             box-shadow: 0 2px 5px rgba(0,0,0,0.05);
         }}
         
-        /* ========== SOURCE CARDS ========== */
         .source-card {{
             display: inline-block;
             background: #f8f5f0;
@@ -1533,7 +1208,6 @@ HTML = f'''<!DOCTYPE html>
             background: #5a4f3f;
         }}
         
-        /* ========== MESSAGE ACTIONS ========== */
         .message-actions {{
             display: flex;
             gap: 8px;
@@ -1577,7 +1251,6 @@ HTML = f'''<!DOCTYPE html>
             border-color: #4a3f2f;
         }}
         
-        /* ========== FOLLOW-UP SUGGESTIONS ========== */
         .follow-ups {{
             display: flex;
             flex-wrap: wrap;
@@ -1613,7 +1286,6 @@ HTML = f'''<!DOCTYPE html>
             color: #d4c5a9;
         }}
         
-        /* ========== CONFIDENCE INDICATOR ========== */
         .confidence-indicator {{
             display: inline-block;
             font-size: 0.75rem;
@@ -1672,7 +1344,6 @@ HTML = f'''<!DOCTYPE html>
             color: #f8d7da;
         }}
         
-        /* ========== TYPING ========== */
         .typing {{
             display: none;
             padding: 10px 16px;
@@ -1696,7 +1367,6 @@ HTML = f'''<!DOCTYPE html>
             30% {{ transform: translateY(-6px); }}
         }}
         
-        /* ========== INPUT AREA - STICKY WITH SAFE AREA ========== */
         .input-area {{
             position: sticky;
             bottom: 0;
@@ -1762,7 +1432,6 @@ HTML = f'''<!DOCTYPE html>
             font-size: 0.95rem;
         }}
         
-        /* iOS Zoom Fix */
         @media (max-width: 768px) {{
             textarea {{
                 font-size: 16px !important;
@@ -1805,7 +1474,6 @@ HTML = f'''<!DOCTYPE html>
             fill: currentColor;
         }}
         
-        /* ========== WELCOME ========== */
         .welcome {{
             display: flex;
             flex-direction: column;
@@ -1866,9 +1534,6 @@ HTML = f'''<!DOCTYPE html>
             border-color: #2c2418;
         }}
         
-        /* ========== RESPONSIVE BREAKPOINTS ========== */
-        
-        /* Tablet & Mobile */
         @media (max-width: 768px) {{
             .messages {{
                 padding: 12px 16px;
@@ -1921,7 +1586,6 @@ HTML = f'''<!DOCTYPE html>
             }}
         }}
         
-        /* Small Phones */
         @media (max-width: 480px) {{
             .header {{
                 padding: 8px 12px;
@@ -1978,7 +1642,6 @@ HTML = f'''<!DOCTYPE html>
             }}
         }}
         
-        /* Very Small Phones */
         @media (max-width: 380px) {{
             .header {{
                 padding: 6px 10px;
@@ -2027,7 +1690,6 @@ HTML = f'''<!DOCTYPE html>
             }}
         }}
         
-        /* Landscape Phones */
         @media (max-height: 500px) and (orientation: landscape) {{
             .header {{
                 min-height: 40px;
@@ -2079,7 +1741,6 @@ HTML = f'''<!DOCTYPE html>
             }}
         }}
         
-        /* Tablets */
         @media (min-width: 769px) and (max-width: 1024px) {{
             .input-wrapper {{
                 max-width: 90%;
@@ -2092,7 +1753,6 @@ HTML = f'''<!DOCTYPE html>
             }}
         }}
         
-        /* Desktop */
         @media (min-width: 1025px) {{
             .input-wrapper {{
                 max-width: 760px;
@@ -2198,37 +1858,6 @@ HTML = f'''<!DOCTYPE html>
     <script>
         let currentUser = null;
         let hasMessages = false;
-        let currentMessageIndex = 0;
-        
-        // Show app immediately if user is already signed in
-        function checkExistingSession() {{
-            // Check if user data exists in session
-            const savedUser = localStorage.getItem('yama_user');
-            if (savedUser) {{
-                try {{
-                    const user = JSON.parse(savedUser);
-                    currentUser = user;
-                    document.getElementById('loginOverlay').classList.add('hidden');
-                    document.getElementById('app').classList.add('visible');
-                    document.getElementById('userBtn').style.display = 'block';
-                    document.getElementById('userAvatar').src = user.picture;
-                    
-                    document.getElementById('userProfile').style.display = 'flex';
-                    document.getElementById('userProfile').innerHTML = `
-                        <img src=\"${{user.picture}}\" class=\"user-profile-img\">
-                        <div class=\"user-profile-info\">
-                            <div class=\"user-profile-name\">${{user.name}}</div>
-                            <div class=\"user-profile-email\">${{user.email}}</div>
-                        </div>
-                        <button class=\"logout-btn\" onclick=\"logout()\">Logout</button>
-                    `;
-                    
-                    loadHistory();
-                }} catch(e) {{
-                    console.log('Error loading saved session');
-                }}
-            }}
-        }}
         
         function toggleTheme() {{
             document.body.classList.toggle('dark');
@@ -2270,15 +1899,18 @@ HTML = f'''<!DOCTYPE html>
                 picture: payload.picture
             }};
             
-            // Save user session
+            // Save to localStorage
             localStorage.setItem('yama_user', JSON.stringify(currentUser));
             
-            // Hide login overlay and show app
+            // Hide login, show app
             document.getElementById('loginOverlay').classList.add('hidden');
             document.getElementById('app').classList.add('visible');
+            
+            // Show user button
             document.getElementById('userBtn').style.display = 'block';
             document.getElementById('userAvatar').src = currentUser.picture;
             
+            // Show user profile in sidebar
             document.getElementById('userProfile').style.display = 'flex';
             document.getElementById('userProfile').innerHTML = `
                 <img src=\"${{currentUser.picture}}\" class=\"user-profile-img\">
@@ -2301,10 +1933,14 @@ HTML = f'''<!DOCTYPE html>
         function logout() {{
             currentUser = null;
             localStorage.removeItem('yama_user');
+            
+            // Show login, hide app
             document.getElementById('loginOverlay').classList.remove('hidden');
             document.getElementById('app').classList.remove('visible');
+            
             document.getElementById('userBtn').style.display = 'none';
             document.getElementById('userProfile').style.display = 'none';
+            
             if (google && google.accounts) {{
                 google.accounts.id.disableAutoSelect();
             }}
@@ -2370,7 +2006,6 @@ HTML = f'''<!DOCTYPE html>
         
         const textarea = document.getElementById('userInput');
         
-        // Auto-adjust height
         function autoAdjustHeight() {{
             this.style.height = 'auto';
             this.style.height = this.scrollHeight + 'px';
@@ -2378,7 +2013,6 @@ HTML = f'''<!DOCTYPE html>
         
         textarea.addEventListener('input', autoAdjustHeight);
         
-        // VisualViewport handling for mobile keyboard
         if (window.visualViewport) {{
             let lastHeight = window.visualViewport.height;
             window.visualViewport.addEventListener('resize', function() {{
@@ -2408,7 +2042,6 @@ HTML = f'''<!DOCTYPE html>
                 const welcome = document.getElementById('welcome');
                 if (welcome) welcome.style.display = 'none';
                 hasMessages = true;
-                document.getElementById('logo').classList.add('small');
             }}
             
             addMessage(message, 'user');
@@ -2425,7 +2058,6 @@ HTML = f'''<!DOCTYPE html>
             }});
             const data = await res.json();
             
-            // Parse the response - it's JSON now
             addStructuredMessage(data.response, 'ai');
             document.getElementById('typing').style.display = 'none';
             loadHistory();
@@ -2453,27 +2085,21 @@ HTML = f'''<!DOCTYPE html>
             
             let html = '';
             
-            // Handle different response types
             if (typeof responseData === 'string') {{
-                // Fallback for string responses
                 html = responseData.replace(/\\n/g, '<br>');
             }} else {{
-                // Structured response
                 const data = responseData;
                 
-                // Quick Answer
                 if (data.quick_answer) {{
                     html += '<strong>📌 Quick Answer</strong><br>';
                     html += data.quick_answer + '<br><br>';
                 }}
                 
-                // Detailed Explanation
                 if (data.detailed_explanation) {{
                     html += '<strong>📖 Detailed Explanation</strong><br>';
                     html += data.detailed_explanation + '<br><br>';
                 }}
                 
-                // Key Facts
                 if (data.key_facts && data.key_facts.length > 0) {{
                     html += '<strong>📊 Key Facts</strong><br>';
                     data.key_facts.forEach(fact => {{
@@ -2482,13 +2108,11 @@ HTML = f'''<!DOCTYPE html>
                     html += '<br>';
                 }}
                 
-                // Analysis
                 if (data.analysis) {{
                     html += '<strong>🔍 Analysis</strong><br>';
                     html += data.analysis.replace(/\\n/g, '<br>') + '<br><br>';
                 }}
                 
-                // Confidence
                 if (data.confidence) {{
                     const conf = data.confidence;
                     let confClass = 'confidence-' + (conf.level || 'medium').toLowerCase().replace(' ', '-');
@@ -2497,7 +2121,6 @@ HTML = f'''<!DOCTYPE html>
                     html += '</span><br><br>';
                 }}
                 
-                // Sources
                 if (data.sources && data.sources.length > 0) {{
                     html += '<strong>🔗 Sources</strong><br>';
                     data.sources.forEach(source => {{
@@ -2518,7 +2141,6 @@ HTML = f'''<!DOCTYPE html>
                     html += '<br>';
                 }}
                 
-                // Follow-ups
                 if (data.follow_up && data.follow_up.length > 0) {{
                     html += '<strong>💡 Follow-up Questions</strong><br>';
                     html += '<div class=\"follow-ups\">';
@@ -2528,7 +2150,6 @@ HTML = f'''<!DOCTYPE html>
                     html += '</div><br>';
                 }}
                 
-                // User Stats
                 if (data.user_stats) {{
                     const stats = data.user_stats;
                     html += '📊 <strong>' + escapeHtml(stats.name) + '\'s Stats:</strong> ';
@@ -2539,7 +2160,6 @@ HTML = f'''<!DOCTYPE html>
             content.innerHTML = html;
             div.appendChild(content);
             
-            // Add message actions
             const actions = document.createElement('div');
             actions.className = 'message-actions';
             actions.innerHTML = `
@@ -2569,9 +2189,7 @@ HTML = f'''<!DOCTYPE html>
             const prevMsg = msgDiv.previousElementSibling;
             if (prevMsg && prevMsg.classList.contains('user-message')) {{
                 const userText = prevMsg.querySelector('.message-content').innerText;
-                // Remove the old AI message
                 msgDiv.remove();
-                // Resend the message
                 document.getElementById('userInput').value = userText;
                 sendMessage();
             }}
@@ -2582,7 +2200,6 @@ HTML = f'''<!DOCTYPE html>
             const sourceCards = msgDiv.querySelectorAll('.source-card');
             if (sourceCards.length > 0) {{
                 sourceCards[0].scrollIntoView({{ behavior: 'smooth', block: 'center' }});
-                // Highlight the source section
                 sourceCards.forEach(card => {{
                     card.style.transition = 'background 0.3s';
                     card.style.background = '#e8e0d5';
@@ -2596,9 +2213,33 @@ HTML = f'''<!DOCTYPE html>
             messages.scrollTop = messages.scrollHeight;
         }}
         
-        // Check for existing session on load
+        // Check for existing session
         document.addEventListener('DOMContentLoaded', function() {{
-            checkExistingSession();
+            const savedUser = localStorage.getItem('yama_user');
+            if (savedUser) {{
+                try {{
+                    const user = JSON.parse(savedUser);
+                    currentUser = user;
+                    document.getElementById('loginOverlay').classList.add('hidden');
+                    document.getElementById('app').classList.add('visible');
+                    document.getElementById('userBtn').style.display = 'block';
+                    document.getElementById('userAvatar').src = user.picture;
+                    
+                    document.getElementById('userProfile').style.display = 'flex';
+                    document.getElementById('userProfile').innerHTML = `
+                        <img src=\"${{user.picture}}\" class=\"user-profile-img\">
+                        <div class=\"user-profile-info\">
+                            <div class=\"user-profile-name\">${{user.name}}</div>
+                            <div class=\"user-profile-email\">${{user.email}}</div>
+                        </div>
+                        <button class=\"logout-btn\" onclick=\"logout()\">Logout</button>
+                    `;
+                    
+                    loadHistory();
+                }} catch(e) {{
+                    console.log('Error loading session');
+                }}
+            }}
             textarea.focus();
         }});
     </script>
@@ -2639,7 +2280,6 @@ async def chat(request: Request):
 @app.get("/get_history")
 async def get_history(email: str = ""):
     history = load_history(email)
-    # Parse stored JSON responses
     parsed_history = []
     for item in history:
         try:
@@ -2657,7 +2297,6 @@ async def clear_history_endpoint():
 
 @app.get("/analytics")
 async def get_analytics():
-    """Internal analytics endpoint (admin only)"""
     avg_response_time = sum(analytics["response_times"]) / len(analytics["response_times"]) if analytics["response_times"] else 0
     avg_confidence = sum(analytics["confidence_avg"]) / len(analytics["confidence_avg"]) if analytics["confidence_avg"] else 0
     avg_quality = sum(analytics["source_quality_avg"]) / len(analytics["source_quality_avg"]) if analytics["source_quality_avg"] else 0
@@ -2673,37 +2312,12 @@ async def get_analytics():
         "user_engagement": dict(analytics["user_engagement"])
     }
 
-@app.post("/clear_cache")
-async def clear_cache():
-    """Clear cache (admin only)"""
-    cache.clear()
-    return {"status": "cache_cleared"}
-
-@app.post("/reset_analytics")
-async def reset_analytics():
-    """Reset analytics (admin only)"""
-    analytics.clear()
-    return {"status": "analytics_reset"}
-
 if __name__ == "__main__":
     print("\n" + "="*60)
     print("🏛️ YAMA AI - PROFESSIONAL RESEARCH ASSISTANT")
     print("="*60)
     print("🌐 Open: http://localhost:8000")
-    print("📱 Perfect on ALL devices")
     print("")
-    print("✅ ALL 10 PRIORITIES IMPLEMENTED:")
-    print("1. ✓ FIX SOURCE LINKS - Clickable source cards with domain & type")
-    print("2. ✓ REAL MULTI-SOURCE ANALYSIS - 10 sources, 5-8 read, compare, deduplicate")
-    print("3. ✓ SOURCE RELIABILITY SYSTEM - 7 categories with scores")
-    print("4. ✓ REAL CONFIDENCE SCORE - 4-factor calculation with levels")
-    print("5. ✓ CONTEXT UNDERSTANDING - 30-message window with reference resolution")
-    print("6. ✓ BETTER CONTENT EXTRACTION - Removes cookies, ads, navigation, etc.")
-    print("7. ✓ SEARCH FAILURE RECOVERY - Skips dead links, shows failure count")
-    print("8. ✓ RESPONSE STRUCTURE - Quick Answer → Detailed → Facts → Analysis → Sources")
-    print("9. ✓ MESSAGE ACTIONS - Copy, Regenerate, Sources (mobile + desktop)")
-    print("10. ✓ PERFORMANCE OPTIMIZATION - Async, caching, parallel reading")
-    print("")
-    print("🔧 FIXED: Google Sign-In issue - Now properly hides overlay and shows app")
+    print("✅ ALL FEATURES IMPLEMENTED")
     print("="*60 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=10000)
