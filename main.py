@@ -848,7 +848,7 @@ def update_user_stats(email):
 # ============ GOOGLE CLIENT ID ============
 GOOGLE_CLIENT_ID = "46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com"
 
-# ============ COMPLETE HTML WITH MESSAGE ACTIONS ============
+# ============ COMPLETE HTML WITH FIXED LOGIN ============
 HTML = f'''<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1031,6 +1031,10 @@ HTML = f'''<!DOCTYPE html>
             padding: 20px;
         }}
         
+        .login-overlay.hidden {{
+            display: none !important;
+        }}
+        
         .login-card {{
             background: white;
             border-radius: 30px;
@@ -1060,7 +1064,7 @@ HTML = f'''<!DOCTYPE html>
         
         /* ========== APP - FIXED LAYOUT ========== */
         .app {{
-            display: flex;
+            display: none;
             flex-direction: column;
             height: 100dvh;
             min-height: 100vh;
@@ -1068,6 +1072,10 @@ HTML = f'''<!DOCTYPE html>
             background: linear-gradient(135deg, #f5f0e8 0%, #e8e0d5 100%);
             position: relative;
             overflow: hidden;
+        }}
+        
+        .app.visible {{
+            display: flex;
         }}
         
         /* ========== SIDEBAR - RESPONSIVE ========== */
@@ -2192,6 +2200,36 @@ HTML = f'''<!DOCTYPE html>
         let hasMessages = false;
         let currentMessageIndex = 0;
         
+        // Show app immediately if user is already signed in
+        function checkExistingSession() {{
+            // Check if user data exists in session
+            const savedUser = localStorage.getItem('yama_user');
+            if (savedUser) {{
+                try {{
+                    const user = JSON.parse(savedUser);
+                    currentUser = user;
+                    document.getElementById('loginOverlay').classList.add('hidden');
+                    document.getElementById('app').classList.add('visible');
+                    document.getElementById('userBtn').style.display = 'block';
+                    document.getElementById('userAvatar').src = user.picture;
+                    
+                    document.getElementById('userProfile').style.display = 'flex';
+                    document.getElementById('userProfile').innerHTML = `
+                        <img src=\"${{user.picture}}\" class=\"user-profile-img\">
+                        <div class=\"user-profile-info\">
+                            <div class=\"user-profile-name\">${{user.name}}</div>
+                            <div class=\"user-profile-email\">${{user.email}}</div>
+                        </div>
+                        <button class=\"logout-btn\" onclick=\"logout()\">Logout</button>
+                    `;
+                    
+                    loadHistory();
+                }} catch(e) {{
+                    console.log('Error loading saved session');
+                }}
+            }}
+        }}
+        
         function toggleTheme() {{
             document.body.classList.toggle('dark');
             localStorage.setItem('theme', document.body.classList.contains('dark') ? 'dark' : 'light');
@@ -2232,8 +2270,12 @@ HTML = f'''<!DOCTYPE html>
                 picture: payload.picture
             }};
             
-            document.getElementById('loginOverlay').style.display = 'none';
-            document.getElementById('app').style.display = 'flex';
+            // Save user session
+            localStorage.setItem('yama_user', JSON.stringify(currentUser));
+            
+            // Hide login overlay and show app
+            document.getElementById('loginOverlay').classList.add('hidden');
+            document.getElementById('app').classList.add('visible');
             document.getElementById('userBtn').style.display = 'block';
             document.getElementById('userAvatar').src = currentUser.picture;
             
@@ -2258,8 +2300,9 @@ HTML = f'''<!DOCTYPE html>
         
         function logout() {{
             currentUser = null;
-            document.getElementById('loginOverlay').style.display = 'flex';
-            document.getElementById('app').style.display = 'none';
+            localStorage.removeItem('yama_user');
+            document.getElementById('loginOverlay').classList.remove('hidden');
+            document.getElementById('app').classList.remove('visible');
             document.getElementById('userBtn').style.display = 'none';
             document.getElementById('userProfile').style.display = 'none';
             if (google && google.accounts) {{
@@ -2500,9 +2543,9 @@ HTML = f'''<!DOCTYPE html>
             const actions = document.createElement('div');
             actions.className = 'message-actions';
             actions.innerHTML = `
-                <button class="message-action-btn" onclick="copyMessage(this)">📋 Copy</button>
-                <button class="message-action-btn" onclick="regenerateMessage(this)">🔄 Regenerate</button>
-                <button class="message-action-btn" onclick="scrollToSources(this)">🔗 Sources</button>
+                <button class=\"message-action-btn\" onclick=\"copyMessage(this)\">📋 Copy</button>
+                <button class=\"message-action-btn\" onclick=\"regenerateMessage(this)\">🔄 Regenerate</button>
+                <button class=\"message-action-btn\" onclick=\"scrollToSources(this)\">🔗 Sources</button>
             `;
             div.appendChild(actions);
             
@@ -2553,8 +2596,11 @@ HTML = f'''<!DOCTYPE html>
             messages.scrollTop = messages.scrollHeight;
         }}
         
-        loadHistory();
-        textarea.focus();
+        // Check for existing session on load
+        document.addEventListener('DOMContentLoaded', function() {{
+            checkExistingSession();
+            textarea.focus();
+        }});
     </script>
 </body>
 </html>
@@ -2657,5 +2703,7 @@ if __name__ == "__main__":
     print("8. ✓ RESPONSE STRUCTURE - Quick Answer → Detailed → Facts → Analysis → Sources")
     print("9. ✓ MESSAGE ACTIONS - Copy, Regenerate, Sources (mobile + desktop)")
     print("10. ✓ PERFORMANCE OPTIMIZATION - Async, caching, parallel reading")
+    print("")
+    print("🔧 FIXED: Google Sign-In issue - Now properly hides overlay and shows app")
     print("="*60 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=10000)
