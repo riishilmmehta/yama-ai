@@ -75,17 +75,14 @@ class IntentDetector:
     def detect(self, query: str) -> Dict[str, Any]:
         query_lower = query.lower().strip()
         
-        # Check for math
         for pattern in self.math_patterns:
             if re.search(pattern, query, re.IGNORECASE):
                 return {'intent': 'math', 'confidence': 0.95}
         
-        # Check for conversation
         for pattern in self.conversation_patterns:
             if re.search(pattern, query_lower, re.IGNORECASE):
                 return {'intent': 'conversation', 'confidence': 0.9}
         
-        # Default: general knowledge
         return {'intent': 'general', 'confidence': 0.8}
 
 intent_detector = IntentDetector()
@@ -115,11 +112,7 @@ class QueryUnderstanding:
         }
     
     def extract_key_entities(self, query: str) -> List[str]:
-        """Extract the main entities from a query"""
-        # Remove question words and stop words
         words = query.lower().split()
-        
-        # Try to find the main subject (words after question word)
         main_subject = []
         found_question_word = False
         
@@ -130,11 +123,9 @@ class QueryUnderstanding:
             if found_question_word and word not in self.stop_words and len(word) > 2:
                 main_subject.append(word)
         
-        # If no main subject found, take all important words
         if not main_subject:
             main_subject = [w for w in words if w not in self.stop_words and len(w) > 2]
         
-        # Look for multi-word entities (capitalized words in original query)
         original_words = query.split()
         entities = []
         i = 0
@@ -151,24 +142,19 @@ class QueryUnderstanding:
                     continue
             i += 1
         
-        # Combine entities with main subject
         if entities:
             return entities[:2]
         
         return main_subject[:3] if main_subject else [query]
     
     def build_search_query(self, query: str) -> str:
-        """Build an optimized search query"""
-        # Remove question words
         for qw in self.question_words:
             query = re.sub(rf'^{qw}\s+', '', query, flags=re.IGNORECASE)
             query = re.sub(rf'\s+{qw}\s+', ' ', query, flags=re.IGNORECASE)
         
-        # Remove filler words
         words = query.split()
         filtered = [w for w in words if w.lower() not in self.stop_words or len(w) > 3]
         
-        # If we have entities, use them
         entities = self.extract_key_entities(query)
         if entities:
             return ' '.join(entities)
@@ -184,7 +170,6 @@ class MathematicsEngine:
         mp.mp.dps = self.precision
     
     def is_math_query(self, query: str) -> bool:
-        """Quick check if query is mathematical"""
         math_indicators = [
             r'[\d]+\s*[\+\-\*\/]\s*[\d]+',
             r'[a-zA-Z]\s*[\+\-\*\/]?\s*[=]',
@@ -198,26 +183,21 @@ class MathematicsEngine:
         return False
     
     def solve(self, query: str) -> Dict[str, Any]:
-        """Solve mathematical expression"""
         try:
-            # Try arithmetic
             arith_result = self.solve_arithmetic(query)
             if arith_result.get('success'):
                 arith_result['type'] = 'arithmetic'
                 return arith_result
             
-            # Try equation
             eq_result = self.solve_equation(query)
             if eq_result.get('success'):
                 eq_result['type'] = 'equation'
                 return eq_result
             
-            # Try calculus
             calc_result = self.solve_calculus(query)
             if calc_result.get('success'):
                 return calc_result
             
-            # Try trigonometry
             trig_result = self.solve_trigonometry(query)
             if trig_result.get('success'):
                 trig_result['type'] = 'trigonometry'
@@ -229,7 +209,6 @@ class MathematicsEngine:
     
     def solve_arithmetic(self, query: str) -> Dict[str, Any]:
         try:
-            # Extract numbers and operators
             clean = re.sub(r'[^0-9+\-*/%.()\s]', '', query)
             if not clean:
                 return {'success': False}
@@ -249,14 +228,12 @@ class MathematicsEngine:
     
     def solve_equation(self, query: str) -> Dict[str, Any]:
         try:
-            # Extract equation
             eq_match = re.search(r'([^=]+)=([^=]+)', query)
             if eq_match:
                 left = parse_expr(eq_match.group(1).strip())
                 right = parse_expr(eq_match.group(2).strip())
                 expr = left - right
             else:
-                # Try to find x in expression
                 if 'x' in query.lower():
                     expr = parse_expr(query)
                 else:
@@ -290,7 +267,6 @@ class MathematicsEngine:
     
     def solve_calculus(self, query: str) -> Dict[str, Any]:
         try:
-            # Extract expression
             expr_str = re.sub(r'(derivative|differentiate|diff|d/dx|integral|integrate|∫|limit|lim)\s*(of|for)?\s*', '', query, flags=re.IGNORECASE)
             expr = parse_expr(expr_str.strip())
             var = symbols('x')
@@ -353,7 +329,6 @@ class SourceValidator:
         self.session.timeout = 8
     
     def validate_and_extract(self, url: str) -> Dict[str, Any]:
-        """Validate URL and extract meaningful content"""
         result = {
             'valid': False,
             'content': None,
@@ -362,31 +337,24 @@ class SourceValidator:
         }
         
         try:
-            # Check if URL works
             response = self.session.get(url, timeout=8)
             if response.status_code != 200:
                 result['error'] = f"Status: {response.status_code}"
                 return result
             
-            # Parse content
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Remove noise
             for element in soup.find_all(['script', 'style', 'nav', 'footer', 'header', 'aside', 'iframe', 'noscript']):
                 element.decompose()
             
             for element in soup.find_all(class_=re.compile(r'(ad|popup|modal|banner|cookie|newsletter|subscribe|sidebar)', re.I)):
                 element.decompose()
             
-            # Get title
             title_tag = soup.find('title')
             if title_tag:
                 result['title'] = title_tag.get_text().strip()
             
-            # Extract main content
             content_parts = []
-            
-            # Try article or main
             main = soup.find('article') or soup.find('main')
             if main:
                 for p in main.find_all('p'):
@@ -394,19 +362,16 @@ class SourceValidator:
                     if len(text) > 50:
                         content_parts.append(text)
             else:
-                # Fallback to paragraphs
                 for p in soup.find_all('p'):
                     text = p.get_text(strip=True)
                     if len(text) > 50:
                         content_parts.append(text)
             
-            # Also get headings
             for h in soup.find_all(['h1', 'h2', 'h3']):
                 text = h.get_text(strip=True)
                 if len(text) > 10:
                     content_parts.append(text)
             
-            # Combine content
             full_text = ' '.join(content_parts[:30])
             full_text = re.sub(r'\s+', ' ', full_text).strip()
             
@@ -447,9 +412,6 @@ def get_trust_score(url: str) -> Tuple[int, str]:
 # ============ ANSWER GENERATION ============
 class AnswerGenerator:
     def generate_answer(self, query: str, search_results: List[Dict]) -> Dict[str, Any]:
-        """Generate a proper answer from search results"""
-        
-        # First, try to get the direct answer from trusted sources
         direct_answer = self.extract_direct_answer(query, search_results)
         
         if direct_answer:
@@ -459,7 +421,6 @@ class AnswerGenerator:
                 'sources': search_results[:3]
             }
         
-        # If no direct answer, try to generate one
         generated_answer = self.generate_from_sources(query, search_results)
         
         if generated_answer:
@@ -475,15 +436,12 @@ class AnswerGenerator:
         }
     
     def extract_direct_answer(self, query: str, search_results: List[Dict]) -> Optional[str]:
-        """Try to extract a direct answer from snippets"""
         if not search_results:
             return None
         
-        # Look for direct answer in snippets
         for result in search_results[:5]:
             snippet = result.get('snippet', '')
             if snippet and len(snippet) > 50:
-                # Clean the snippet
                 clean_snippet = re.sub(r'\s+', ' ', snippet).strip()
                 if len(clean_snippet) > 50:
                     return clean_snippet
@@ -491,11 +449,9 @@ class AnswerGenerator:
         return None
     
     def generate_from_sources(self, query: str, search_results: List[Dict]) -> Optional[str]:
-        """Generate answer by reading and summarizing sources"""
         if not search_results:
             return None
         
-        # Validate and read top sources
         contents = []
         for result in search_results[:3]:
             url = result.get('url', '')
@@ -511,21 +467,16 @@ class AnswerGenerator:
         if not contents:
             return None
         
-        # Combine content
         combined = ' '.join([c['content'][:500] for c in contents[:2]])
-        
-        # Extract key sentences
         sentences = re.split(r'[.!?]', combined)
         key_sentences = []
         
-        # Get the main subject from query
         subject = query_understanding.extract_key_entities(query)
         subject_terms = ' '.join(subject).lower()
         
         for sentence in sentences:
             sentence = sentence.strip()
             if len(sentence) > 50:
-                # Check if sentence is relevant to query
                 if any(term in sentence.lower() for term in subject):
                     key_sentences.append(sentence)
                 elif len(key_sentences) < 2:
@@ -534,7 +485,6 @@ class AnswerGenerator:
         if key_sentences:
             return '. '.join(key_sentences[:3]) + '.'
         
-        # Fallback: use first paragraph
         first_content = contents[0]['content'][:500]
         paragraphs = first_content.split('\n')
         for p in paragraphs:
@@ -547,10 +497,8 @@ answer_generator = AnswerGenerator()
 
 # ============ SEARCH FUNCTION ============
 def search_web(query: str, max_results: int = 10) -> List[Dict]:
-    """Search the web with improved query"""
     results = []
     try:
-        # Build optimized search query
         search_query = query_understanding.build_search_query(query)
         
         with DDGS() as ddgs:
@@ -571,7 +519,6 @@ def search_web(query: str, max_results: int = 10) -> List[Dict]:
                     "trust_category": category
                 })
             
-            # Remove duplicates
             seen_urls = set()
             unique_results = []
             for r in results:
@@ -579,7 +526,6 @@ def search_web(query: str, max_results: int = 10) -> List[Dict]:
                     seen_urls.add(r['url'])
                     unique_results.append(r)
             
-            # Sort by trust score
             unique_results.sort(key=lambda x: x['trust_score'], reverse=True)
             return unique_results
     except Exception as e:
@@ -588,17 +534,14 @@ def search_web(query: str, max_results: int = 10) -> List[Dict]:
 
 # ============ FORMAT RESPONSE ============
 def format_response(answer_data: Dict[str, Any], query: str) -> str:
-    """Format the answer for display"""
     if not answer_data.get('success'):
         return f"I couldn't find a clear answer to '{query}'. Please try rephrasing your question."
     
     answer = answer_data['answer']
     sources = answer_data.get('sources', [])
     
-    # Format answer
     response = f"💡 **Answer**\n\n{answer}\n\n"
     
-    # Add sources if available
     if sources:
         response += "📚 **Sources**\n"
         for i, source in enumerate(sources[:3], 1):
@@ -621,15 +564,12 @@ def format_response(answer_data: Dict[str, Any], query: str) -> str:
 def get_response(message, email, regenerate=False):
     msg = message.strip()
     
-    # Get user stats
     stats = update_user_stats(email)
     user = user_db.get(User.email == email)
     user_name = user.get('name', 'User') if user else 'User'
     
-    # Detect intent
     intent = intent_detector.detect(msg)
     
-    # Handle math
     if intent['intent'] == 'math':
         math_result = math_engine.solve(msg)
         if math_result.get('success'):
@@ -648,29 +588,22 @@ def get_response(message, email, regenerate=False):
             response = f"❌ Could not solve: {math_result.get('error', 'Unknown error')}\n\n💡 Try rephrasing your math question."
             return response
     
-    # Handle conversation
     if intent['intent'] == 'conversation':
         if msg.lower() in ['hi', 'hello', 'hey', 'sup', 'yo']:
             return f"👋 Hello {user_name}! You are a **{stats['title']}** (Level {stats['level']}) with {stats['count']} messages!\n\nHow can I help you today?"
         if 'how are you' in msg.lower():
             return f"😊 I'm doing great! Thanks for asking, {user_name}!"
     
-    # Handle general knowledge
     start_time = time.time()
     
-    # Search the web
     search_results = search_web(msg, max_results=10)
     
     if not search_results:
         return f"I searched for '{msg}' but found no results. Please try rephrasing your question."
     
-    # Generate answer
     answer_data = answer_generator.generate_answer(msg, search_results)
-    
-    # Format response
     response = format_response(answer_data, msg)
     
-    # Add follow-ups
     follow_ups = []
     entities = query_understanding.extract_key_entities(msg)
     if entities:
@@ -680,10 +613,8 @@ def get_response(message, email, regenerate=False):
     if follow_ups:
         response += "\n\n💭 **Follow-up Questions:**\n" + "\n".join([f"• {q}" for q in follow_ups[:3]])
     
-    # Add user stats
     response += f"\n\n📊 **{user_name}'s Stats:** Level {stats['level']} - {stats['title']} ({stats['count']} messages)"
     
-    # Track analytics
     track_analytics({
         "query": msg,
         "intent": intent['intent'],
@@ -691,7 +622,6 @@ def get_response(message, email, regenerate=False):
         "sources_found": len(search_results)
     })
     
-    # Store in context
     if not regenerate:
         context_memory.add_message(email, "user", msg)
         context_memory.add_message(email, "ai", response)
@@ -823,7 +753,7 @@ async def get_analytics():
 # ============ GOOGLE CLIENT ID ============
 GOOGLE_CLIENT_ID = "46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com"
 
-# ============ HTML (UNCHANGED) ============
+# ============ HTML WITH ESCAPED CURLY BRACES ============
 HTML = f'''
 <!DOCTYPE html>
 <html lang="en">
@@ -1046,256 +976,256 @@ HTML = f'''
     <script>
         let currentUser = null, hasMessages = false, messageCounter = 0, isGenerating = false;
         
-        function toggleTheme() { document.body.classList.toggle('dark'); localStorage.setItem('theme', document.body.classList.contains('dark') ? 'dark' : 'light'); }
-        function exportChat() {
+        function toggleTheme() {{ document.body.classList.toggle('dark'); localStorage.setItem('theme', document.body.classList.contains('dark') ? 'dark' : 'light'); }}
+        function exportChat() {{
             const messages = document.querySelectorAll('.message');
             let exportText = '';
-            messages.forEach(msg => {
+            messages.forEach(msg => {{
                 const sender = msg.classList.contains('user-message') ? 'You' : 'Yama';
                 const text = msg.querySelector('.message-content').innerText;
                 exportText += sender + ': ' + text + '\\n\\n';
-            });
-            const blob = new Blob([exportText], {type: 'text/plain'});
+            }});
+            const blob = new Blob([exportText], {{type: 'text/plain'}});
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
             a.download = 'yama_chat_' + new Date().toISOString() + '.txt';
             a.click();
-        }
+        }}
         if (localStorage.getItem('theme') === 'dark') document.body.classList.add('dark');
         
-        function toggleUserMenu() { document.getElementById('sidebar').classList.toggle('open'); document.getElementById('overlay').classList.toggle('show'); }
+        function toggleUserMenu() {{ document.getElementById('sidebar').classList.toggle('open'); document.getElementById('overlay').classList.toggle('show'); }}
         
-        function handleCredentialResponse(response) {
+        function handleCredentialResponse(response) {{
             const payload = JSON.parse(atob(response.credential.split('.')[1]));
-            currentUser = { name: payload.name, email: payload.email, picture: payload.picture };
+            currentUser = {{ name: payload.name, email: payload.email, picture: payload.picture }};
             document.getElementById('loginOverlay').style.display = 'none';
             document.getElementById('app').style.display = 'flex';
             document.getElementById('userBtn').style.display = 'block';
             document.getElementById('userAvatar').src = currentUser.picture;
             document.getElementById('userProfile').style.display = 'flex';
             document.getElementById('userProfile').innerHTML = `
-                <img src="${currentUser.picture}" class="user-profile-img">
+                <img src="${{currentUser.picture}}" class="user-profile-img">
                 <div class="user-profile-info">
-                    <div class="user-profile-name">${currentUser.name}</div>
-                    <div class="user-profile-email">${currentUser.email}</div>
+                    <div class="user-profile-name">${{currentUser.name}}</div>
+                    <div class="user-profile-email">${{currentUser.email}}</div>
                 </div>
                 <button class="logout-btn" onclick="logout()">Logout</button>
             `;
             loadHistory();
-            fetch('/set_user', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: currentUser.email, name: currentUser.name, picture: currentUser.picture }) });
-        }
+            fetch('/set_user', {{ method: 'POST', headers: {{ 'Content-Type': 'application/json' }}, body: JSON.stringify({{ email: currentUser.email, name: currentUser.name, picture: currentUser.picture }}) }});
+        }}
         
-        function logout() {
+        function logout() {{
             currentUser = null;
             document.getElementById('loginOverlay').style.display = 'flex';
             document.getElementById('app').style.display = 'none';
             document.getElementById('userBtn').style.display = 'none';
             document.getElementById('userProfile').style.display = 'none';
             if (google && google.accounts) google.accounts.id.disableAutoSelect();
-        }
+        }}
         
-        function newChat() { if (confirm('Start a new chat?')) location.reload(); }
-        function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); document.getElementById('overlay').classList.toggle('show'); }
-        function closeSidebar() { document.getElementById('sidebar').classList.remove('open'); document.getElementById('overlay').classList.remove('show'); }
-        function askSuggestion(q) { document.getElementById('userInput').value = q; sendMessage(); }
+        function newChat() {{ if (confirm('Start a new chat?')) location.reload(); }}
+        function toggleSidebar() {{ document.getElementById('sidebar').classList.toggle('open'); document.getElementById('overlay').classList.toggle('show'); }}
+        function closeSidebar() {{ document.getElementById('sidebar').classList.remove('open'); document.getElementById('overlay').classList.remove('show'); }}
+        function askSuggestion(q) {{ document.getElementById('userInput').value = q; sendMessage(); }}
         
-        async function loadHistory() {
+        async function loadHistory() {{
             if (!currentUser) return;
             const res = await fetch('/get_history?email=' + encodeURIComponent(currentUser.email));
             const history = await res.json();
             const container = document.getElementById('historyList');
-            if (history.length === 0) { container.innerHTML = '<div style="color:#6a5a4a;text-align:center;padding:20px;">No conversations yet</div>'; return; }
+            if (history.length === 0) {{ container.innerHTML = '<div style="color:#6a5a4a;text-align:center;padding:20px;">No conversations yet</div>'; return; }}
             let html = '';
-            for (let i = history.length - 1; i >= 0; i--) {
+            for (let i = history.length - 1; i >= 0; i--) {{
                 let item = history[i];
                 html += '<div class="history-item" onclick="loadChatMessage(\\'' + escapeHtml(item.user) + '\\')">' +
                         '<div class="history-question">' + escapeHtml(item.user.substring(0, 45)) + '</div>' +
                         '<div class="history-time">' + item.timestamp + '</div></div>';
-            }
+            }}
             container.innerHTML = html;
-        }
+        }}
         
-        function escapeHtml(text) { const div = document.createElement('div'); div.textContent = text; return div.innerHTML; }
-        function loadChatMessage(msg) { document.getElementById('userInput').value = msg; closeSidebar(); sendMessage(); }
-        async function clearHistory() { if (confirm('Clear all history?')) { await fetch('/clear_history', { method: 'POST' }); location.reload(); } }
+        function escapeHtml(text) {{ const div = document.createElement('div'); div.textContent = text; return div.innerHTML; }}
+        function loadChatMessage(msg) {{ document.getElementById('userInput').value = msg; closeSidebar(); sendMessage(); }}
+        async function clearHistory() {{ if (confirm('Clear all history?')) {{ await fetch('/clear_history', {{ method: 'POST' }}); location.reload(); }} }}
         
         const textarea = document.getElementById('userInput');
-        function autoAdjustHeight() { this.style.height = 'auto'; this.style.height = this.scrollHeight + 'px'; }
+        function autoAdjustHeight() {{ this.style.height = 'auto'; this.style.height = this.scrollHeight + 'px'; }}
         textarea.addEventListener('input', autoAdjustHeight);
         
-        if (window.visualViewport) {
+        if (window.visualViewport) {{
             let lastHeight = window.visualViewport.height;
-            window.visualViewport.addEventListener('resize', function() {
+            window.visualViewport.addEventListener('resize', function() {{
                 const inputArea = document.querySelector('.input-area');
-                if (inputArea && window.visualViewport.height < lastHeight) {
-                    setTimeout(() => { inputArea.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, 100);
-                }
+                if (inputArea && window.visualViewport.height < lastHeight) {{
+                    setTimeout(() => {{ inputArea.scrollIntoView({{ behavior: 'smooth', block: 'end' }}); }}, 100);
+                }}
                 lastHeight = window.visualViewport.height;
-            });
-        }
+            }});
+        }}
         
-        function handleKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }
+        function handleKey(e) {{ if (e.key === 'Enter' && !e.shiftKey) {{ e.preventDefault(); sendMessage(); }} }}
         
-        function copyResponse(messageId) {
-            const content = document.querySelector(`#message-${messageId} .message-content`);
-            if (content) {
-                navigator.clipboard.writeText(content.innerText).then(() => {
-                    const btn = document.querySelector(`#message-${messageId} .copy-btn`);
+        function copyResponse(messageId) {{
+            const content = document.querySelector(`#message-${{messageId}} .message-content`);
+            if (content) {{
+                navigator.clipboard.writeText(content.innerText).then(() => {{
+                    const btn = document.querySelector(`#message-${{messageId}} .copy-btn`);
                     const originalText = btn.textContent;
                     btn.textContent = '✅ Copied!';
-                    setTimeout(() => { btn.textContent = originalText; }, 2000);
-                });
-            }
-        }
+                    setTimeout(() => {{ btn.textContent = originalText; }}, 2000);
+                }});
+            }}
+        }}
         
-        async function regenerateResponse(messageId, userMessage) {
+        async function regenerateResponse(messageId, userMessage) {{
             if (isGenerating) return;
             isGenerating = true;
             document.getElementById('typing').style.display = 'block';
-            const content = document.querySelector(`#message-${messageId} .message-content`);
-            try {
-                const res = await fetch('/regenerate', {
+            const content = document.querySelector(`#message-${{messageId}} .message-content`);
+            try {{
+                const res = await fetch('/regenerate', {{
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email: currentUser.email, message: userMessage })
-                });
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ email: currentUser.email, message: userMessage }})
+                }});
                 const data = await res.json();
                 content.innerHTML = data.response.replace(/\\n/g, '<br>').replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>');
-            } catch(e) { console.error(e); }
+            }} catch(e) {{ console.error(e); }}
             document.getElementById('typing').style.display = 'none';
             isGenerating = false;
             scrollToBottom();
-        }
+        }}
         
-        function editMessage(messageId) {
-            const div = document.getElementById(`message-${messageId}`);
+        function editMessage(messageId) {{
+            const div = document.getElementById(`message-${{messageId}}`);
             const content = div.querySelector('.message-content');
             const editInput = div.querySelector('.edit-message-input');
             const editActions = div.querySelector('.edit-actions');
-            if (content.style.display !== 'none') {
+            if (content.style.display !== 'none') {{
                 content.style.display = 'none';
                 editInput.value = content.innerText;
                 editInput.classList.add('active');
                 editActions.classList.add('active');
                 editInput.focus();
-            }
-        }
+            }}
+        }}
         
-        function saveEdit(messageId) {
-            const div = document.getElementById(`message-${messageId}`);
+        function saveEdit(messageId) {{
+            const div = document.getElementById(`message-${{messageId}}`);
             const editInput = div.querySelector('.edit-message-input');
             const content = div.querySelector('.message-content');
             const editActions = div.querySelector('.edit-actions');
             const newText = editInput.value.trim();
-            if (newText) {
+            if (newText) {{
                 content.innerText = newText;
                 content.style.display = 'block';
                 editInput.classList.remove('active');
                 editActions.classList.remove('active');
-            }
-        }
+            }}
+        }}
         
-        function cancelEdit(messageId) {
-            const div = document.getElementById(`message-${messageId}`);
+        function cancelEdit(messageId) {{
+            const div = document.getElementById(`message-${{messageId}}`);
             const content = div.querySelector('.message-content');
             const editInput = div.querySelector('.edit-message-input');
             const editActions = div.querySelector('.edit-actions');
             content.style.display = 'block';
             editInput.classList.remove('active');
             editActions.classList.remove('active');
-        }
+        }}
         
-        async function continueGenerating(messageId) {
+        async function continueGenerating(messageId) {{
             if (isGenerating) return;
             isGenerating = true;
             document.getElementById('typing').style.display = 'block';
-            const content = document.querySelector(`#message-${messageId} .message-content`);
+            const content = document.querySelector(`#message-${{messageId}} .message-content`);
             const userMessage = getLastUserMessage();
-            try {
-                const res = await fetch('/continue_generating', {
+            try {{
+                const res = await fetch('/continue_generating', {{
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email: currentUser.email, message: userMessage })
-                });
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ email: currentUser.email, message: userMessage }})
+                }});
                 const data = await res.json();
                 content.innerHTML += data.response.replace(/\\n/g, '<br>').replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>');
-            } catch(e) { console.error(e); }
+            }} catch(e) {{ console.error(e); }}
             document.getElementById('typing').style.display = 'none';
             isGenerating = false;
             scrollToBottom();
-        }
+        }}
         
-        function getLastUserMessage() {
+        function getLastUserMessage() {{
             const messages = document.querySelectorAll('.user-message');
             if (messages.length > 0) return messages[messages.length-1].querySelector('.message-content').innerText;
             return '';
-        }
+        }}
         
-        async function shareConversation() {
+        async function shareConversation() {{
             if (!currentUser) return;
-            try {
+            try {{
                 const res = await fetch('/share_conversation?email=' + encodeURIComponent(currentUser.email));
                 const data = await res.json();
-                const shareText = data.conversation.map(item => `User: ${item.user}\\nYama: ${item.ai}\\n`).join('\\n');
+                const shareText = data.conversation.map(item => `User: ${{item.user}}\\nYama: ${{item.ai}}\\n`).join('\\n');
                 await navigator.clipboard.writeText(shareText);
                 alert('✅ Conversation copied to clipboard!');
-            } catch(e) { alert('Could not share conversation.'); }
-        }
+            }} catch(e) {{ alert('Could not share conversation.'); }}
+        }}
         
-        async function submitFeedback(messageId, feedbackType) {
-            const div = document.getElementById(`message-${messageId}`);
+        async function submitFeedback(messageId, feedbackType) {{
+            const div = document.getElementById(`message-${{messageId}}`);
             const likeBtn = div.querySelector('.like-btn');
             const dislikeBtn = div.querySelector('.dislike-btn');
-            try {
-                await fetch('/feedback', {
+            try {{
+                await fetch('/feedback', {{
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email: currentUser.email, message_index: parseInt(messageId.split('-')[1]), feedback_type: feedbackType })
-                });
-                if (feedbackType === 'like') {
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ email: currentUser.email, message_index: parseInt(messageId.split('-')[1]), feedback_type: feedbackType }})
+                }});
+                if (feedbackType === 'like') {{
                     likeBtn.classList.toggle('liked');
                     if (dislikeBtn.classList.contains('disliked')) dislikeBtn.classList.remove('disliked');
-                } else {
+                }} else {{
                     dislikeBtn.classList.toggle('disliked');
                     if (likeBtn.classList.contains('liked')) likeBtn.classList.remove('liked');
-                }
-            } catch(e) { console.error(e); }
-        }
+                }}
+            }} catch(e) {{ console.error(e); }}
+        }}
         
-        function stopGenerating() { isGenerating = false; document.getElementById('typing').style.display = 'none'; }
+        function stopGenerating() {{ isGenerating = false; document.getElementById('typing').style.display = 'none'; }}
         
-        async function sendMessage() {
-            if (!currentUser) { alert('Please sign in first!'); return; }
+        async function sendMessage() {{
+            if (!currentUser) {{ alert('Please sign in first!'); return; }}
             const message = textarea.value.trim();
             if (!message) return;
-            if (isGenerating) { stopGenerating(); return; }
-            if (!hasMessages) {
+            if (isGenerating) {{ stopGenerating(); return; }}
+            if (!hasMessages) {{
                 const welcome = document.getElementById('welcome');
                 if (welcome) welcome.style.display = 'none';
                 hasMessages = true;
-            }
+            }}
             const messageId = 'msg-' + (++messageCounter);
             addMessage(message, 'user', messageId);
             textarea.value = '';
             textarea.style.height = 'auto';
             document.getElementById('typing').style.display = 'block';
             scrollToBottom();
-            try {
-                const res = await fetch('/chat', {
+            try {{
+                const res = await fetch('/chat', {{
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: message, email: currentUser.email })
-                });
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ message: message, email: currentUser.email }})
+                }});
                 const data = await res.json();
                 const aiMessageId = 'msg-' + (++messageCounter);
                 addMessage(data.response, 'ai', aiMessageId, message);
                 document.getElementById('typing').style.display = 'none';
                 loadHistory();
                 scrollToBottom();
-            } catch(e) { console.error(e); document.getElementById('typing').style.display = 'none'; }
-        }
+            }} catch(e) {{ console.error(e); document.getElementById('typing').style.display = 'none'; }}
+        }}
         
-        function addMessage(text, sender, messageId, userMessage = '') {
+        function addMessage(text, sender, messageId, userMessage = '') {{
             const messages = document.getElementById('messages');
             const div = document.createElement('div');
             div.className = 'message ' + sender + '-message';
@@ -1306,7 +1236,7 @@ HTML = f'''
             content.className = 'message-content';
             content.innerHTML = text.replace(/\\n/g, '<br>').replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>');
             wrapper.appendChild(content);
-            if (sender === 'user') {
+            if (sender === 'user') {{
                 const editInput = document.createElement('input');
                 editInput.type = 'text';
                 editInput.className = 'edit-message-input';
@@ -1314,32 +1244,32 @@ HTML = f'''
                 wrapper.appendChild(editInput);
                 const editActions = document.createElement('div');
                 editActions.className = 'edit-actions';
-                editActions.innerHTML = `<button class="save-edit" onclick="saveEdit('${messageId}')">Save</button><button class="cancel-edit" onclick="cancelEdit('${messageId}')">Cancel</button>`;
+                editActions.innerHTML = `<button class="save-edit" onclick="saveEdit('${{messageId}}')">Save</button><button class="cancel-edit" onclick="cancelEdit('${{messageId}}')">Cancel</button>`;
                 wrapper.appendChild(editActions);
-            }
+            }}
             const actions = document.createElement('div');
             actions.className = 'message-actions';
-            if (sender === 'ai') {
+            if (sender === 'ai') {{
                 actions.innerHTML = `
-                    <button class="copy-btn" onclick="copyResponse('${messageId}')">📋 Copy</button>
-                    <button onclick="regenerateResponse('${messageId}', '${escapeJs(userMessage || getLastUserMessage())}')">🔄 Regenerate</button>
-                    <button onclick="continueGenerating('${messageId}')">📝 Continue</button>
+                    <button class="copy-btn" onclick="copyResponse('${{messageId}}')">📋 Copy</button>
+                    <button onclick="regenerateResponse('${{messageId}}', '${{escapeJs(userMessage || getLastUserMessage())}}')">🔄 Regenerate</button>
+                    <button onclick="continueGenerating('${{messageId}}')">📝 Continue</button>
                     <button onclick="stopGenerating()">⏹️ Stop</button>
                     <button onclick="shareConversation()">📤 Share</button>
-                    <button class="like-btn" onclick="submitFeedback('${messageId}', 'like')">👍</button>
-                    <button class="dislike-btn" onclick="submitFeedback('${messageId}', 'dislike')">👎</button>
+                    <button class="like-btn" onclick="submitFeedback('${{messageId}}', 'like')">👍</button>
+                    <button class="dislike-btn" onclick="submitFeedback('${{messageId}}', 'dislike')">👎</button>
                 `;
-            } else {
-                actions.innerHTML = `<button onclick="editMessage('${messageId}')">✏️ Edit</button>`;
-            }
+            }} else {{
+                actions.innerHTML = `<button onclick="editMessage('${{messageId}}')">✏️ Edit</button>`;
+            }}
             wrapper.appendChild(actions);
             div.appendChild(wrapper);
             messages.appendChild(div);
             scrollToBottom();
-        }
+        }}
         
-        function escapeJs(text) { return text.replace(/\\\\/g, '\\\\\\\\').replace(/'/g, "\\\\'").replace(/"/g, '\\\\"'); }
-        function scrollToBottom() { const messages = document.getElementById('messages'); messages.scrollTop = messages.scrollHeight; }
+        function escapeJs(text) {{ return text.replace(/\\\\/g, '\\\\\\\\').replace(/'/g, "\\\\'").replace(/"/g, '\\\\"'); }}
+        function scrollToBottom() {{ const messages = document.getElementById('messages'); messages.scrollTop = messages.scrollHeight; }}
         loadHistory();
         textarea.focus();
     </script>
