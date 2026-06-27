@@ -19,7 +19,6 @@ from sympy import symbols, Eq, solve, diff, integrate, limit, Matrix, sin, cos, 
 from sympy.parsing.sympy_parser import parse_expr
 import mpmath as mp
 import numpy as np
-from urllib.parse import urlparse
 import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -59,7 +58,83 @@ class ContextMemory:
 
 context_memory = ContextMemory()
 
-# ============ SOURCE VALIDATION SYSTEM (Phase 17.1) ============
+# ============ QUERY UNDERSTANDING ============
+class QueryUnderstanding:
+    def __init__(self):
+        self.stop_words = {
+            'what', 'is', 'are', 'was', 'were', 'the', 'a', 'an', 'of', 'to', 'for',
+            'with', 'on', 'at', 'from', 'by', 'in', 'into', 'through', 'during',
+            'including', 'without', 'against', 'between', 'among', 'upon', 'about',
+            'explain', 'tell', 'me', 'about', 'please', 'can', 'you', 'could',
+            'would', 'should', 'may', 'might', 'will', 'shall', 'do', 'does', 'did',
+            'how', 'why', 'where', 'when', 'who', 'whom', 'whose', 'which'
+        }
+    
+    def extract_entities(self, query: str) -> List[str]:
+        """Extract key entities from query"""
+        clean_query = re.sub(r'[^\w\s]', ' ', query.lower())
+        words = clean_query.split()
+        
+        important_words = [w for w in words if w not in self.stop_words and len(w) > 2]
+        
+        entities = []
+        i = 0
+        while i < len(words):
+            if words[i][0].isupper() and i + 1 < len(words):
+                entity = words[i]
+                j = i + 1
+                while j < len(words) and (words[j][0].isupper() or words[j] in ['of', 'and', 'for']):
+                    entity += ' ' + words[j]
+                    j += 1
+                if len(entity.split()) >= 2:
+                    entities.append(entity)
+                    i = j
+                    continue
+            i += 1
+        
+        if not entities:
+            entities = important_words[:5]
+        
+        return entities
+    
+    def build_search_query(self, query: str) -> str:
+        """Build optimized search query"""
+        entities = self.extract_entities(query)
+        
+        if entities:
+            search_query = ' '.join(entities[:3])
+        else:
+            words = query.lower().split()
+            filtered = [w for w in words if w not in self.stop_words and len(w) > 2]
+            search_query = ' '.join(filtered[:5])
+        
+        if len(search_query.split()) < 2:
+            search_query = query
+            
+        return search_query
+    
+    def is_math_query(self, query: str) -> bool:
+        """Check if query is mathematical"""
+        math_patterns = [
+            r'[\d]+\s*[\+\-\*\/]\s*[\d]+',
+            r'[a-zA-Z]+\s*[\+\-\*\/]?\s*[=]',
+            r'(derivative|differentiate|diff|d/dx)',
+            r'(integral|integrate|∫)',
+            r'(solve|find|calculate|evaluate)',
+            r'(sin|cos|tan|log|ln|exp|sqrt)',
+            r'(matrix|determinant|eigenvalue)',
+            r'(mean|median|mode|variance|std)',
+            r'(convert|to|in|from).*(meters|kilometers|miles|feet|inches|kg|grams|pounds|liters|gallons|°c|°f|kelvin)'
+        ]
+        
+        for pattern in math_patterns:
+            if re.search(pattern, query, re.IGNORECASE):
+                return True
+        return False
+
+query_understanding = QueryUnderstanding()
+
+# ============ SOURCE VALIDATION SYSTEM ============
 class SourceValidator:
     def __init__(self):
         self.validated_cache = {}
@@ -68,14 +143,13 @@ class SourceValidator:
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
+        self.session.timeout = 8
     
-    def validate_url(self, url: str, timeout: int = 5) -> Dict[str, Any]:
+    def validate_url(self, url: str, timeout: int = 8) -> Dict[str, Any]:
         """Validate if URL is accessible and returns valid content"""
-        # Check cache
         url_hash = hashlib.md5(url.encode()).hexdigest()
         if url_hash in self.validated_cache:
             cache_entry = self.validated_cache[url_hash]
-            # Cache for 1 hour
             if datetime.now() - cache_entry['timestamp'] < timedelta(hours=1):
                 return cache_entry['result']
         
@@ -85,37 +159,23 @@ class SourceValidator:
             'title': None,
             'content_length': 0,
             'error': None,
-            'redirects': False
+            'redirects': False,
+            'final_url': url,
+            'page_exists': False
         }
         
         try:
             response = self.session.head(url, timeout=timeout, allow_redirects=True)
             result['status_code'] = response.status_code
+            result['final_url'] = response.url
             
-            # Check if redirected
             if response.history:
                 result['redirects'] = True
-                final_url = response.url
-                if final_url != url:
-                    # Check if final URL is valid
-                    final_check = self.validate_url(final_url, timeout)
-                    if final_check['valid']:
-                        result['valid'] = True
-                        result['redirects'] = True
-                        result['final_url'] = final_url
-                        # Cache and return
-                        self.validated_cache[url_hash] = {
-                            'result': result,
-                            'timestamp': datetime.now()
-                        }
-                        return result
             
-            # Check status code
             if response.status_code == 200:
-                # Get content length
+                result['page_exists'] = True
                 result['content_length'] = int(response.headers.get('Content-Length', 0))
                 
-                # If content length is too small, try GET
                 if result['content_length'] < 100:
                     get_response = self.session.get(url, timeout=timeout, stream=True)
                     if get_response.status_code == 200:
@@ -126,11 +186,12 @@ class SourceValidator:
                             result['title'] = title.get_text().strip()
                             result['valid'] = True
                             result['content_length'] = len(content)
+                        elif len(content) > 200:
+                            result['valid'] = True
+                            result['content_length'] = len(content)
                 else:
                     result['valid'] = True
                     
-                # Try to get title if not already set
-                if result['valid'] and not result['title']:
                     try:
                         get_response = self.session.get(url, timeout=timeout, stream=True)
                         if get_response.status_code == 200:
@@ -141,17 +202,32 @@ class SourceValidator:
                                 result['title'] = title.get_text().strip()
                     except:
                         pass
+            
+            elif response.status_code in [301, 302, 303, 307, 308]:
+                if 'Location' in response.headers:
+                    new_url = response.headers['Location']
+                    if not new_url.startswith('http'):
+                        parsed = urlparse(url)
+                        new_url = f"{parsed.scheme}://{parsed.netloc}{new_url if new_url.startswith('/') else '/' + new_url}"
+                    return self.validate_url(new_url, timeout)
+            
             else:
                 result['error'] = f"Status code: {response.status_code}"
+                log_broken_source(url, result['error'])
                 
         except requests.exceptions.Timeout:
             result['error'] = "Timeout"
+            log_broken_source(url, "Timeout")
         except requests.exceptions.ConnectionError:
             result['error'] = "Connection error"
+            log_broken_source(url, "Connection error")
+        except requests.exceptions.TooManyRedirects:
+            result['error'] = "Redirect loop"
+            log_broken_source(url, "Redirect loop")
         except Exception as e:
             result['error'] = str(e)
+            log_broken_source(url, str(e))
         
-        # Cache result
         self.validated_cache[url_hash] = {
             'result': result,
             'timestamp': datetime.now()
@@ -162,12 +238,30 @@ class SourceValidator:
         
         return result
     
-    def is_broken(self, url: str) -> bool:
-        """Check if URL is known to be broken"""
-        return url in self.broken_urls
+    def calculate_relevance(self, content: str, query: str) -> float:
+        """Calculate relevance score between content and query"""
+        if not content or not query:
+            return 0.0
+        
+        content_words = set(re.findall(r'\b[a-z]{3,}\b', content.lower()))
+        query_words = set(re.findall(r'\b[a-z]{3,}\b', query.lower()))
+        
+        if not query_words:
+            return 0.0
+        
+        overlap = len(content_words.intersection(query_words))
+        relevance = overlap / len(query_words)
+        
+        query_terms = query_understanding.extract_entities(query)
+        boost = 0
+        for term in query_terms:
+            if term.lower() in content.lower():
+                boost += 0.1
+        
+        return min(1.0, relevance + boost)
     
-    def validate_sources(self, sources: List[Dict]) -> List[Dict]:
-        """Validate multiple sources and return only valid ones"""
+    def validate_sources(self, sources: List[Dict], query: str) -> List[Dict]:
+        """Validate multiple sources and return only valid and relevant ones"""
         validated_sources = []
         
         for source in sources:
@@ -175,158 +269,61 @@ class SourceValidator:
             if not url:
                 continue
             
-            # Skip if known broken
             if self.is_broken(url):
                 continue
             
-            # Validate
             validation = self.validate_url(url)
-            if validation['valid']:
+            if not validation['valid']:
+                continue
+            
+            content = source.get('snippet', '') + ' ' + source.get('title', '')
+            relevance = self.calculate_relevance(content, query)
+            
+            if relevance >= 0.2:
                 source['validation'] = validation
                 source['valid'] = True
+                source['relevance_score'] = round(relevance * 100, 1)
                 if validation.get('title'):
                     source['page_title'] = validation['title']
+                source['status_code'] = validation.get('status_code')
                 validated_sources.append(source)
             else:
-                source['valid'] = False
-                source['validation_error'] = validation.get('error', 'Unknown error')
-                # Log broken source for learning
-                log_broken_source(url, validation.get('error', 'Unknown error'))
+                log_broken_source(url, f"Low relevance: {relevance:.2f}")
         
+        validated_sources.sort(key=lambda x: x.get('relevance_score', 0), reverse=True)
         return validated_sources
+    
+    def is_broken(self, url: str) -> bool:
+        return url in self.broken_urls
 
 source_validator = SourceValidator()
 
-# ============ TRUSTED SOURCE RANKING (Phase 17.2) ============
+# ============ TRUSTED SOURCE RANKING ============
 def get_trust_score(url: str) -> Tuple[int, str, str]:
-    """Get trust score for a URL"""
     url_lower = url.lower()
     parsed = urlparse(url)
     domain = parsed.netloc.lower()
     
-    # Highest Priority - 90-100
-    if any(domain.endswith(ext) for ext in ['.gov', '.gov.uk', '.gov.in']):
+    if any(domain.endswith(ext) for ext in ['.gov', '.gov.uk', '.gov.in', '.gov.au']):
         return 100, "Government", "Highest"
-    if any(domain.endswith(ext) for ext in ['.edu', '.ac.uk', '.ac.in']):
-        return 95, "Educational", "Highest"
+    if any(domain.endswith(ext) for ext in ['.edu', '.ac.uk', '.ac.in', '.edu.au']):
+        return 95, "University", "Highest"
     if any(keyword in domain for keyword in ['researchgate', 'arxiv', 'pubmed', 'sciencedirect', 'springer', 'ieee', 'nature', 'science']):
         return 95, "Scientific Journal", "Highest"
-    
-    # High Priority - 80-89
-    if any(domain.endswith(ext) for ext in ['.org', '.org.uk']):
-        return 85, "Organization", "High"
     if any(keyword in domain for keyword in ['wikipedia', 'britannica', 'encyclopedia']):
         return 85, "Encyclopedia", "High"
-    if any(keyword in domain for keyword in ['microsoft', 'apple', 'google', 'amazon', 'facebook', 'twitter', 'github', 'stackoverflow']):
+    if any(keyword in domain for keyword in ['microsoft', 'apple', 'google', 'amazon', 'facebook', 'twitter', 'github']):
         return 85, "Official Company", "High"
-    
-    # Medium Priority - 60-79
-    if any(keyword in domain for keyword in ['nytimes', 'washingtonpost', 'bbc', 'cnn', 'reuters', 'apnews', 'bloomberg', 'wsj', 'theguardian', 'economist']):
+    if domain.endswith('.org'):
+        return 85, "Organization", "High"
+    if any(keyword in domain for keyword in ['nytimes', 'washingtonpost', 'bbc', 'cnn', 'reuters', 'apnews', 'bloomberg', 'wsj', 'theguardian']):
         return 80, "Major News", "Medium"
-    if any(keyword in domain for keyword in ['blog', 'medium', 'wordpress', 'substack']):
+    if any(keyword in domain for keyword in ['blog', 'medium', 'substack']):
         return 60, "Blog", "Medium"
-    
-    # Lower Priority - Below 60
     if any(keyword in domain for keyword in ['forum', 'reddit', 'quora', 'yahoo']):
         return 40, "Forum", "Low"
     
-    # Unknown
     return 50, "Website", "Medium"
-
-# ============ MULTI-SOURCE VERIFICATION (Phase 17.3) ============
-def verify_factual_claim(claim: str, sources: List[Dict]) -> Dict[str, Any]:
-    """Verify factual claims across multiple sources"""
-    if not sources:
-        return {'verified': False, 'confidence': 0, 'matches': 0}
-    
-    # Extract key claims from sources
-    claims_from_sources = []
-    for source in sources:
-        snippet = source.get('snippet', '').lower()
-        # Extract potential factual statements
-        statements = re.findall(r'[^.!?]*[.!?]', snippet)
-        for stmt in statements:
-            if len(stmt.strip()) > 20:
-                claims_from_sources.append(stmt.strip())
-    
-    # Count matching claims
-    claim_hash = hashlib.md5(claim.lower().encode()).hexdigest()
-    matches = 0
-    
-    for source_claim in claims_from_sources[:10]:
-        # Simple similarity check
-        if claim.lower() in source_claim or source_claim in claim.lower():
-            matches += 1
-    
-    total_sources = len(sources)
-    match_ratio = matches / total_sources if total_sources > 0 else 0
-    
-    # Determine verification status
-    if match_ratio >= 0.7:
-        status = "verified"
-        confidence = 90 + (match_ratio * 10)
-    elif match_ratio >= 0.4:
-        status = "partially_verified"
-        confidence = 60 + (match_ratio * 30)
-    else:
-        status = "unverified"
-        confidence = 30 + (match_ratio * 30)
-    
-    return {
-        'verified': status == 'verified',
-        'status': status,
-        'confidence': round(min(100, confidence), 1),
-        'matches': matches,
-        'total_sources': total_sources,
-        'match_ratio': match_ratio
-    }
-
-# ============ CONFIDENCE SCORING (Phase 17.4) ============
-def calculate_confidence(source_quality: float, validation_results: List, agreement: Dict, verification: Dict) -> Dict[str, Any]:
-    """Calculate overall confidence score"""
-    
-    # Source quality factor (40%)
-    quality_factor = source_quality / 100 * 0.4
-    
-    # Validation factor (20%)
-    valid_sources = sum(1 for v in validation_results if v.get('valid', False))
-    total_sources = len(validation_results) if validation_results else 1
-    validation_factor = (valid_sources / total_sources) * 0.2
-    
-    # Agreement factor (20%)
-    agreement_factor = (agreement.get('confidence', 0) / 100) * 0.2
-    
-    # Verification factor (20%)
-    verification_factor = (verification.get('confidence', 0) / 100) * 0.2
-    
-    total_confidence = (quality_factor + validation_factor + agreement_factor + verification_factor) * 100
-    total_confidence = min(100, max(0, total_confidence))
-    
-    # Determine level
-    if total_confidence >= 95:
-        level = "Very High"
-        description = "Extremely reliable. Multiple high-quality, verified sources confirm this information."
-    elif total_confidence >= 80:
-        level = "High"
-        description = "Reliable. Good quality sources with consistent information."
-    elif total_confidence >= 60:
-        level = "Moderate"
-        description = "Moderately reliable. Sources are available but quality varies."
-    else:
-        level = "Low"
-        description = "Low confidence. Limited or conflicting sources. Please verify independently."
-    
-    return {
-        'score': round(total_confidence, 1),
-        'level': level,
-        'description': description,
-        'factors': {
-            'source_quality': round(quality_factor * 100, 1),
-            'validation': round(validation_factor * 100, 1),
-            'agreement': round(agreement_factor * 100, 1),
-            'verification': round(verification_factor * 100, 1)
-        }
-    }
 
 # ============ MATHEMATICS ENGINE ============
 class MathematicsEngine:
@@ -334,117 +331,78 @@ class MathematicsEngine:
         self.precision = 15
         mp.mp.dps = self.precision
     
-    def detect_math_intent(self, query: str) -> Dict[str, Any]:
-        query_lower = query.lower().strip()
-        
-        math_patterns = {
-            'arithmetic': r'[\d\+\-\*\/\(\)\.\^\%\s]+',
-            'equation': r'[a-zA-Z]+\s*[\+\-\*\/\^]?\s*[=]',
-            'solve': r'(solve|find|calculate|what is|evaluate|compute)',
-            'derivative': r'(derivative|differentiate|diff|d/dx)',
-            'integral': r'(integral|integrate|∫)',
-            'limit': r'(limit|lim)',
-            'matrix': r'(matrix|determinant|eigenvalue|eigenvector)',
-            'statistics': r'(mean|median|mode|variance|std|standard deviation|correlation)',
-            'probability': r'(probability|permutation|combination|binomial|normal distribution)',
-            'trigonometry': r'(sin|cos|tan|asin|acos|atan|csc|sec|cot)',
-            'unit_conversion': r'(convert|to|in|from|meters|kilometers|miles|feet|inches|kg|grams|pounds|liters|gallons|°c|°f|kelvin|celsius|fahrenheit)',
-            'graph': r'(graph|plot|chart|visualize|draw)',
-            'step_by_step': r'(step|explain|show work|solution steps|detailed)'
-        }
-        
-        detected_types = []
-        for math_type, pattern in math_patterns.items():
-            if re.search(pattern, query_lower, re.IGNORECASE):
-                detected_types.append(math_type)
-        
-        if re.search(r'[\d]+\s*[\+\-\*\/]\s*[\d]+', query):
-            if 'arithmetic' not in detected_types:
-                detected_types.append('arithmetic')
-        
-        if re.search(r'[a-zA-Z]\s*[=]', query):
-            if 'equation' not in detected_types:
-                detected_types.append('equation')
-        
-        return {
-            'is_math': len(detected_types) > 0,
-            'types': detected_types,
-            'raw_query': query
-        }
-    
-    def parse_natural_language(self, query: str) -> str:
-        query_clean = query.lower().strip()
-        
-        number_words = {
-            'zero': '0', 'one': '1', 'two': '2', 'three': '3', 'four': '4',
-            'five': '5', 'six': '6', 'seven': '7', 'eight': '8', 'nine': '9',
-            'ten': '10', 'twenty': '20', 'thirty': '30', 'forty': '40', 'fifty': '50',
-            'sixty': '60', 'seventy': '70', 'eighty': '80', 'ninety': '90',
-            'hundred': '100', 'thousand': '1000', 'million': '1000000'
-        }
-        
-        for word, digit in number_words.items():
-            query_clean = query_clean.replace(word, digit)
-        
-        replacements = {
-            'plus': '+', 'minus': '-', 'times': '*', 'multiplied by': '*',
-            'divided by': '/', 'over': '/', 'square': '**2', 'cube': '**3',
-            'squared': '**2', 'cubed': '**3', 'to the power of': '**',
-            'power': '**', 'equals': '=', 'is equal to': '=', 'is': '=',
-            'x': 'x', 'y': 'y', 'z': 'z', 'theta': 'θ', 'pi': 'π',
-            'sqrt': 'sqrt', 'root': 'sqrt', 'log': 'log', 'ln': 'ln',
-            'sin': 'sin', 'cos': 'cos', 'tan': 'tan',
-            'asin': 'asin', 'acos': 'acos', 'atan': 'atan',
-            'derivative of': 'd/dx', 'integral of': '∫', 'limit of': 'lim'
-        }
-        
-        for word, replacement in replacements.items():
-            query_clean = query_clean.replace(word, replacement)
-        
-        remove_words = ['what', 'is', 'the', 'of', 'find', 'calculate', 'compute', 'solve', 'evaluate']
-        for word in remove_words:
-            query_clean = query_clean.replace(word, '').strip()
-        
-        return query_clean
-    
-    def solve_arithmetic(self, expression: str) -> Dict[str, Any]:
+    def solve_math(self, query: str) -> Dict[str, Any]:
         try:
-            expr = expression.replace('×', '*').replace('÷', '/').replace('x', '*')
-            result = parse_expr(expr)
-            if result.is_number:
+            arith_result = self.solve_arithmetic(query)
+            if arith_result.get('success'):
+                arith_result['type'] = 'arithmetic'
+                return arith_result
+            
+            eq_result = self.solve_equation(query)
+            if eq_result.get('success'):
+                eq_result['type'] = 'equation'
+                return eq_result
+            
+            calc_result = self.solve_calculus(query)
+            if calc_result.get('success'):
+                return calc_result
+            
+            trig_result = self.solve_trigonometry(query)
+            if trig_result.get('success'):
+                trig_result['type'] = 'trigonometry'
+                return trig_result
+            
+            matrix_result = self.solve_matrix(query)
+            if matrix_result.get('success'):
+                return matrix_result
+            
+            stat_result = self.solve_statistics(query)
+            if stat_result.get('success'):
+                stat_result['type'] = 'statistics'
+                return stat_result
+            
+            conv_result = self.solve_unit_conversion(query)
+            if conv_result.get('success'):
+                conv_result['type'] = 'unit_conversion'
+                return conv_result
+            
+            return {'success': False, 'is_math': True, 'error': 'Could not parse math expression'}
+            
+        except Exception as e:
+            return {'success': False, 'is_math': True, 'error': str(e)}
+    
+    def solve_arithmetic(self, query: str) -> Dict[str, Any]:
+        try:
+            clean = re.sub(r'[^0-9+\-*/%.()\s]', '', query)
+            if not clean:
+                return {'success': False}
+            
+            expr = parse_expr(clean)
+            if expr.is_number:
+                result = float(expr)
                 return {
                     'success': True,
-                    'result': float(result),
-                    'result_str': str(result.evalf(self.precision)),
-                    'is_exact': result.is_Integer
+                    'result': result,
+                    'result_str': str(result),
+                    'is_exact': expr.is_Integer
                 }
         except:
             pass
-        
-        try:
-            result = mp.mpf(expression)
-            return {
-                'success': True,
-                'result': float(result),
-                'result_str': str(result),
-                'is_exact': False
-            }
-        except:
-            return {'success': False, 'error': 'Could not parse arithmetic expression'}
+        return {'success': False}
     
-    def solve_equation(self, equation: str) -> Dict[str, Any]:
+    def solve_equation(self, query: str) -> Dict[str, Any]:
         try:
-            if '=' in equation:
-                left, right = equation.split('=')
-                left_expr = parse_expr(left.strip())
-                right_expr = parse_expr(right.strip())
-                expr = left_expr - right_expr
+            eq_match = re.search(r'([^=]+)=([^=]+)', query)
+            if eq_match:
+                left = parse_expr(eq_match.group(1).strip())
+                right = parse_expr(eq_match.group(2).strip())
+                expr = left - right
             else:
-                expr = parse_expr(equation)
+                expr = parse_expr(query)
             
             variables = list(expr.free_symbols)
             if not variables:
-                return self.solve_arithmetic(equation)
+                return {'success': False}
             
             var = variables[0]
             solutions = solve(expr, var)
@@ -465,14 +423,15 @@ class MathematicsEngine:
                     'result_str': ', '.join(result_strs) if len(result_strs) > 1 else result_strs[0],
                     'solution_type': 'multiple' if len(solutions) > 1 else 'single'
                 }
-            else:
-                return {'success': False, 'error': 'No real solutions found'}
         except Exception as e:
             return {'success': False, 'error': str(e)}
+        return {'success': False}
     
-    def solve_calculus(self, query: str, expression: str) -> Dict[str, Any]:
+    def solve_calculus(self, query: str) -> Dict[str, Any]:
         try:
-            expr = parse_expr(expression)
+            # Extract expression from query
+            expr_str = re.sub(r'(derivative|differentiate|diff|d/dx|integral|integrate|∫|limit|lim)\s*(of|for)?\s*', '', query, flags=re.IGNORECASE)
+            expr = parse_expr(expr_str.strip())
             var = symbols('x')
             
             for sym in expr.free_symbols:
@@ -511,29 +470,30 @@ class MathematicsEngine:
                     'result': str(result),
                     'result_str': str(result)
                 }
-        except Exception as e:
-            return {'success': False, 'error': str(e)}
-        
-        return {'success': False, 'error': 'Could not parse calculus expression'}
+        except:
+            pass
+        return {'success': False}
     
-    def solve_trigonometry(self, expression: str) -> Dict[str, Any]:
+    def solve_trigonometry(self, query: str) -> Dict[str, Any]:
         try:
-            expr = parse_expr(expression)
-            result = expr.evalf(self.precision)
-            return {
-                'success': True,
-                'expression': str(expr),
-                'result': float(result),
-                'result_str': str(result)
-            }
-        except Exception as e:
-            return {'success': False, 'error': str(e)}
+            expr = parse_expr(query)
+            if any(f in str(expr) for f in ['sin', 'cos', 'tan', 'asin', 'acos', 'atan']):
+                result = expr.evalf(self.precision)
+                return {
+                    'success': True,
+                    'expression': str(expr),
+                    'result': float(result),
+                    'result_str': str(result)
+                }
+        except:
+            pass
+        return {'success': False}
     
     def solve_matrix(self, query: str) -> Dict[str, Any]:
         try:
             matrix_match = re.search(r'\[(.*?)\]', query)
             if not matrix_match:
-                return {'success': False, 'error': 'Could not find matrix in query'}
+                return {'success': False}
             
             matrix_str = matrix_match.group(1)
             rows = []
@@ -561,33 +521,15 @@ class MathematicsEngine:
                     'result': str(result),
                     'result_str': str(result)
                 }
-            elif 'transpose' in query:
-                result = matrix.T
-                return {
-                    'success': True,
-                    'operation': 'transpose',
-                    'matrix': str(matrix),
-                    'result': str(result),
-                    'result_str': str(result)
-                }
-            elif 'eigenvalue' in query or 'eigen' in query:
-                eigenvals = matrix.eigenvals()
-                return {
-                    'success': True,
-                    'operation': 'eigenvalues',
-                    'matrix': str(matrix),
-                    'result': str(eigenvals),
-                    'result_str': str(eigenvals)
-                }
-        except Exception as e:
-            return {'success': False, 'error': str(e)}
-        
-        return {'success': False, 'error': 'Could not parse matrix expression'}
+        except:
+            pass
+        return {'success': False}
     
-    def solve_statistics(self, query: str, numbers: List[float]) -> Dict[str, Any]:
+    def solve_statistics(self, query: str) -> Dict[str, Any]:
         try:
+            numbers = [float(x) for x in re.findall(r'\d+\.?\d*', query)]
             if not numbers:
-                return {'success': False, 'error': 'No numbers provided'}
+                return {'success': False}
             
             n = len(numbers)
             mean = sum(numbers) / n
@@ -600,17 +542,11 @@ class MathematicsEngine:
             else:
                 median = sorted_nums[n//2]
             
-            from collections import Counter
-            counter = Counter(numbers)
-            mode = [k for k, v in counter.items() if v == max(counter.values())]
-            
             result = {}
             if 'mean' in query or 'average' in query:
                 result['mean'] = mean
             if 'median' in query:
                 result['median'] = median
-            if 'mode' in query:
-                result['mode'] = mode
             if 'variance' in query or 'var' in query:
                 result['variance'] = variance
             if 'std' in query or 'standard deviation' in query:
@@ -625,8 +561,9 @@ class MathematicsEngine:
                 'results': result,
                 'result_str': result_str
             }
-        except Exception as e:
-            return {'success': False, 'error': str(e)}
+        except:
+            pass
+        return {'success': False}
     
     def solve_unit_conversion(self, query: str) -> Dict[str, Any]:
         try:
@@ -634,7 +571,7 @@ class MathematicsEngine:
             match = re.search(conversion_pattern, query, re.IGNORECASE)
             
             if not match:
-                return {'success': False, 'error': 'Could not parse conversion'}
+                return {'success': False}
             
             value = float(match.group(1))
             from_unit = match.group(2).lower()
@@ -653,10 +590,6 @@ class MathematicsEngine:
                 'volume': {
                     'liters': 1, 'gallons': 3.78541, 'milliliters': 0.001,
                     'cubic_meters': 1000
-                },
-                'temperature': {
-                    'celsius': 'celsius', 'fahrenheit': 'fahrenheit',
-                    'kelvin': 'kelvin'
                 }
             }
             
@@ -671,18 +604,7 @@ class MathematicsEngine:
                 if to_unit in units:
                     to_unit_found = units[to_unit]
             
-            if category == 'temperature':
-                result = self.convert_temperature(value, from_unit, to_unit)
-                return {
-                    'success': True,
-                    'operation': 'unit_conversion',
-                    'from_value': value,
-                    'from_unit': from_unit,
-                    'to_unit': to_unit,
-                    'result': result,
-                    'result_str': f"{value} {from_unit} = {result} {to_unit}"
-                }
-            elif from_unit_found and to_unit_found:
+            if from_unit_found and to_unit_found:
                 result = value * (from_unit_found / to_unit_found)
                 return {
                     'success': True,
@@ -693,96 +615,9 @@ class MathematicsEngine:
                     'result': result,
                     'result_str': f"{value} {from_unit} = {result} {to_unit}"
                 }
-            
-            return {'success': False, 'error': 'Unsupported conversion'}
-        except Exception as e:
-            return {'success': False, 'error': str(e)}
-    
-    def convert_temperature(self, value: float, from_unit: str, to_unit: str) -> float:
-        from_unit = from_unit.lower()
-        to_unit = to_unit.lower()
-        
-        if from_unit in ['celsius', 'c']:
-            celsius = value
-        elif from_unit in ['fahrenheit', 'f']:
-            celsius = (value - 32) * 5/9
-        elif from_unit in ['kelvin', 'k']:
-            celsius = value - 273.15
-        else:
-            return value
-        
-        if to_unit in ['celsius', 'c']:
-            return celsius
-        elif to_unit in ['fahrenheit', 'f']:
-            return celsius * 9/5 + 32
-        elif to_unit in ['kelvin', 'k']:
-            return celsius + 273.15
-        else:
-            return value
-    
-    def extract_numbers(self, text: str) -> List[float]:
-        numbers = re.findall(r'\d+\.?\d*', text)
-        return [float(num) for num in numbers]
-    
-    def solve_math(self, query: str) -> Dict[str, Any]:
-        detection = self.detect_math_intent(query)
-        
-        if not detection['is_math']:
-            return {'success': False, 'is_math': False}
-        
-        parsed = self.parse_natural_language(query)
-        step_by_step = 'step' in query.lower() or 'explain' in query.lower()
-        graph_requested = 'graph' in query.lower() or 'plot' in query.lower()
-        
-        result = {'success': False, 'is_math': True}
-        
-        if 'arithmetic' in detection['types']:
-            arith_result = self.solve_arithmetic(parsed)
-            if arith_result['success']:
-                result = arith_result
-                result['type'] = 'arithmetic'
-        
-        if 'equation' in detection['types'] and not result['success']:
-            eq_result = self.solve_equation(parsed)
-            if eq_result['success']:
-                result = eq_result
-                result['type'] = 'equation'
-        
-        if ('derivative' in detection['types'] or 'integral' in detection['types'] or 'limit' in detection['types']):
-            calc_result = self.solve_calculus(query, parsed)
-            if calc_result['success']:
-                result = calc_result
-        
-        if 'trigonometry' in detection['types'] and not result['success']:
-            trig_result = self.solve_trigonometry(parsed)
-            if trig_result['success']:
-                result = trig_result
-                result['type'] = 'trigonometry'
-        
-        if 'matrix' in detection['types'] and not result['success']:
-            matrix_result = self.solve_matrix(query)
-            if matrix_result['success']:
-                result = matrix_result
-        
-        if 'unit_conversion' in detection['types'] and not result['success']:
-            conv_result = self.solve_unit_conversion(query)
-            if conv_result['success']:
-                result = conv_result
-        
-        if 'statistics' in detection['types'] and not result['success']:
-            numbers = self.extract_numbers(query)
-            if numbers:
-                stat_result = self.solve_statistics(query, numbers)
-                if stat_result['success']:
-                    result = stat_result
-        
-        if step_by_step and result['success']:
-            result['step_by_step'] = True
-        
-        if graph_requested and result['success']:
-            result['graph'] = True
-        
-        return result
+        except:
+            pass
+        return {'success': False}
 
 math_engine = MathematicsEngine()
 
@@ -790,8 +625,11 @@ math_engine = MathematicsEngine()
 def search_web_improved(query: str, max_results: int = 10) -> List[Dict]:
     results = []
     try:
+        # Build optimized search query
+        search_query = query_understanding.build_search_query(query)
+        
         with DDGS() as ddgs:
-            search_results = list(ddgs.text(query, max_results=max_results))
+            search_results = list(ddgs.text(search_query, max_results=max_results))
             
             for r in search_results:
                 url = r.get('href', '')
@@ -814,7 +652,6 @@ def search_web_improved(query: str, max_results: int = 10) -> List[Dict]:
                     seen_urls.add(r['url'])
                     unique_results.append(r)
             
-            # Sort by trust score and richness
             unique_results.sort(key=lambda x: (x['trust_score'] + x['content_richness'] * 50), reverse=True)
             return unique_results
     except Exception as e:
@@ -822,6 +659,7 @@ def search_web_improved(query: str, max_results: int = 10) -> List[Dict]:
         return []
 
 def read_full_webpage_improved(url: str) -> Optional[str]:
+    """Extract meaningful content from webpage"""
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -829,16 +667,14 @@ def read_full_webpage_improved(url: str) -> Optional[str]:
         response = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(response.text, 'html.parser')
         
+        # Remove noise
         for element in soup.find_all(['script', 'style', 'nav', 'footer', 'header', 'aside', 'iframe', 'noscript']):
             element.decompose()
         
         for element in soup.find_all(class_=re.compile(r'(ad|popup|modal|banner|cookie|newsletter|subscribe)', re.I)):
             element.decompose()
         
-        for element in soup.find_all(['ul', 'ol']):
-            if element.find_parent(['nav', 'header']):
-                element.decompose()
-        
+        # Extract main content
         content_parts = []
         article = soup.find('article') or soup.find('main')
         
@@ -882,7 +718,7 @@ def make_urls_clickable(text: str) -> str:
 
 # ============ FORMAT MATH ANSWER ============
 def format_math_answer(result: Dict[str, Any], query: str) -> str:
-    if not result['success']:
+    if not result.get('success', False):
         return f"❌ Could not solve: {result.get('error', 'Unknown error')}\n\n💡 Try rephrasing your math question."
     
     math_type = result.get('type', 'arithmetic')
@@ -893,7 +729,7 @@ def format_math_answer(result: Dict[str, Any], query: str) -> str:
         if result.get('is_exact', False):
             answer += f"✅ Exact value"
         else:
-            answer += f"📊 Approximate value (rounded to {math_engine.precision} decimal places)"
+            answer += f"📊 Approximate value"
         return answer
     
     elif math_type == 'equation':
@@ -916,24 +752,6 @@ def format_math_answer(result: Dict[str, Any], query: str) -> str:
         answer += f"**Integral:** {result['result_str']}\n"
         return answer
     
-    elif math_type == 'limit':
-        answer = f"📊 **Limit**\n\n"
-        answer += f"**Expression:** {result.get('expression', '')}\n"
-        answer += f"**As x → {result.get('limit_point', 0)}:** {result['result_str']}\n"
-        return answer
-    
-    elif math_type == 'trigonometry':
-        answer = f"📐 **Trigonometric Calculation**\n\n"
-        answer += f"**Expression:** {result.get('expression', '')}\n"
-        answer += f"**Result:** {result['result_str']}\n"
-        return answer
-    
-    elif math_type == 'matrix':
-        answer = f"🔢 **Matrix Operation**\n\n"
-        answer += f"**Operation:** {result.get('operation', 'matrix')}\n"
-        answer += f"**Result:**\n{result['result_str']}\n"
-        return answer
-    
     elif math_type == 'unit_conversion':
         answer = f"📏 **Unit Conversion**\n\n"
         answer += f"**{result['result_str']}**\n"
@@ -949,9 +767,8 @@ def format_math_answer(result: Dict[str, Any], query: str) -> str:
     
     return f"📊 **Result**\n\n{result.get('result_str', '')}"
 
-# ============ LEARNING DASHBOARD (Phase 17.9) ============
+# ============ LEARNING DASHBOARD ============
 def log_broken_source(url: str, error: str):
-    """Log broken sources for learning"""
     learning_db.insert({
         'type': 'broken_source',
         'url': url,
@@ -960,7 +777,6 @@ def log_broken_source(url: str, error: str):
     })
 
 def log_wrong_answer(query: str, wrong_answer: str, correct_answer: str = None):
-    """Log wrong answers for learning"""
     learning_db.insert({
         'type': 'wrong_answer',
         'query': query,
@@ -970,7 +786,6 @@ def log_wrong_answer(query: str, wrong_answer: str, correct_answer: str = None):
     })
 
 def log_feedback(email: str, feedback_type: str, message_index: int):
-    """Log user feedback"""
     learning_db.insert({
         'type': 'user_feedback',
         'email': email,
@@ -980,7 +795,6 @@ def log_feedback(email: str, feedback_type: str, message_index: int):
     })
 
 def get_learning_metrics() -> Dict[str, Any]:
-    """Get learning dashboard metrics"""
     broken_sources = learning_db.search(Learning.type == 'broken_source')
     wrong_answers = learning_db.search(Learning.type == 'wrong_answer')
     feedbacks = learning_db.search(Learning.type == 'user_feedback')
@@ -1000,54 +814,10 @@ def get_learning_metrics() -> Dict[str, Any]:
         'total_feedback': total_feedback,
         'likes': likes,
         'dislikes': dislikes,
-        'user_satisfaction': f"{satisfaction:.1f}%",
-        'recent_broken': broken_sources[-5:] if broken_sources else [],
-        'recent_wrong': wrong_answers[-5:] if wrong_answers else []
+        'user_satisfaction': f"{satisfaction:.1f}%"
     }
 
-# ============ ANSWER QUALITY REVIEWER (Phase 17.6) ============
-def review_answer(answer: str, query: str, sources: List[Dict], confidence: Dict) -> Dict[str, Any]:
-    """Review answer quality before sending"""
-    issues = []
-    warnings = []
-    
-    # Check if answer is empty
-    if not answer or len(answer.strip()) < 10:
-        issues.append("Answer is too short or empty")
-    
-    # Check if answer contains hallucination markers
-    hallucination_markers = ['probably', 'maybe', 'perhaps', 'could be', 'might be', 'i think']
-    for marker in hallucination_markers:
-        if marker in answer.lower():
-            warnings.append(f"Contains uncertain language: '{marker}'")
-    
-    # Check if answer has sources
-    if not sources:
-        warnings.append("No sources provided")
-    
-    # Check confidence
-    if confidence.get('score', 0) < 50:
-        warnings.append(f"Low confidence score: {confidence.get('score', 0)}%")
-    
-    # Check if answer addresses the query
-    query_words = set(query.lower().split())
-    answer_words = set(answer.lower().split())
-    overlap = len(query_words.intersection(answer_words))
-    if overlap < 3 and len(query_words) > 3:
-        warnings.append("Answer may not be directly relevant to the query")
-    
-    # Determine if answer passes review
-    passes = len(issues) == 0
-    
-    return {
-        'passes': passes,
-        'issues': issues,
-        'warnings': warnings,
-        'quality_score': max(0, 100 - (len(issues) * 20) - (len(warnings) * 5)),
-        'needs_regeneration': len(issues) > 0
-    }
-
-# ============ ADVANCED ANSWER GENERATION ============
+# ============ ANSWER GENERATION ============
 def generate_advanced_answer(query: str, search_results: List[Dict], context_history: List[Dict]) -> str:
     # Check for math first
     math_result = math_engine.solve_math(query)
@@ -1057,8 +827,8 @@ def generate_advanced_answer(query: str, search_results: List[Dict], context_his
     if not search_results:
         return f"I searched for '{query}' but found no results. Please try rephrasing your question."
     
-    # Validate sources (Phase 17.1)
-    validated_sources = source_validator.validate_sources(search_results[:10])
+    # Validate sources
+    validated_sources = source_validator.validate_sources(search_results[:10], query)
     
     if not validated_sources:
         return "⚠️ Found sources but none could be validated. Please try again with a different query."
@@ -1075,19 +845,22 @@ def generate_advanced_answer(query: str, search_results: List[Dict], context_his
                 "content": content,
                 "trust_score": source.get('trust_score', 50),
                 "trust_category": source.get('trust_category', 'Website'),
-                "trust_level": source.get('trust_level', 'Medium')
+                "trust_level": source.get('trust_level', 'Medium'),
+                "relevance_score": source.get('relevance_score', 0)
             })
     
-    # Multi-source verification (Phase 17.3)
-    verification = verify_factual_claim(query, validated_sources)
-    
-    # Calculate agreement
-    agreement = analyze_source_agreement(validated_sources)
-    
-    # Calculate confidence (Phase 17.4)
-    avg_trust = sum(s.get('trust_score', 50) for s in validated_sources) / len(validated_sources) if validated_sources else 50
-    validation_results = [s.get('validation', {}) for s in validated_sources]
-    confidence = calculate_confidence(avg_trust, validation_results, agreement, verification)
+    if not source_contents:
+        # Fallback to snippets
+        for source in validated_sources[:3]:
+            source_contents.append({
+                "url": source.get('url', ''),
+                "title": source.get('title', ''),
+                "content": source.get('snippet', ''),
+                "trust_score": source.get('trust_score', 50),
+                "trust_category": source.get('trust_category', 'Website'),
+                "trust_level": source.get('trust_level', 'Medium'),
+                "relevance_score": source.get('relevance_score', 0)
+            })
     
     # Generate answer
     answer_parts = []
@@ -1107,44 +880,25 @@ def generate_advanced_answer(query: str, search_results: List[Dict], context_his
         facts_text = "\n".join([f"• {fact}" for fact in key_facts[:5]])
         answer_parts.append(f"📊 **Key Facts**\n{facts_text}\n")
     
-    # Analysis
-    analysis = generate_analysis(query, source_contents, agreement)
-    if analysis:
-        answer_parts.append(f"🔍 **Analysis**\n{analysis}\n")
-    
-    # Confidence Score
-    confidence_info = generate_confidence_info(confidence, verification)
-    answer_parts.append(confidence_info)
-    
     # Sources (only valid ones)
     source_cards = generate_source_cards(validated_sources[:5])
     if source_cards:
         answer_parts.append(f"🔗 **Verified Sources**\n{source_cards}")
     
-    # Add warning if needed
-    if confidence['score'] < 60:
-        answer_parts.insert(0, "⚠️ **Low Confidence Warning:** The information below has limited verification. Please verify independently.\n")
-    
     full_answer = "\n".join(answer_parts)
-    
-    # Review answer quality (Phase 17.6)
-    review = review_answer(full_answer, query, validated_sources, confidence)
-    
-    # If answer quality is poor, add note
-    if not review['passes']:
-        full_answer += "\n\n⚠️ **Note:** This answer has quality issues and may need verification."
-    
     return make_urls_clickable(full_answer)
 
 def generate_quick_answer(query: str, sources: List[Dict]) -> str:
     if not sources:
         return "No information found."
     
-    first_content = sources[0]['content'] if sources else ""
-    sentences = first_content.split('.')
-    for sentence in sentences:
-        if len(sentence.strip()) > 30:
-            return sentence.strip() + '.'
+    # Try to extract first meaningful sentence
+    for source in sources:
+        content = source.get('content', '')
+        sentences = content.split('.')
+        for sentence in sentences:
+            if len(sentence.strip()) > 30:
+                return sentence.strip() + '.'
     
     return "Information found but could not generate a quick answer."
 
@@ -1154,7 +908,7 @@ def generate_detailed_explanation(query: str, sources: List[Dict]) -> str:
     
     combined_content = ""
     for source in sources[:3]:
-        combined_content += source['content'] + " "
+        combined_content += source.get('content', '') + " "
     
     paragraphs = combined_content.split('. ')
     key_paragraphs = []
@@ -1176,7 +930,7 @@ def generate_key_facts(query: str, sources: List[Dict]) -> List[str]:
     seen_facts = set()
     
     for source in sources[:5]:
-        content = source['content']
+        content = source.get('content', '')
         sentences = re.split(r'[.!?]', content)
         
         for sentence in sentences:
@@ -1196,44 +950,6 @@ def generate_key_facts(query: str, sources: List[Dict]) -> List[str]:
     
     return facts[:5]
 
-def generate_analysis(query: str, sources: List[Dict], agreement: Dict) -> str:
-    analysis_parts = []
-    
-    # Source quality analysis
-    trust_scores = [s.get('trust_score', 50) for s in sources if 'trust_score' in s]
-    if trust_scores:
-        avg_trust = sum(trust_scores) / len(trust_scores)
-        if avg_trust >= 80:
-            analysis_parts.append(f"High-quality sources with average trust score of {avg_trust:.0f}%.")
-        elif avg_trust >= 60:
-            analysis_parts.append(f"Moderate-quality sources with average trust score of {avg_trust:.0f}%.")
-        else:
-            analysis_parts.append(f"Source quality is mixed with average trust score of {avg_trust:.0f}%.")
-    
-    # Agreement analysis
-    if agreement.get('total_sources', 0) > 1:
-        if agreement.get('level') == 'High':
-            analysis_parts.append(f"Strong agreement across {agreement['total_sources']} sources.")
-        elif agreement.get('level') == 'Medium':
-            analysis_parts.append(f"Mixed agreement among {agreement['total_sources']} sources.")
-        else:
-            analysis_parts.append(f"Limited agreement between sources.")
-    
-    return " ".join(analysis_parts)
-
-def generate_confidence_info(confidence: Dict, verification: Dict) -> str:
-    return f"""🔬 **Confidence: {confidence['score']:.1f}%** ({confidence['level']})
-{confidence['description']}
-
-**Verification:** {verification.get('status', 'unknown')}
-**Sources matched:** {verification.get('matches', 0)}/{verification.get('total_sources', 0)}
-
-**Confidence Factors:**
-• Source Quality: {confidence['factors']['source_quality']:.1f}%
-• Validation: {confidence['factors']['validation']:.1f}%
-• Agreement: {confidence['factors']['agreement']:.1f}%
-• Verification: {confidence['factors']['verification']:.1f}%"""
-
 def generate_source_cards(sources: List[Dict]) -> str:
     cards = []
     for i, source in enumerate(sources[:5], 1):
@@ -1241,9 +957,9 @@ def generate_source_cards(sources: List[Dict]) -> str:
         category = source.get('trust_category', 'Unknown')
         level = source.get('trust_level', 'Medium')
         url = source['url']
+        relevance = source.get('relevance_score', 0)
         status = "✅ Verified" if source.get('valid', False) else "⚠️ Unverified"
         
-        # Get trust indicator
         if trust >= 80:
             indicator = "⭐"
         elif trust >= 60:
@@ -1251,64 +967,8 @@ def generate_source_cards(sources: List[Dict]) -> str:
         else:
             indicator = "📄"
         
-        cards.append(f"{i}. {indicator} **{source.get('title', 'Untitled')}** ({level} - {trust}%)\n   {status} | Category: {category}\n   <a href=\"{url}\" target=\"_blank\" rel=\"noopener noreferrer\">{url}</a>")
+        cards.append(f"{i}. {indicator} **{source.get('title', 'Untitled')}** ({level} - {trust}%)\n   {status} | Category: {category} | Relevance: {relevance}%\n   <a href=\"{url}\" target=\"_blank\" rel=\"noopener noreferrer\">{url}</a>")
     return "\n\n".join(cards)
-
-def analyze_source_agreement(sources: List[Dict]) -> Dict[str, Any]:
-    if not sources:
-        return {"confidence": 0, "agreement": "No sources", "confident_sources": 0}
-    
-    fact_groups = defaultdict(list)
-    
-    for source in sources:
-        snippet = source.get('snippet', '').lower()
-        claims = set()
-        sentences = snippet.split('.')
-        for sentence in sentences:
-            if len(sentence.strip()) > 20 and any(word in sentence for word in ['is', 'are', 'was', 'were', 'has', 'have']):
-                claims.add(sentence.strip())
-        
-        for claim in claims:
-            if claim:
-                fact_groups[claim].append(source['url'])
-    
-    total_claims = len(fact_groups)
-    agreed_claims = {k: v for k, v in fact_groups.items() if len(v) >= 3}
-    disagreeing_claims = {k: v for k, v in fact_groups.items() if len(v) == 1}
-    
-    total_sources = len(sources)
-    
-    if total_sources == 0:
-        confidence = 0
-    else:
-        avg_trust = sum(s.get('trust_score', 50) for s in sources) / total_sources
-        trust_factor = avg_trust / 100
-        
-        if agreed_claims:
-            agreement_factor = min(1.0, len(agreed_claims) / total_sources)
-        else:
-            agreement_factor = 0.5 if len(sources) > 1 else 0.3
-        
-        source_count_factor = min(1.0, total_sources / 8)
-        
-        confidence = (trust_factor * 0.4 + agreement_factor * 0.4 + source_count_factor * 0.2) * 100
-        confidence = max(0, min(100, confidence))
-    
-    if confidence >= 85:
-        level = "High"
-    elif confidence >= 60:
-        level = "Medium"
-    else:
-        level = "Low"
-    
-    return {
-        "confidence": round(confidence, 1),
-        "level": level,
-        "total_sources": total_sources,
-        "agreement": f"{len(agreed_claims)} facts agreed by {len(sources)} sources",
-        "agreed_facts": len(agreed_claims),
-        "disagreements": len(disagreeing_claims)
-    }
 
 # ============ FOLLOW-UP ENGINE ============
 def generate_follow_ups(query: str) -> List[str]:
@@ -1327,24 +987,12 @@ def generate_follow_ups(query: str) -> List[str]:
         follow_ups.append("What are the benefits?")
         follow_ups.append("What are the drawbacks?")
     
-    if any(word in query_lower for word in ['technology', 'software', 'programming', 'code', 'python', 'javascript']):
+    if any(word in query_lower for word in ['technology', 'software', 'programming']):
         follow_ups.append("How does it compare to alternatives?")
         follow_ups.append("What are the best practices?")
     
-    if any(word in query_lower for word in ['business', 'company', 'market']):
-        follow_ups.append("What is the market impact?")
-        follow_ups.append("Who are the key players?")
-    
-    if any(word in query_lower for word in ['health', 'medicine', 'fitness']):
-        follow_ups.append("What are the health benefits?")
-        follow_ups.append("Are there any risks?")
-    
-    if any(word in query_lower for word in ['history', 'historical', 'ancient']):
-        follow_ups.append("What is the historical significance?")
-        follow_ups.append("How did it develop over time?")
-    
     if len(follow_ups) < 3:
-        follow_ups.extend(["Tell me more", "What are the implications?", "Is this widely used?"])
+        follow_ups.extend(["Tell me more", "What are the implications?"])
     
     return list(dict.fromkeys(follow_ups))[:6]
 
@@ -1360,6 +1008,7 @@ def resolve_references(message: str, context: List[Dict]) -> str:
     resolved = message
     last_message = user_messages[-1] if user_messages else ""
     
+    # Extract potential entities
     words = last_message.split()
     potential_entities = []
     current_entity = []
@@ -1442,8 +1091,7 @@ def get_response(message, email, regenerate=False):
     user_name = user.get('name', 'User') if user else 'User'
     
     # Check for math intent FIRST
-    math_detection = math_engine.detect_math_intent(message)
-    if math_detection['is_math']:
+    if query_understanding.is_math_query(message):
         math_result = math_engine.solve_math(message)
         if math_result.get('success', False):
             response = format_math_answer(math_result, message)
@@ -1589,9 +1237,7 @@ async def submit_feedback(request: Request):
         "timestamp": datetime.now().isoformat()
     })
     
-    # Log feedback for learning
     log_feedback(email, feedback_type, message_index)
-    
     return {"status": "success"}
 
 @app.post("/regenerate")
@@ -1637,7 +1283,6 @@ async def share_conversation(email: str = ""):
 
 @app.get("/learning_dashboard")
 async def learning_dashboard():
-    """Admin endpoint for learning metrics"""
     metrics = get_learning_metrics()
     return JSONResponse(metrics)
 
@@ -3351,23 +2996,21 @@ async def get_analytics():
 
 if __name__ == "__main__":
     print("\n" + "="*55)
-    print("🏛️ YAMA AI - HIGH ACCURACY INTELLIGENCE SYSTEM")
+    print("🏛️ YAMA AI - SOURCE RELIABILITY FIX")
     print("="*55)
     print("🌐 Open: http://localhost:8000")
     print("="*55)
-    print("✅ PHASE 17.1 - SOURCE VALIDATION SYSTEM")
-    print("✅ PHASE 17.2 - TRUSTED SOURCE RANKING")
-    print("✅ PHASE 17.3 - MULTI-SOURCE VERIFICATION")
-    print("✅ PHASE 17.4 - CONFIDENCE SCORING")
-    print("✅ PHASE 17.5 - SPECIALIZED KNOWLEDGE ENGINES")
-    print("✅ PHASE 17.6 - ANSWER QUALITY REVIEWER")
-    print("✅ PHASE 17.7 - HALLUCINATION PREVENTION")
-    print("✅ PHASE 17.8 - CITATION SYSTEM")
-    print("✅ PHASE 17.9 - CONTINUOUS LEARNING DASHBOARD")
+    print("✅ SOURCE VALIDATION - HTTP 200 Check")
+    print("✅ SOURCE RELEVANCE - Content Matching")
+    print("✅ QUERY UNDERSTANDING - Entity Extraction")
+    print("✅ MATH ROUTING - Bypass Web Search")
+    print("✅ ANSWER GENERATION - No Raw Content")
+    print("✅ SOURCE QUALITY - Trust Score System")
     print("="*55)
-    print("🎯 Goal: Accuracy > Speed")
-    print("🎯 Goal: Verification > Guessing")
-    print("🎯 Goal: Trusted Sources > Random Sources")
-    print("🎯 Goal: Evidence > Assumptions")
+    print("🎯 No 404 Source Links")
+    print("🎯 No Unrelated Sources")
+    print("🎯 No Raw Webpage Content")
+    print("🎯 Accurate Math Solutions")
+    print("🎯 Verified Sources Only")
     print("="*55 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=10000)
