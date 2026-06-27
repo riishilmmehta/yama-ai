@@ -11,19 +11,6 @@ tinydb
 PyPDF2
 textblob
 networkx
-
-# ========== MATHEMATICS ENGINE DEPENDENCIES ==========
 sympy
 mpmath
 numpy
-
-# ========== HIGH ACCURACY SYSTEM ==========
-# (No additional packages needed - these use built-in Python libraries)
-
-# ========== OPTIONAL (for future features) ==========
-# matplotlib  # For graph generation
-# scipy       # For advanced scientific computing
-# pandas      # For data analysis
-# openpyxl    # For Excel file support
-# lxml        # Faster HTML parsing
-# html5lib    # Alternative HTML parser
