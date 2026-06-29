@@ -15,11 +15,12 @@ import time
 from collections import defaultdict
 from typing import List, Dict, Any, Optional, Tuple
 import sympy as sp
-from sympy import symbols, Eq, solve, diff, integrate, limit, Matrix, sin, cos, tan, asin, acos, atan, log, ln, exp, sqrt, cbrt, factorial, pi, E, I, oo
-from sympy.parsing.sympy_parser import parse_expr
+from sympy import symbols, Eq, solve, diff, integrate, limit, Matrix, sin, cos, tan, asin, acos, atan, log, ln, exp, sqrt, cbrt, factorial, pi, E, I, oo, simplify, trigsimp, expand, factor, solveset, S, Derivative, Integral, Limit
+from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
 import mpmath as mp
 import numpy as np
 import hashlib
+import re
 
 app = FastAPI(title="Yama AI")
 
@@ -49,122 +50,144 @@ class ContextMemory:
 
 context_memory = ContextMemory()
 
+# ============ QUERY CLEANING ============
+class QueryCleaner:
+    def __init__(self):
+        self.filler_words = {
+            'explain', 'tell', 'me', 'about', 'please', 'can', 'you', 'could',
+            'would', 'should', 'may', 'might', 'will', 'shall', 'do', 'does', 'did',
+            'what', 'is', 'are', 'was', 'were', 'the', 'a', 'an', 'of', 'to', 'for',
+            'with', 'on', 'at', 'from', 'by', 'in', 'into', 'through', 'during',
+            'define', 'describe', 'give', 'show', 'provide', 'list', 'how', 'why',
+            'where', 'when', 'who', 'whom', 'whose', 'which'
+        }
+    
+    def clean(self, query: str) -> str:
+        """Remove filler words and keep important terms"""
+        words = query.lower().split()
+        important = [w for w in words if w not in self.filler_words and len(w) > 2]
+        return ' '.join(important) if important else query
+
+query_cleaner = QueryCleaner()
+
 # ============ INTENT DETECTION ============
 class IntentDetector:
     def __init__(self):
-        self.math_patterns = [
-            r'[\d]+\s*[\+\-\*\/]\s*[\d]+',
-            r'[a-zA-Z]+\s*[\+\-\*\/]?\s*[=]',
-            r'(derivative|differentiate|diff|d/dx)',
-            r'(integral|integrate|∫)',
-            r'(solve|find|calculate|evaluate).*[=]',
-            r'(sin|cos|tan|log|ln|exp|sqrt)\s*[\(]',
-            r'(matrix|determinant|eigenvalue)',
-            r'\^[2-9]',
-            r'[xX]\s*[=]'
-        ]
-        
-        self.conversation_patterns = [
-            r'^(hi|hello|hey|sup|yo)$',
-            r'how are you',
-            r'what\'?s up',
-            r'good morning',
-            r'good evening'
-        ]
+        self.intent_patterns = {
+            'fact': r'(who|what|when|where|which|whose)\s+(is|are|was|were|has|have|had)',
+            'definition': r'(define|what is|meaning of|definition of)',
+            'explanation': r'(explain|how does|how do|why does|why do)',
+            'math': r'[\d\+\-\*\/\(\)\^\%]|[=]|(sin|cos|tan|log|ln|exp|sqrt|integrate|differentiate|derivative|matrix|solve)',
+            'conversation': r'^(hi|hello|hey|sup|yo|good morning|good evening)'
+        }
     
     def detect(self, query: str) -> Dict[str, Any]:
         query_lower = query.lower().strip()
         
-        for pattern in self.math_patterns:
-            if re.search(pattern, query, re.IGNORECASE):
-                return {'intent': 'math', 'confidence': 0.95}
+        # Check math first
+        if re.search(self.intent_patterns['math'], query_lower, re.IGNORECASE):
+            return {'intent': 'math', 'confidence': 0.95}
         
-        for pattern in self.conversation_patterns:
-            if re.search(pattern, query_lower, re.IGNORECASE):
-                return {'intent': 'conversation', 'confidence': 0.9}
+        # Check fact lookup
+        if re.search(self.intent_patterns['fact'], query_lower, re.IGNORECASE):
+            return {'intent': 'fact', 'confidence': 0.9}
         
-        return {'intent': 'general', 'confidence': 0.8}
+        # Check definition
+        if re.search(self.intent_patterns['definition'], query_lower, re.IGNORECASE):
+            return {'intent': 'definition', 'confidence': 0.9}
+        
+        # Check explanation
+        if re.search(self.intent_patterns['explanation'], query_lower, re.IGNORECASE):
+            return {'intent': 'explanation', 'confidence': 0.9}
+        
+        # Check conversation
+        if re.search(self.intent_patterns['conversation'], query_lower, re.IGNORECASE):
+            return {'intent': 'conversation', 'confidence': 0.9}
+        
+        return {'intent': 'general', 'confidence': 0.7}
 
 intent_detector = IntentDetector()
 
-# ============ QUERY UNDERSTANDING ============
-class QueryUnderstanding:
+# ============ ADVANCED MATH PREPROCESSOR ============
+class MathPreprocessor:
     def __init__(self):
-        self.stop_words = {
-            'what', 'is', 'are', 'was', 'were', 'the', 'a', 'an', 'of', 'to', 'for',
-            'with', 'on', 'at', 'from', 'by', 'in', 'into', 'through', 'during',
-            'including', 'without', 'against', 'between', 'among', 'upon', 'about',
-            'explain', 'tell', 'me', 'about', 'please', 'can', 'you', 'could',
-            'would', 'should', 'may', 'might', 'will', 'shall', 'do', 'does', 'did',
-            'how', 'why', 'where', 'when', 'who', 'whom', 'whose', 'which',
-            'define', 'describe', 'give', 'show', 'provide', 'list'
+        self.superscript_map = {
+            '²': '**2', '³': '**3', '⁴': '**4', '⁵': '**5',
+            '⁶': '**6', '⁷': '**7', '⁸': '**8', '⁹': '**9'
         }
         
-        self.question_words = {
-            'who': 'person',
-            'what': 'thing',
-            'when': 'time',
-            'where': 'place',
-            'why': 'reason',
-            'how': 'method',
-            'which': 'choice',
-            'whose': 'possession'
+        self.symbol_map = {
+            'π': 'pi', '√': 'sqrt', '∫': 'integrate',
+            '∂': 'diff', '∞': 'oo', 'θ': 'theta',
+            'α': 'alpha', 'β': 'beta', 'γ': 'gamma'
         }
     
-    def extract_key_entities(self, query: str) -> List[str]:
-        words = query.lower().split()
-        main_subject = []
-        found_question_word = False
+    def preprocess(self, query: str) -> str:
+        """Convert user-friendly math notation to SymPy format"""
+        expression = query.strip()
         
-        for word in words:
-            if word in self.question_words:
-                found_question_word = True
-                continue
-            if found_question_word and word not in self.stop_words and len(word) > 2:
-                main_subject.append(word)
+        # Remove question words
+        question_words = ['solve', 'find', 'calculate', 'evaluate', 'what is', 'compute']
+        for word in question_words:
+            expression = re.sub(rf'^{word}\s+', '', expression, flags=re.IGNORECASE)
+            expression = re.sub(rf'\s+{word}\s+', ' ', expression, flags=re.IGNORECASE)
         
-        if not main_subject:
-            main_subject = [w for w in words if w not in self.stop_words and len(w) > 2]
+        # Convert superscripts
+        for sup, replacement in self.superscript_map.items():
+            expression = expression.replace(sup, replacement)
         
-        original_words = query.split()
-        entities = []
-        i = 0
-        while i < len(original_words):
-            if original_words[i][0].isupper() and i + 1 < len(original_words):
-                entity = original_words[i]
-                j = i + 1
-                while j < len(original_words) and (original_words[j][0].isupper() or original_words[j].lower() in ['of', 'and', 'for', 'the']):
-                    entity += ' ' + original_words[j]
-                    j += 1
-                if len(entity.split()) >= 2:
-                    entities.append(entity)
-                    i = j
-                    continue
-            i += 1
+        # Convert symbols
+        for symbol, replacement in self.symbol_map.items():
+            expression = expression.replace(symbol, replacement)
         
-        if entities:
-            return entities[:2]
+        # Handle implicit multiplication: 5x -> 5*x, 2y -> 2*y
+        expression = re.sub(r'(\d+)([a-zA-Z])', r'\1*\2', expression)
+        expression = re.sub(r'([a-zA-Z])(\d+)', r'\1*\2', expression)
         
-        return main_subject[:3] if main_subject else [query]
-    
-    def build_search_query(self, query: str) -> str:
-        for qw in self.question_words:
-            query = re.sub(rf'^{qw}\s+', '', query, flags=re.IGNORECASE)
-            query = re.sub(rf'\s+{qw}\s+', ' ', query, flags=re.IGNORECASE)
+        # Handle implicit multiplication: 5(x) -> 5*(x)
+        expression = re.sub(r'(\d+)\(', r'\1*(', expression)
         
-        words = query.split()
-        filtered = [w for w in words if w.lower() not in self.stop_words or len(w) > 3]
+        # Handle implicit multiplication: (x)(y) -> (x)*(y)
+        expression = re.sub(r'\)\(', r')*(', expression)
         
-        entities = self.extract_key_entities(query)
-        if entities:
-            return ' '.join(entities)
+        # Handle sqrt: sqrt(625) -> sqrt(625)
+        expression = re.sub(r'√\(([^)]+)\)', r'sqrt(\1)', expression)
+        expression = re.sub(r'√([a-zA-Z]+)', r'sqrt(\1)', expression)
         
-        return ' '.join(filtered[:3]) if filtered else query
+        # Handle trig functions
+        expression = re.sub(r'sin\s*\(', 'sin(', expression)
+        expression = re.sub(r'cos\s*\(', 'cos(', expression)
+        expression = re.sub(r'tan\s*\(', 'tan(', expression)
+        expression = re.sub(r'log\s*\(', 'log(', expression)
+        expression = re.sub(r'ln\s*\(', 'ln(', expression)
+        expression = re.sub(r'exp\s*\(', 'exp(', expression)
+        
+        # Handle derivative notation
+        expression = re.sub(r'd/dx\s*\(([^)]+)\)', r'diff(\1, x)', expression)
+        expression = re.sub(r'differentiate\s+([^\s]+)', r'diff(\1, x)', expression)
+        expression = re.sub(r'derivative of\s+([^\s]+)', r'diff(\1, x)', expression)
+        
+        # Handle integral notation
+        expression = re.sub(r'integrate\s+([^\s]+)', r'integrate(\1, x)', expression)
+        expression = re.sub(r'∫\s*([^\s]+)', r'integrate(\1, x)', expression)
+        
+        # Handle matrix: [[1,2],[3,4]] -> Matrix([[1,2],[3,4]])
+        expression = re.sub(r'\[\[([^\]]+)\]\]', r'Matrix([\1])', expression)
+        
+        # Handle equations: x² + 5x + 6 = 0 -> Eq(x**2 + 5*x + 6, 0)
+        if '=' in expression:
+            parts = expression.split('=')
+            if len(parts) == 2:
+                left = parts[0].strip()
+                right = parts[1].strip()
+                expression = f'Eq({left}, {right})'
+        
+        return expression
 
-query_understanding = QueryUnderstanding()
+math_preprocessor = MathPreprocessor()
 
-# ============ MATHEMATICS ENGINE ============
-class MathematicsEngine:
+# ============ ADVANCED MATH ENGINE ============
+class AdvancedMathEngine:
     def __init__(self):
         self.precision = 15
         mp.mp.dps = self.precision
@@ -175,7 +198,10 @@ class MathematicsEngine:
             r'[a-zA-Z]\s*[\+\-\*\/]?\s*[=]',
             r'[\^][2-9]',
             r'(sin|cos|tan|log|ln|exp|sqrt)\s*[\(]',
-            r'(derivative|integral|matrix|determinant)'
+            r'(derivative|integral|matrix|determinant|eigen)',
+            r'√',
+            r'π',
+            r'integrate|differentiate'
         ]
         for indicator in math_indicators:
             if re.search(indicator, query, re.IGNORECASE):
@@ -184,24 +210,42 @@ class MathematicsEngine:
     
     def solve(self, query: str) -> Dict[str, Any]:
         try:
-            arith_result = self.solve_arithmetic(query)
+            # Preprocess the query
+            processed = math_preprocessor.preprocess(query)
+            
+            # Try arithmetic first
+            arith_result = self.solve_arithmetic(processed)
             if arith_result.get('success'):
                 arith_result['type'] = 'arithmetic'
                 return arith_result
             
-            eq_result = self.solve_equation(query)
+            # Try equation
+            eq_result = self.solve_equation(processed)
             if eq_result.get('success'):
                 eq_result['type'] = 'equation'
                 return eq_result
             
-            calc_result = self.solve_calculus(query)
+            # Try calculus
+            calc_result = self.solve_calculus(processed)
             if calc_result.get('success'):
                 return calc_result
             
-            trig_result = self.solve_trigonometry(query)
+            # Try trigonometry
+            trig_result = self.solve_trigonometry(processed)
             if trig_result.get('success'):
                 trig_result['type'] = 'trigonometry'
                 return trig_result
+            
+            # Try matrix
+            matrix_result = self.solve_matrix(processed)
+            if matrix_result.get('success'):
+                return matrix_result
+            
+            # Try direct evaluation
+            eval_result = self.evaluate_expression(processed)
+            if eval_result.get('success'):
+                eval_result['type'] = 'evaluation'
+                return eval_result
             
             return {'success': False, 'error': 'Could not parse math expression'}
         except Exception as e:
@@ -209,10 +253,12 @@ class MathematicsEngine:
     
     def solve_arithmetic(self, query: str) -> Dict[str, Any]:
         try:
+            # Clean the query
             clean = re.sub(r'[^0-9+\-*/%.()\s]', '', query)
             if not clean:
                 return {'success': False}
             
+            # Parse and evaluate
             expr = parse_expr(clean)
             if expr.is_number:
                 result = float(expr)
@@ -228,16 +274,22 @@ class MathematicsEngine:
     
     def solve_equation(self, query: str) -> Dict[str, Any]:
         try:
-            eq_match = re.search(r'([^=]+)=([^=]+)', query)
+            # Try to extract equation
+            eq_match = re.search(r'Eq\(([^,]+),\s*([^)]+)\)', query)
             if eq_match:
                 left = parse_expr(eq_match.group(1).strip())
                 right = parse_expr(eq_match.group(2).strip())
                 expr = left - right
             else:
-                if 'x' in query.lower():
-                    expr = parse_expr(query)
+                # Try to parse as expression with = sign
+                if '=' in query:
+                    parts = query.split('=')
+                    left = parse_expr(parts[0].strip())
+                    right = parse_expr(parts[1].strip())
+                    expr = left - right
                 else:
-                    return {'success': False}
+                    # Try to find variable in expression
+                    expr = parse_expr(query)
             
             variables = list(expr.free_symbols)
             if not variables:
@@ -254,51 +306,104 @@ class MathematicsEngine:
                     else:
                         result_strs.append(str(sol))
                 
+                # Show step-by-step for simple equations
+                steps = []
+                if len(solutions) == 1 and len(variables) == 1:
+                    steps = self.generate_steps(expr, var, solutions[0])
+                
                 return {
                     'success': True,
                     'variable': str(var),
                     'solutions': result_strs,
                     'solutions_count': len(solutions),
-                    'result_str': ', '.join(result_strs) if len(result_strs) > 1 else result_strs[0]
+                    'result_str': ', '.join(result_strs) if len(result_strs) > 1 else result_strs[0],
+                    'steps': steps
                 }
         except Exception as e:
             return {'success': False, 'error': str(e)}
         return {'success': False}
     
+    def generate_steps(self, expr, var, solution) -> List[str]:
+        """Generate step-by-step solution"""
+        steps = []
+        try:
+            # For linear equations: ax + b = 0
+            if expr.is_Add:
+                terms = expr.as_ordered_terms()
+                if len(terms) == 2:
+                    steps.append(f"1. Move constant term to the right side")
+                    steps.append(f"2. {var} = {solution}")
+                    return steps
+            
+            # For quadratic equations: ax² + bx + c = 0
+            if expr.is_Poly or expr.has(var**2):
+                steps.append(f"1. Identify as quadratic equation")
+                steps.append(f"2. Factor the expression")
+                steps.append(f"3. Set each factor to zero")
+                steps.append(f"4. {var} = {solution}")
+                return steps
+            
+            steps.append(f"1. Isolate the variable {var}")
+            steps.append(f"2. {var} = {solution}")
+        except:
+            pass
+        return steps
+    
     def solve_calculus(self, query: str) -> Dict[str, Any]:
         try:
-            expr_str = re.sub(r'(derivative|differentiate|diff|d/dx|integral|integrate|∫|limit|lim)\s*(of|for)?\s*', '', query, flags=re.IGNORECASE)
-            expr = parse_expr(expr_str.strip())
-            var = symbols('x')
+            # Parse the query
+            if 'diff' in query or 'derivative' in query:
+                # Extract expression
+                expr_match = re.search(r'diff\(([^,]+),\s*([^)]+)\)', query)
+                if expr_match:
+                    expr_str = expr_match.group(1)
+                    var_str = expr_match.group(2)
+                    expr = parse_expr(expr_str)
+                    var = parse_expr(var_str)
+                    result = diff(expr, var)
+                    return {
+                        'success': True,
+                        'type': 'derivative',
+                        'expression': expr_str,
+                        'result': str(result),
+                        'result_str': str(result)
+                    }
             
-            for sym in expr.free_symbols:
-                var = sym
-                break
+            if 'integrate' in query or '∫' in query:
+                expr_match = re.search(r'integrate\(([^,]+),\s*([^)]+)\)', query)
+                if expr_match:
+                    expr_str = expr_match.group(1)
+                    var_str = expr_match.group(2)
+                    expr = parse_expr(expr_str)
+                    var = parse_expr(var_str)
+                    result = integrate(expr, var)
+                    return {
+                        'success': True,
+                        'type': 'integral',
+                        'expression': expr_str,
+                        'result': str(result),
+                        'result_str': str(result) + ' + C'
+                    }
             
-            if 'derivative' in query or 'diff' in query:
+            # Try simple direct parsing
+            if 'diff' in query.lower():
+                expr = parse_expr(query.replace('diff', '').replace('(', '').replace(')', '').strip())
+                var = symbols('x')
                 result = diff(expr, var)
                 return {
                     'success': True,
                     'type': 'derivative',
                     'result_str': str(result)
                 }
-            elif 'integral' in query or '∫' in query:
+            
+            if 'integrate' in query.lower():
+                expr = parse_expr(query.replace('integrate', '').replace('∫', '').replace('(', '').replace(')', '').strip())
+                var = symbols('x')
                 result = integrate(expr, var)
                 return {
                     'success': True,
                     'type': 'integral',
                     'result_str': str(result) + ' + C'
-                }
-            elif 'limit' in query:
-                limit_point = 0
-                limit_match = re.search(r'->\s*([\d]+)', query)
-                if limit_match:
-                    limit_point = float(limit_match.group(1))
-                result = limit(expr, var, limit_point)
-                return {
-                    'success': True,
-                    'type': 'limit',
-                    'result_str': str(result)
                 }
         except:
             pass
@@ -306,18 +411,91 @@ class MathematicsEngine:
     
     def solve_trigonometry(self, query: str) -> Dict[str, Any]:
         try:
+            # Extract trig expression
             expr = parse_expr(query)
             if any(f in str(expr) for f in ['sin', 'cos', 'tan', 'asin', 'acos', 'atan']):
+                # Evaluate
                 result = expr.evalf(self.precision)
                 return {
                     'success': True,
+                    'expression': str(expr),
+                    'result': float(result),
                     'result_str': str(result)
                 }
         except:
             pass
         return {'success': False}
+    
+    def solve_matrix(self, query: str) -> Dict[str, Any]:
+        try:
+            # Extract matrix
+            matrix_match = re.search(r'Matrix\(\[(.*?)\]\)', query)
+            if not matrix_match:
+                return {'success': False}
+            
+            matrix_str = matrix_match.group(1)
+            rows = []
+            for row in matrix_str.split('],['):
+                row = re.sub(r'[\[\]]', '', row)
+                row_values = [float(x.strip()) for x in row.split(',')]
+                rows.append(row_values)
+            
+            matrix = Matrix(rows)
+            
+            if 'det' in query or 'determinant' in query:
+                result = matrix.det()
+                return {
+                    'success': True,
+                    'operation': 'determinant',
+                    'matrix': str(matrix),
+                    'result': float(result),
+                    'result_str': str(result)
+                }
+            elif 'inverse' in query or 'inv' in query:
+                result = matrix.inv()
+                return {
+                    'success': True,
+                    'operation': 'inverse',
+                    'matrix': str(matrix),
+                    'result': str(result),
+                    'result_str': str(result)
+                }
+            elif 'transpose' in query:
+                result = matrix.T
+                return {
+                    'success': True,
+                    'operation': 'transpose',
+                    'matrix': str(matrix),
+                    'result': str(result),
+                    'result_str': str(result)
+                }
+            elif 'eigenvalue' in query or 'eigen' in query:
+                eigenvals = matrix.eigenvals()
+                return {
+                    'success': True,
+                    'operation': 'eigenvalues',
+                    'matrix': str(matrix),
+                    'result': str(eigenvals),
+                    'result_str': str(eigenvals)
+                }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+        return {'success': False}
+    
+    def evaluate_expression(self, query: str) -> Dict[str, Any]:
+        try:
+            expr = parse_expr(query)
+            if expr.is_number:
+                return {
+                    'success': True,
+                    'result': float(expr),
+                    'result_str': str(expr.evalf(self.precision))
+                }
+        except:
+            pass
+        return {'success': False}
 
-math_engine = MathematicsEngine()
+math_engine = AdvancedMathEngine()
 
 # ============ SOURCE VALIDATION ============
 class SourceValidator:
@@ -328,11 +506,12 @@ class SourceValidator:
         })
         self.session.timeout = 8
     
-    def validate_and_extract(self, url: str) -> Dict[str, Any]:
+    def validate_and_extract(self, url: str, query: str = "") -> Dict[str, Any]:
         result = {
             'valid': False,
             'content': None,
             'title': None,
+            'relevance_score': 0,
             'error': None
         }
         
@@ -344,17 +523,22 @@ class SourceValidator:
             
             soup = BeautifulSoup(response.text, 'html.parser')
             
+            # Remove noise
             for element in soup.find_all(['script', 'style', 'nav', 'footer', 'header', 'aside', 'iframe', 'noscript']):
                 element.decompose()
             
             for element in soup.find_all(class_=re.compile(r'(ad|popup|modal|banner|cookie|newsletter|subscribe|sidebar)', re.I)):
                 element.decompose()
             
+            # Get title
             title_tag = soup.find('title')
             if title_tag:
                 result['title'] = title_tag.get_text().strip()
             
+            # Extract meaningful content
             content_parts = []
+            
+            # Try article or main
             main = soup.find('article') or soup.find('main')
             if main:
                 for p in main.find_all('p'):
@@ -367,22 +551,51 @@ class SourceValidator:
                     if len(text) > 50:
                         content_parts.append(text)
             
+            # Also get headings
             for h in soup.find_all(['h1', 'h2', 'h3']):
                 text = h.get_text(strip=True)
                 if len(text) > 10:
                     content_parts.append(text)
             
+            # Combine content
             full_text = ' '.join(content_parts[:30])
             full_text = re.sub(r'\s+', ' ', full_text).strip()
             
             if len(full_text) > 100:
                 result['valid'] = True
                 result['content'] = full_text[:2000]
+                
+                # Calculate relevance if query provided
+                if query:
+                    result['relevance_score'] = self.calculate_relevance(full_text, query)
             
         except Exception as e:
             result['error'] = str(e)
         
         return result
+    
+    def calculate_relevance(self, content: str, query: str) -> float:
+        """Calculate relevance score between content and query"""
+        if not content or not query:
+            return 0.0
+        
+        # Clean query
+        query_words = set(query_cleaner.clean(query).split())
+        
+        # Content words
+        content_words = set(re.findall(r'\b[a-z]{3,}\b', content.lower()))
+        
+        if not query_words:
+            return 0.0
+        
+        overlap = len(content_words.intersection(query_words))
+        relevance = overlap / len(query_words) if query_words else 0
+        
+        # Boost for exact phrases
+        if query.lower() in content.lower():
+            relevance += 0.3
+        
+        return min(1.0, relevance)
 
 source_validator = SourceValidator()
 
@@ -409,75 +622,113 @@ def get_trust_score(url: str) -> Tuple[int, str]:
         return 40, "Forum"
     return 50, "Website"
 
-# ============ ANSWER GENERATION ============
+# ============ ANSWER GENERATOR ============
 class AnswerGenerator:
+    def __init__(self):
+        self.min_relevance_threshold = 0.2
+    
     def generate_answer(self, query: str, search_results: List[Dict]) -> Dict[str, Any]:
-        direct_answer = self.extract_direct_answer(query, search_results)
+        """Generate a proper answer from search results"""
         
+        # First, try to find direct answer in snippets
+        direct_answer = self.extract_direct_answer(query, search_results)
         if direct_answer:
             return {
                 'success': True,
                 'answer': direct_answer,
-                'sources': search_results[:3]
+                'sources': search_results[:3],
+                'source_type': 'direct'
             }
         
-        generated_answer = self.generate_from_sources(query, search_results)
+        # Extract and validate content from sources
+        valid_sources = []
+        for result in search_results[:5]:
+            url = result.get('url', '')
+            if url:
+                validation = source_validator.validate_and_extract(url, query)
+                if validation['valid'] and validation['relevance_score'] >= self.min_relevance_threshold:
+                    valid_sources.append({
+                        'url': url,
+                        'title': validation.get('title', ''),
+                        'content': validation['content'],
+                        'relevance_score': validation['relevance_score'],
+                        'trust_score': get_trust_score(url)[0]
+                    })
+        
+        if not valid_sources:
+            return {
+                'success': False,
+                'error': 'No relevant sources found'
+            }
+        
+        # Generate answer from valid sources
+        generated_answer = self.generate_from_sources(query, valid_sources)
         
         if generated_answer:
             return {
                 'success': True,
                 'answer': generated_answer,
-                'sources': search_results[:3]
+                'sources': valid_sources[:3],
+                'source_type': 'generated'
             }
         
         return {
             'success': False,
-            'error': 'Could not find answer'
+            'error': 'Could not generate answer'
         }
     
     def extract_direct_answer(self, query: str, search_results: List[Dict]) -> Optional[str]:
+        """Extract direct answer from snippets"""
         if not search_results:
             return None
+        
+        cleaned_query = query_cleaner.clean(query)
+        query_words = set(cleaned_query.split())
         
         for result in search_results[:5]:
             snippet = result.get('snippet', '')
             if snippet and len(snippet) > 50:
-                clean_snippet = re.sub(r'\s+', ' ', snippet).strip()
-                if len(clean_snippet) > 50:
-                    return clean_snippet
+                # Check if snippet is relevant
+                snippet_words = set(re.findall(r'\b[a-z]{3,}\b', snippet.lower()))
+                overlap = len(snippet_words.intersection(query_words))
+                
+                if overlap >= 2 or query.lower() in snippet.lower():
+                    clean_snippet = re.sub(r'\s+', ' ', snippet).strip()
+                    if len(clean_snippet) > 50:
+                        return clean_snippet
         
         return None
     
-    def generate_from_sources(self, query: str, search_results: List[Dict]) -> Optional[str]:
-        if not search_results:
+    def generate_from_sources(self, query: str, sources: List[Dict]) -> Optional[str]:
+        """Generate answer from multiple sources"""
+        if not sources:
             return None
         
-        contents = []
-        for result in search_results[:3]:
-            url = result.get('url', '')
-            if url:
-                validation = source_validator.validate_and_extract(url)
-                if validation['valid'] and validation['content']:
-                    contents.append({
-                        'content': validation['content'],
-                        'title': validation.get('title', ''),
-                        'trust_score': get_trust_score(url)[0]
-                    })
+        # Collect content from sources
+        all_content = []
+        for source in sources:
+            content = source.get('content', '')
+            if content:
+                all_content.append(content)
         
-        if not contents:
+        if not all_content:
             return None
         
-        combined = ' '.join([c['content'][:500] for c in contents[:2]])
+        # Combine content
+        combined = ' '.join(all_content[:3])
+        
+        # Extract key sentences
         sentences = re.split(r'[.!?]', combined)
         key_sentences = []
         
-        subject = query_understanding.extract_key_entities(query)
-        subject_terms = ' '.join(subject).lower()
+        # Get important terms from query
+        important_terms = query_cleaner.clean(query).split()
         
         for sentence in sentences:
             sentence = sentence.strip()
             if len(sentence) > 50:
-                if any(term in sentence.lower() for term in subject):
+                # Check relevance
+                if any(term in sentence.lower() for term in important_terms):
                     key_sentences.append(sentence)
                 elif len(key_sentences) < 2:
                     key_sentences.append(sentence)
@@ -485,7 +736,8 @@ class AnswerGenerator:
         if key_sentences:
             return '. '.join(key_sentences[:3]) + '.'
         
-        first_content = contents[0]['content'][:500]
+        # Fallback: use first meaningful paragraph
+        first_content = all_content[0][:500]
         paragraphs = first_content.split('\n')
         for p in paragraphs:
             if len(p) > 100:
@@ -499,7 +751,10 @@ answer_generator = AnswerGenerator()
 def search_web(query: str, max_results: int = 10) -> List[Dict]:
     results = []
     try:
-        search_query = query_understanding.build_search_query(query)
+        # Clean query for search
+        search_query = query_cleaner.clean(query)
+        if not search_query:
+            search_query = query
         
         with DDGS() as ddgs:
             search_results = list(ddgs.text(search_query, max_results=max_results))
@@ -519,6 +774,7 @@ def search_web(query: str, max_results: int = 10) -> List[Dict]:
                     "trust_category": category
                 })
             
+            # Remove duplicates
             seen_urls = set()
             unique_results = []
             for r in results:
@@ -526,6 +782,7 @@ def search_web(query: str, max_results: int = 10) -> List[Dict]:
                     seen_urls.add(r['url'])
                     unique_results.append(r)
             
+            # Sort by trust score
             unique_results.sort(key=lambda x: x['trust_score'], reverse=True)
             return unique_results
     except Exception as e:
@@ -533,21 +790,33 @@ def search_web(query: str, max_results: int = 10) -> List[Dict]:
         return []
 
 # ============ FORMAT RESPONSE ============
-def format_response(answer_data: Dict[str, Any], query: str) -> str:
+def format_response(answer_data: Dict[str, Any], query: str, intent: str) -> str:
+    """Format the answer for display"""
     if not answer_data.get('success'):
         return f"I couldn't find a clear answer to '{query}'. Please try rephrasing your question."
     
     answer = answer_data['answer']
     sources = answer_data.get('sources', [])
+    source_type = answer_data.get('source_type', 'unknown')
     
-    response = f"💡 **Answer**\n\n{answer}\n\n"
+    # Format answer based on intent
+    if intent == 'definition':
+        response = f"📖 **Definition**\n\n{answer}\n\n"
+    elif intent == 'explanation':
+        response = f"💡 **Explanation**\n\n{answer}\n\n"
+    elif intent == 'fact':
+        response = f"📌 **Fact**\n\n{answer}\n\n"
+    else:
+        response = f"💡 **Answer**\n\n{answer}\n\n"
     
+    # Add sources if available
     if sources:
         response += "📚 **Sources**\n"
         for i, source in enumerate(sources[:3], 1):
             trust = source.get('trust_score', 0)
             title = source.get('title', 'Untitled')
             url = source.get('url', '')
+            relevance = source.get('relevance_score', 0)
             
             if trust >= 80:
                 icon = "⭐"
@@ -556,72 +825,140 @@ def format_response(answer_data: Dict[str, Any], query: str) -> str:
             else:
                 icon = "📄"
             
-            response += f"{i}. {icon} {title} (Trust: {trust}%)\n   <a href=\"{url}\" target=\"_blank\">{url}</a>\n"
+            response += f"{i}. {icon} {title} (Trust: {trust}%, Relevance: {int(relevance * 100)}%)\n   <a href=\"{url}\" target=\"_blank\">{url}</a>\n"
     
     return response
+
+# ============ FORMAT MATH ANSWER ============
+def format_math_answer(result: Dict[str, Any]) -> str:
+    """Format math answer with steps if available"""
+    if not result.get('success'):
+        return f"❌ Could not solve: {result.get('error', 'Unknown error')}"
+    
+    math_type = result.get('type', 'unknown')
+    
+    if math_type == 'arithmetic':
+        response = f"🧮 **Calculation**\n\n"
+        response += f"**Answer:** {result['result_str']}\n"
+        if result.get('is_exact', False):
+            response += f"✅ Exact value"
+        else:
+            response += f"📊 Approximate value"
+        return response
+    
+    elif math_type == 'equation':
+        response = f"📐 **Equation Solution**\n\n"
+        
+        # Show steps if available
+        steps = result.get('steps', [])
+        if steps:
+            response += "**Step-by-Step Solution:**\n"
+            for step in steps:
+                response += f"  {step}\n"
+            response += "\n"
+        
+        response += f"**Variable:** {result.get('variable', 'x')}\n"
+        response += f"**Solution{'s' if result.get('solutions_count', 1) > 1 else ''}:** {result['result_str']}\n"
+        if result.get('solutions_count', 1) > 1:
+            response += f"\n📊 Found {result['solutions_count']} solutions"
+        return response
+    
+    elif math_type == 'derivative':
+        response = f"📈 **Derivative**\n\n"
+        if result.get('expression'):
+            response += f"**Original:** {result['expression']}\n"
+        response += f"**Derivative:** {result['result_str']}\n"
+        return response
+    
+    elif math_type == 'integral':
+        response = f"∫ **Integral**\n\n"
+        if result.get('expression'):
+            response += f"**Original:** {result['expression']}\n"
+        response += f"**Integral:** {result['result_str']}\n"
+        return response
+    
+    elif math_type == 'trigonometry':
+        response = f"📐 **Trigonometric Calculation**\n\n"
+        response += f"**Result:** {result['result_str']}\n"
+        return response
+    
+    else:
+        response = f"📊 **Result**\n\n{result['result_str']}\n"
+        return response
 
 # ============ MAIN RESPONSE FUNCTION ============
 def get_response(message, email, regenerate=False):
     msg = message.strip()
     
+    # Get user stats
     stats = update_user_stats(email)
     user = user_db.get(User.email == email)
     user_name = user.get('name', 'User') if user else 'User'
     
+    # Detect intent
     intent = intent_detector.detect(msg)
     
-    if intent['intent'] == 'math':
+    # Handle math
+    if intent['intent'] == 'math' or math_engine.is_math_query(msg):
         math_result = math_engine.solve(msg)
         if math_result.get('success'):
-            if math_result['type'] == 'arithmetic':
-                response = f"🧮 **Calculation**\n\n**Answer:** {math_result['result_str']}\n"
-            elif math_result['type'] == 'equation':
-                response = f"📐 **Equation Solution**\n\n**Solution:** {math_result['result_str']}\n"
-                if math_result.get('solutions_count', 1) > 1:
-                    response += f"\nFound {math_result['solutions_count']} solutions"
-            else:
-                response = f"📊 **Result**\n\n{math_result['result_str']}\n"
-            
-            response += f"\n📊 **{user_name}'s Stats:** Level {stats['level']} - {stats['title']} ({stats['count']} messages)"
+            response = format_math_answer(math_result)
+            response += f"\n\n📊 **{user_name}'s Stats:** Level {stats['level']} - {stats['title']} ({stats['count']} messages)"
             return response
         else:
             response = f"❌ Could not solve: {math_result.get('error', 'Unknown error')}\n\n💡 Try rephrasing your math question."
             return response
     
+    # Handle conversation
     if intent['intent'] == 'conversation':
         if msg.lower() in ['hi', 'hello', 'hey', 'sup', 'yo']:
             return f"👋 Hello {user_name}! You are a **{stats['title']}** (Level {stats['level']}) with {stats['count']} messages!\n\nHow can I help you today?"
         if 'how are you' in msg.lower():
             return f"😊 I'm doing great! Thanks for asking, {user_name}!"
     
+    # Handle general knowledge
     start_time = time.time()
     
-    search_results = search_web(msg, max_results=10)
+    # Clean the query for search
+    cleaned_query = query_cleaner.clean(msg)
+    if not cleaned_query:
+        cleaned_query = msg
+    
+    # Search the web
+    search_results = search_web(cleaned_query, max_results=10)
     
     if not search_results:
         return f"I searched for '{msg}' but found no results. Please try rephrasing your question."
     
+    # Generate answer
     answer_data = answer_generator.generate_answer(msg, search_results)
-    response = format_response(answer_data, msg)
     
+    # Format response
+    response = format_response(answer_data, msg, intent['intent'])
+    
+    # Add follow-ups
     follow_ups = []
-    entities = query_understanding.extract_key_entities(msg)
-    if entities:
-        follow_ups.append(f"Tell me more about {entities[0]}")
+    important_terms = query_cleaner.clean(msg).split()
+    if important_terms:
+        follow_ups.append(f"Tell me more about {important_terms[0]}")
     follow_ups.extend(["Give examples", "Explain simply"])
     
     if follow_ups:
         response += "\n\n💭 **Follow-up Questions:**\n" + "\n".join([f"• {q}" for q in follow_ups[:3]])
     
+    # Add user stats
     response += f"\n\n📊 **{user_name}'s Stats:** Level {stats['level']} - {stats['title']} ({stats['count']} messages)"
     
+    # Track analytics
     track_analytics({
         "query": msg,
         "intent": intent['intent'],
         "response_time": time.time() - start_time,
-        "sources_found": len(search_results)
+        "sources_found": len(search_results),
+        "answer_source": answer_data.get('source_type', 'unknown')
     })
     
+    # Store in context
     if not regenerate:
         context_memory.add_message(email, "user", msg)
         context_memory.add_message(email, "ai", response)
@@ -721,6 +1058,22 @@ def update_user_stats(email):
         return {"count": new_count, "level": new_level, "title": new_title}
     return {"count": 0, "level": 1, "title": "🌟 Newbie Chatter"}
 
+# ============ HEALTH CHECK ============
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for uptime monitoring"""
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "service": "Yama AI",
+        "version": "2.0"
+    }
+
+@app.get("/ping")
+async def ping():
+    """Simple ping endpoint"""
+    return {"pong": True, "timestamp": datetime.now().isoformat()}
+
 # ============ ENDPOINTS ============
 @app.post("/feedback")
 async def submit_feedback(request: Request):
@@ -753,7 +1106,7 @@ async def get_analytics():
 # ============ GOOGLE CLIENT ID ============
 GOOGLE_CLIENT_ID = "46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com"
 
-# ============ HTML WITH ESCAPED CURLY BRACES ============
+# ============ HTML (UNCHANGED - from previous version) ============
 HTML = f'''
 <!DOCTYPE html>
 <html lang="en">
@@ -1317,19 +1670,22 @@ async def clear_history_endpoint():
 
 if __name__ == "__main__":
     print("\n" + "="*55)
-    print("🏛️ YAMA AI - CRITICAL ACCURACY FIX")
+    print("🏛️ YAMA AI V2 - RESPONSE ENGINE & MATH ENGINE")
     print("="*55)
     print("🌐 Open: http://localhost:8000")
     print("="*55)
-    print("✅ INTENT DETECTION - Math/Conversation/General")
-    print("✅ QUERY UNDERSTANDING - Removes filler words")
-    print("✅ ANSWER GENERATION - No raw webpage content")
+    print("✅ QUERY CLEANING - Removes filler words")
+    print("✅ INTENT DETECTION - Fact/Definition/Explanation")
+    print("✅ MATH PREPROCESSOR - Converts friendly notation")
+    print("✅ ADVANCED MATH ENGINE - SymPy integration")
+    print("✅ STEP-BY-STEP SOLUTIONS - Shows work")
+    print("✅ ANSWER GENERATION - No raw content")
+    print("✅ RELEVANCE SCORING - Quality filtering")
     print("✅ SOURCE VALIDATION - 200 OK required")
-    print("✅ TRUST SCORING - Government/University priority")
-    print("✅ DIRECT ANSWER EXTRACTION")
+    print("✅ HEALTH CHECK - For uptime monitoring")
     print("="*55)
-    print("🎯 Answers the question, not dumps content")
-    print("🎯 Math goes to SymPy, not web search")
-    print("🎯 Only verified sources displayed")
+    print("🎯 Direct answers, not random sentences")
+    print("🎯 Proper math parsing (x² + 5x + 6 = 0)")
+    print("🎯 Step-by-step solutions where possible")
     print("="*55 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=10000)
