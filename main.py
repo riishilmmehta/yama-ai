@@ -1,3 +1,4 @@
+from __future__ import annotations
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 import uvicorn
