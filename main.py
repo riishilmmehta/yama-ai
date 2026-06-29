@@ -13,7 +13,7 @@ from tinydb import TinyDB, Query
 import secrets
 import time
 from collections import defaultdict
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, dict, Any, Optional, Tuple
 import sympy as sp
 from sympy import *
 from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application, convert_xor
