@@ -1244,7 +1244,7 @@ async def get_analytics():
 # ============ GOOGLE CLIENT ID ============
 GOOGLE_CLIENT_ID = "46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com"
 
-# ============ HTML (UNCHANGED) ============
+# ============ HTML TEMPLATE ============
 HTML = f'''
 <!DOCTYPE html>
 <html lang="en">
@@ -1818,5 +1818,6 @@ if __name__ == "__main__":
     print("✅ All features working")
     print("✅ UI unchanged")
     print("✅ Google Sign-In working")
+    print("✅ Yama is thinking... loading animation")
     print("="*55 + "\n")
     uvicorn.run(app, host="0.0.0.0", port=port)
