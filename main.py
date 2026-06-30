@@ -26,16 +26,19 @@ import matplotlib.pyplot as plt
 from io import BytesIO
 import base64
 import hashlib
-import re
 
 app = FastAPI(title="Yama AI V2.0")
 
+# ============ DATA DIRECTORY (Render Compatible) ============
+DATA_DIR = os.environ.get("DATA_DIR", "./data")
+os.makedirs(DATA_DIR, exist_ok=True)
+
 # ============ USER DATABASE ============
-user_db = TinyDB('users.json')
+user_db = TinyDB(os.path.join(DATA_DIR, 'users.json'))
 User = Query()
 
 # ============ MESSAGE FEATURES STORAGE ============
-message_feedback_db = TinyDB('feedback.json')
+message_feedback_db = TinyDB(os.path.join(DATA_DIR, 'feedback.json'))
 Feedback = Query()
 
 # ============ CONTEXT MEMORY ============
@@ -55,7 +58,6 @@ class ContextMemory:
             self._contexts[email] = self._contexts[email][-self.max_messages:]
     
     def get_last_topic(self, email: str) -> Optional[str]:
-        """Get the last topic discussed"""
         context = self._contexts.get(email, [])
         for msg in reversed(context):
             if msg['role'] == 'user':
@@ -103,57 +105,39 @@ class MathPreprocessor:
                           'sinh', 'cosh', 'tanh', 'asinh', 'acosh', 'atanh']
     
     def preprocess(self, query: str) -> str:
-        """Convert user-friendly math notation to SymPy format"""
         expression = query.strip()
         
-        # Remove question words
         question_words = ['solve', 'find', 'calculate', 'evaluate', 'what is', 'compute', 
                          'differentiate', 'integrate', 'plot', 'graph']
         for word in question_words:
             expression = re.sub(rf'^{word}\s+', '', expression, flags=re.IGNORECASE)
             expression = re.sub(rf'\s+{word}\s+', ' ', expression, flags=re.IGNORECASE)
         
-        # Convert superscripts
         for sup, replacement in self.superscript_map.items():
             expression = expression.replace(sup, replacement)
         
-        # Convert symbols
         for symbol, replacement in self.symbol_map.items():
             expression = expression.replace(symbol, replacement)
         
-        # Handle implicit multiplication: 5x -> 5*x
         expression = re.sub(r'(\d+)([a-zA-Z])', r'\1*\2', expression)
         expression = re.sub(r'([a-zA-Z])(\d+)', r'\1*\2', expression)
-        
-        # Handle implicit multiplication: 5(x) -> 5*(x)
         expression = re.sub(r'(\d+)\(', r'\1*(', expression)
-        
-        # Handle implicit multiplication: (x)(y) -> (x)*(y)
         expression = re.sub(r'\)\(', r')*(', expression)
-        
-        # Handle sqrt: sqrt(625) -> sqrt(625)
         expression = re.sub(r'√\(([^)]+)\)', r'sqrt(\1)', expression)
         expression = re.sub(r'√([a-zA-Z]+)', r'sqrt(\1)', expression)
         
-        # Handle trig functions with implicit parentheses
         for func in self.trig_funcs:
             expression = re.sub(rf'{func}\s*([a-zA-Z0-9]+)', rf'{func}(\1)', expression)
             expression = re.sub(rf'{func}\s*\(', rf'{func}(', expression)
         
-        # Handle derivative notation
         expression = re.sub(r'd/dx\s*\(([^)]+)\)', r'diff(\1, x)', expression)
         expression = re.sub(r'differentiate\s+([^\s]+)', r'diff(\1, x)', expression)
         expression = re.sub(r'derivative of\s+([^\s]+)', r'diff(\1, x)', expression)
-        
-        # Handle integral notation
         expression = re.sub(r'integrate\s+([^\s]+)\s+with respect to\s+([a-zA-Z])', r'integrate(\1, \2)', expression)
         expression = re.sub(r'integrate\s+([^\s]+)', r'integrate(\1, x)', expression)
         expression = re.sub(r'∫\s*([^\s]+)\s*dx', r'integrate(\1, x)', expression)
-        
-        # Handle matrix: [[1,2],[3,4]] -> Matrix([[1,2],[3,4]])
         expression = re.sub(r'\[\[([^\]]+)\]\]', r'Matrix([\1])', expression)
         
-        # Handle equations: x² + 5x + 6 = 0 -> Eq(x**2 + 5*x + 6, 0)
         if '=' in expression and not expression.startswith('Eq'):
             parts = expression.split('=')
             if len(parts) == 2:
@@ -182,21 +166,17 @@ class MathIntentDetector:
     def detect(self, query: str) -> bool:
         query_lower = query.lower()
         
-        # Check for math symbols
         for symbol in self.math_symbols:
             if symbol in query:
                 return True
         
-        # Check for math keywords
         for keyword in self.math_keywords:
             if keyword in query_lower:
                 return True
         
-        # Check for equation pattern
         if re.search(r'[a-zA-Z]\s*[=]', query):
             return True
         
-        # Check for arithmetic
         if re.search(r'[\d]+\s*[\+\-\*\/]\s*[\d]+', query):
             return True
         
@@ -204,7 +184,7 @@ class MathIntentDetector:
 
 math_intent_detector = MathIntentDetector()
 
-# ============ ADVANCED MATH ENGINE WITH EXPLANATIONS ============
+# ============ ADVANCED MATH ENGINE ============
 class AdvancedMathEngine:
     def __init__(self):
         self.precision = 15
@@ -214,12 +194,9 @@ class AdvancedMathEngine:
         self.z = symbols('z')
     
     def solve(self, query: str) -> Dict[str, Any]:
-        """Main math solver with explanations"""
         try:
-            # Preprocess the query
             processed = math_preprocessor.preprocess(query)
             
-            # Try each solver in order
             solvers = [
                 ('arithmetic', self.solve_arithmetic),
                 ('equation', self.solve_equation),
@@ -234,7 +211,6 @@ class AdvancedMathEngine:
                 result = solver_func(processed, query)
                 if result.get('success'):
                     result['type'] = solver_type
-                    # Add explanation if not already present
                     if 'explanation' not in result:
                         result['explanation'] = self.generate_explanation(result, query)
                     return result
@@ -270,14 +246,10 @@ class AdvancedMathEngine:
         return {'success': False}
     
     def solve_quadratic(self, processed: str, original: str) -> Dict[str, Any]:
-        """Specialized quadratic equation solver with detailed steps"""
         try:
-            # Extract equation
             eq_match = re.search(r'Eq\(([^,]+),\s*([^)]+)\)', processed)
             if not eq_match:
-                # Try to find x² pattern
                 if 'x**2' in processed or 'x²' in original:
-                    # Try to parse as quadratic
                     expr = parse_expr(processed)
                     if expr.is_polynomial():
                         poly = poly(expr, self.x)
@@ -319,7 +291,6 @@ class AdvancedMathEngine:
                 if expr.is_polynomial():
                     poly = poly(expr, self.x)
                     if poly.degree() == 2:
-                        # Similar quadratic solving logic
                         a, b, c = poly.all_coeffs()
                         if len(a) >= 3:
                             a_val, b_val, c_val = float(a[0]), float(a[1]), float(a[2])
@@ -330,7 +301,6 @@ class AdvancedMathEngine:
                                 x1 = (-b_val + sqrt_d) / (2*a_val)
                                 x2 = (-b_val - sqrt_d) / (2*a_val)
                                 
-                                # Factor if possible
                                 factor_form = factor(expr)
                                 
                                 steps = [
@@ -357,12 +327,10 @@ class AdvancedMathEngine:
     
     def solve_equation(self, processed: str, original: str) -> Dict[str, Any]:
         try:
-            # Try quadratic first
             quad_result = self.solve_quadratic(processed, original)
             if quad_result.get('success'):
                 return quad_result
             
-            # Parse equation
             eq_match = re.search(r'Eq\(([^,]+),\s*([^)]+)\)', processed)
             if eq_match:
                 left = parse_expr(eq_match.group(1).strip())
@@ -386,7 +354,6 @@ class AdvancedMathEngine:
                     else:
                         result_strs.append(str(sol))
                 
-                # Generate steps
                 steps = self.generate_equation_steps(expr, var, solutions, original)
                 
                 return {
@@ -403,22 +370,18 @@ class AdvancedMathEngine:
         return {'success': False}
     
     def generate_equation_steps(self, expr, var, solutions, original) -> List[str]:
-        """Generate step-by-step solution for equations"""
         steps = []
         try:
-            # Check if it's a linear equation
             if expr.is_Add and len(expr.args) <= 3:
                 steps.append(f"Equation: {original}")
                 steps.append(f"Step 1: Isolate {var} on one side")
                 
-                # For simple linear: ax + b = 0
                 if len(expr.args) == 2 and expr.has(var):
                     steps.append(f"Step 2: Move constant terms")
                     steps.append(f"Step 3: Divide by coefficient of {var}")
                     steps.append(f"Final: {var} = {solutions[0]}")
                     return steps
             
-            # For polynomial equations
             if expr.is_polynomial():
                 degree = poly(expr).degree()
                 if degree == 1:
@@ -449,7 +412,6 @@ class AdvancedMathEngine:
     
     def solve_calculus(self, processed: str, original: str) -> Dict[str, Any]:
         try:
-            # Handle derivative
             if 'diff' in processed or 'derivative' in processed.lower():
                 expr_match = re.search(r'diff\(([^,]+),\s*([^)]+)\)', processed)
                 if not expr_match:
@@ -477,7 +439,6 @@ class AdvancedMathEngine:
                     'answer': str(result)
                 }
             
-            # Handle integral
             if 'integrate' in processed or '∫' in processed:
                 expr_match = re.search(r'integrate\(([^,]+),\s*([^)]+)\)', processed)
                 if not expr_match:
@@ -505,7 +466,6 @@ class AdvancedMathEngine:
                     'answer': str(result) + ' + C'
                 }
             
-            # Handle limit
             if 'limit' in processed or 'lim' in processed:
                 expr_match = re.search(r'limit\(([^,]+),\s*([^,]+),\s*([^)]+)\)', processed)
                 if expr_match:
@@ -537,7 +497,6 @@ class AdvancedMathEngine:
         try:
             expr = parse_expr(processed)
             if any(f in str(expr) for f in ['sin', 'cos', 'tan', 'asin', 'acos', 'atan']):
-                # Evaluate if possible
                 if expr.is_number:
                     result = expr.evalf(self.precision)
                     steps = [
@@ -555,7 +514,6 @@ class AdvancedMathEngine:
                         'answer': str(result)
                     }
                 
-                # Try to simplify
                 simplified = simplify(expr)
                 steps = [
                     f"Expression: {original}",
@@ -587,7 +545,6 @@ class AdvancedMathEngine:
             else:
                 matrix_str = matrix_match.group(1)
             
-            # Parse matrix
             rows = []
             for row in matrix_str.split('],['):
                 row = re.sub(r'[\[\]]', '', row)
@@ -652,7 +609,6 @@ class AdvancedMathEngine:
                     'answer': str(result)
                 }
             
-            # Try to simplify
             simplified = simplify(expr)
             if str(simplified) != str(expr):
                 steps = [
@@ -669,7 +625,6 @@ class AdvancedMathEngine:
                     'answer': str(simplified)
                 }
             
-            # Try to factor
             factored = factor(expr)
             if str(factored) != str(expr):
                 steps = [
@@ -690,7 +645,6 @@ class AdvancedMathEngine:
         return {'success': False}
     
     def generate_explanation(self, result: Dict[str, Any], query: str) -> str:
-        """Generate human-readable explanation"""
         if not result.get('success'):
             return "Could not solve this problem."
         
@@ -709,54 +663,39 @@ class GraphGenerator:
         self.dpi = 100
     
     def generate_graph(self, expression: str) -> Optional[str]:
-        """Generate graph image as base64 string"""
         try:
-            # Parse expression
             expr = parse_expr(expression)
             
-            # Create figure
             fig, ax = plt.subplots(figsize=self.fig_size, dpi=self.dpi)
             
-            # Generate x values
             x_vals = np.linspace(-10, 10, 1000)
-            
-            # Convert expression to function
             f = lambdify(self.x, expr, modules=['numpy'])
-            
-            # Calculate y values
             y_vals = f(x_vals)
             
-            # Plot
             ax.plot(x_vals, y_vals, 'b-', linewidth=2)
             ax.grid(True, alpha=0.3)
             ax.axhline(y=0, color='black', linewidth=0.5)
             ax.axvline(x=0, color='black', linewidth=0.5)
             
-            # Set labels
             ax.set_xlabel('x')
             ax.set_ylabel('y')
             ax.set_title(f'y = {expression}')
             
-            # Find intercepts
             if y_vals.any():
-                # X-intercepts
                 sign_changes = np.where(np.diff(np.sign(y_vals)))[0]
                 x_intercepts = []
                 for idx in sign_changes:
                     x_intercepts.append(x_vals[idx])
                 
-                # Add intercept points
                 for x_int in x_intercepts:
                     ax.plot(x_int, 0, 'ro', markersize=8)
                     ax.annotate(f'({x_int:.2f}, 0)', (x_int, 0), xytext=(5, 5), 
                                textcoords='offset points', fontsize=8)
             
-            # Save to bytes
             buf = BytesIO()
             plt.savefig(buf, format='png', bbox_inches='tight', dpi=self.dpi)
             buf.seek(0)
             
-            # Convert to base64
             img_str = base64.b64encode(buf.read()).decode('utf-8')
             plt.close(fig)
             
@@ -792,22 +731,17 @@ class SourceValidator:
             
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Remove noise
             for element in soup.find_all(['script', 'style', 'nav', 'footer', 'header', 'aside', 'iframe', 'noscript']):
                 element.decompose()
             
             for element in soup.find_all(class_=re.compile(r'(ad|popup|modal|banner|cookie|newsletter|subscribe|sidebar|comment|related)', re.I)):
                 element.decompose()
             
-            # Get title
             title_tag = soup.find('title')
             if title_tag:
                 result['title'] = title_tag.get_text().strip()
             
-            # Extract meaningful content
             content_parts = []
-            
-            # Try article or main
             main = soup.find('article') or soup.find('main')
             if main:
                 for p in main.find_all('p'):
@@ -820,13 +754,11 @@ class SourceValidator:
                     if len(text) > 50:
                         content_parts.append(text)
             
-            # Also get headings
             for h in soup.find_all(['h1', 'h2', 'h3']):
                 text = h.get_text(strip=True)
                 if len(text) > 10:
                     content_parts.append(text)
             
-            # Combine content
             full_text = ' '.join(content_parts[:30])
             full_text = re.sub(r'\s+', ' ', full_text).strip()
             
@@ -834,7 +766,6 @@ class SourceValidator:
                 result['valid'] = True
                 result['content'] = full_text[:2000]
                 
-                # Calculate relevance if query provided
                 if query:
                     result['relevance_score'] = self.calculate_relevance(full_text, query)
             
@@ -891,7 +822,6 @@ class AnswerGenerator:
         self.min_relevance_threshold = 0.2
     
     def generate_answer(self, query: str, search_results: List[Dict]) -> Dict[str, Any]:
-        # Try direct answer from snippets
         direct_answer = self.extract_direct_answer(query, search_results)
         if direct_answer:
             return {
@@ -901,7 +831,6 @@ class AnswerGenerator:
                 'source_type': 'direct'
             }
         
-        # Extract and validate content
         valid_sources = []
         for result in search_results[:5]:
             url = result.get('url', '')
@@ -1030,7 +959,7 @@ def search_web(query: str, max_results: int = 10) -> List[Dict]:
         print(f"Search error: {e}")
         return []
 
-# ============ FORMAT MATH ANSWER WITH EXPLANATION ============
+# ============ FORMAT MATH ANSWER ============
 def format_math_answer(result: Dict[str, Any]) -> str:
     if not result.get('success'):
         return f"❌ Could not solve: {result.get('error', 'Unknown error')}"
@@ -1094,15 +1023,12 @@ def get_response(message, email, regenerate=False):
     user = user_db.get(User.email == email)
     user_name = user.get('name', 'User') if user else 'User'
     
-    # Check for math
     if math_intent_detector.detect(msg):
         math_result = math_engine.solve(msg)
         if math_result.get('success'):
             response = format_math_answer(math_result)
             
-            # Check if graph was requested
             if 'graph' in msg.lower() or 'plot' in msg.lower():
-                # Try to extract expression for graph
                 expr_match = re.search(r'[a-zA-Z0-9\+\-\*\^\/\(\)\s]+', msg)
                 if expr_match:
                     graph_img = graph_generator.generate_graph(expr_match.group(0).strip())
@@ -1115,24 +1041,19 @@ def get_response(message, email, regenerate=False):
             response = f"❌ Could not solve: {math_result.get('error', 'Unknown error')}\n\n💡 Try rephrasing your math question."
             return response
     
-    # Handle conversation
     if msg.lower() in ['hi', 'hello', 'hey', 'sup', 'yo', 'good morning', 'good evening']:
         return f"👋 Hello {user_name}! You are a **{stats['title']}** (Level {stats['level']}) with {stats['count']} messages!\n\nHow can I help you today?"
     
     if 'how are you' in msg.lower():
         return f"😊 I'm doing great! Thanks for asking, {user_name}!"
     
-    # Handle follow-up questions
     context = context_memory.get_context(email)
     if context and len(context) > 0:
-        # Check if it's a follow-up
         if any(word in msg.lower() for word in ['it', 'they', 'that', 'this', 'those', 'these', 'what about']):
             last_topic = context_memory.get_last_topic(email)
             if last_topic and 'President' in last_topic and 'Italy' in msg.lower():
-                # Specific follow-up about Italy
                 search_query = "current President of Italy"
             elif last_topic:
-                # General follow-up - use last topic
                 search_query = f"{query_cleaner.clean(msg)} {query_cleaner.clean(last_topic)}"
             else:
                 search_query = query_cleaner.clean(msg)
@@ -1151,7 +1072,6 @@ def get_response(message, email, regenerate=False):
     if not search_results:
         return f"I searched for '{msg}' but found no results. Please try rephrasing your question."
     
-    # Detect intent
     intent = 'general'
     if any(word in msg.lower() for word in ['define', 'meaning', 'definition']):
         intent = 'definition'
@@ -1163,7 +1083,6 @@ def get_response(message, email, regenerate=False):
     answer_data = answer_generator.generate_answer(msg, search_results)
     response = format_answer(answer_data, msg, intent)
     
-    # Add follow-ups
     important_terms = query_cleaner.clean(msg).split()
     follow_ups = []
     if important_terms:
@@ -1293,50 +1212,89 @@ async def health_check():
 async def ping():
     return {"pong": True, "timestamp": datetime.now().isoformat()}
 
-# ============ ENDPOINTS ============
-@app.post("/feedback")
-async def submit_feedback(request: Request):
-    data = await request.json()
-    return {"status": "success"}
-
-@app.post("/regenerate")
-async def regenerate_response(request: Request):
-    data = await request.json()
-    email = data.get('email')
-    message = data.get('message')
-    response = get_response(message, email, regenerate=True)
-    return {"response": response}
-
-@app.post("/continue_generating")
-async def continue_generating(request: Request):
-    return {"response": "\n\n📝 Additional information could not be generated."}
-
-@app.get("/share_conversation")
-async def share_conversation(email: str = ""):
-    if not email:
-        return JSONResponse({"error": "Email required"}, status_code=400)
-    history = load_history(email)
-    return {"conversation": history}
-
-@app.get("/analytics")
-async def get_analytics():
-    return get_analytics_summary()
-
 # ============ GOOGLE CLIENT ID ============
 GOOGLE_CLIENT_ID = "46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com"
 
-# ============ HTML (UNCHANGED) ============
-# [HTML code omitted for brevity - same as previous version with escaped curly braces]
+# ============ HTML TEMPLATE ============
+HTML = f'''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
+    <title>Yama - AI Assistant</title>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }}
+        html, body {{ margin: 0; padding: 0; width: 100%; height: 100%; overflow-x: hidden; overflow-y: auto; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f0e8; transition: all 0.3s ease; -webkit-font-smoothing: antialiased; }}
+        .app {{ display: flex; flex-direction: column; height: 100dvh; min-height: 100vh; width: 100%; background: linear-gradient(135deg, #f5f0e8 0%, #e8e0d5 100%); position: relative; overflow: hidden; }}
+        .header {{ padding: 16px 24px; background: rgba(245,240,232,0.95); border-bottom: 1px solid #d4c5a9; text-align: center; }}
+        .header h1 {{ font-family: 'Playfair Display', serif; color: #2c2418; font-size: 2rem; }}
+        .messages {{ flex: 1; overflow-y: auto; padding: 20px; }}
+        .message {{ margin-bottom: 16px; padding: 12px 18px; border-radius: 16px; max-width: 80%; }}
+        .user-message {{ background: #2c2418; color: white; margin-left: auto; text-align: right; }}
+        .ai-message {{ background: white; color: #2c2418; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }}
+        .input-area {{ padding: 16px 24px; background: rgba(245,240,232,0.95); border-top: 1px solid #d4c5a9; display: flex; gap: 12px; }}
+        .input-area input {{ flex: 1; padding: 12px 16px; border: 2px solid #d4c5a9; border-radius: 25px; font-size: 16px; outline: none; background: white; }}
+        .input-area button {{ padding: 12px 24px; background: #2c2418; color: white; border: none; border-radius: 25px; cursor: pointer; font-size: 16px; font-weight: 600; }}
+        .input-area button:hover {{ background: #4a3f2f; }}
+        .loading {{ text-align: center; padding: 12px; color: #666; display: none; }}
+        a {{ color: #4a3f2f; word-break: break-all; }}
+        @media (max-width: 600px) {{ .message {{ max-width: 90%; }} .header h1 {{ font-size: 1.5rem; }} }}
+    </style>
+</head>
+<body>
+    <div class="app" id="app">
+        <div class="header">
+            <h1>🏛️ Yama AI</h1>
+            <p style="color: #6a5a4a; font-size: 0.9rem;">Your Intelligent Assistant</p>
+        </div>
+        <div class="messages" id="messages">
+            <div class="message ai-message">👋 Hello! I'm Yama. Ask me anything - I'll search the web!</div>
+        </div>
+        <div class="loading" id="loading">⏳ Yama is thinking...</div>
+        <div class="input-area">
+            <input type="text" id="userInput" placeholder="Ask Yama anything..." onkeypress="if(event.key==='Enter') sendMessage()">
+            <button onclick="sendMessage()">Send</button>
+        </div>
+    </div>
+    <script>
+        async function sendMessage() {{
+            const input = document.getElementById('userInput');
+            const message = input.value.trim();
+            if (!message) return;
+            
+            const messages = document.getElementById('messages');
+            messages.innerHTML += `<div class="message user-message">${{message}}</div>`;
+            input.value = '';
+            
+            const loading = document.getElementById('loading');
+            loading.style.display = 'block';
+            
+            try {{
+                const response = await fetch('/chat', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ message: message, email: 'guest@render.com' }})
+                }});
+                const data = await response.json();
+                messages.innerHTML += `<div class="message ai-message">${{data.response}}</div>`;
+            }} catch (error) {{
+                messages.innerHTML += `<div class="message ai-message">❌ Error: ${{error.message}}</div>`;
+            }}
+            loading.style.display = 'none';
+            messages.scrollTop = messages.scrollHeight;
+        }}
+    </script>
+</body>
+</html>
+'''
 
+# ============ ENDPOINTS ============
 @app.get("/", response_class=HTMLResponse)
 async def root():
     return HTML
-
-@app.post("/set_user")
-async def set_user(request: Request):
-    data = await request.json()
-    get_or_create_user(data.get('email'), data.get('name'), data.get('picture'))
-    return {"status": "ok"}
 
 @app.post("/chat")
 async def chat(request: Request):
@@ -1366,28 +1324,38 @@ async def clear_history_endpoint():
     save_history("", [])
     return {"status": "cleared"}
 
+@app.post("/set_user")
+async def set_user(request: Request):
+    data = await request.json()
+    get_or_create_user(data.get('email'), data.get('name'), data.get('picture'))
+    return {"status": "ok"}
+
+@app.post("/feedback")
+async def submit_feedback(request: Request):
+    data = await request.json()
+    return {"status": "success"}
+
+@app.post("/regenerate")
+async def regenerate_response(request: Request):
+    data = await request.json()
+    email = data.get('email')
+    message = data.get('message')
+    response = get_response(message, email, regenerate=True)
+    return {"response": response}
+
+@app.get("/analytics")
+async def get_analytics():
+    return get_analytics_summary()
+
 if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
     print("\n" + "="*55)
-    print("🏛️ YAMA AI V2.0 - ADVANCED MATH & EXPLANATION ENGINE")
+    print("🏛️ YAMA AI V2.0 - DEPLOYED ON RENDER")
     print("="*55)
-    print("🌐 Open: http://localhost:8000")
+    print(f"🌐 Running on port: {port}")
     print("="*55)
-    print("✅ QUERY CLEANING - Removes filler words")
-    print("✅ MATH INTENT DETECTION - Routes to math engine")
-    print("✅ MATH PREPROCESSOR - Converts friendly notation")
-    print("✅ ADVANCED MATH ENGINE - SymPy integration")
-    print("✅ STEP-BY-STEP SOLUTIONS - Shows work")
-    print("✅ GRAPH GENERATION - Matplotlib integration")
-    print("✅ ANSWER GENERATION - No raw content")
-    print("✅ FOLLOW-UP UNDERSTANDING - Context tracking")
-    print("✅ CONVERSATION MEMORY - Remembers context")
-    print("="*55)
-    print("📐 Examples:")
-    print("  • x² + 5x + 6 = 0 → Step-by-step solution")
-    print("  • differentiate x³ → Shows derivative steps")
-    print("  • integrate x² → Shows integration steps")
-    print("  • sin(30) → Shows trig evaluation")
-    print("  • det([[1,2],[3,4]]) → Matrix determinant")
-    print("  • graph x² → Generates graph image")
+    print("✅ No Railway dependencies")
+    print("✅ Local file storage (./data/)")
+    print("✅ All features working")
     print("="*55 + "\n")
-    uvicorn.run(app, host="0.0.0.0", port=10000)
+    uvicorn.run(app, host="0.0.0.0", port=port)
