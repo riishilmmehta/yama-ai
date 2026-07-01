@@ -1,24 +1,40 @@
+# ============ CORE ============
 fastapi
 uvicorn
 requests
 beautifulsoup4
 ddgs
-qrcode
-pillow
-thefuzz
-dateparser
 tinydb
-PyPDF2
-textblob
-networkx
 
-# ========== MATHEMATICS ENGINE (NEW) ==========
+# ============ MATHEMATICS ENGINE ============
 sympy
 mpmath
 numpy
 scipy
 matplotlib
-
-# ========== MATH PARSING (NEW) ==========
 latex2sympy2
 antlr4-python3-runtime
+
+# ============ DOCUMENT PROCESSING ============
+PyMuPDF        # PDF reading
+python-docx    # DOCX reading
+python-pptx    # PPTX reading
+pandas         # Excel/CSV reading
+openpyxl       # Excel support
+Pillow         # Image processing
+pytesseract    # OCR for images
+
+# ============ DATA & APIs ============
+feedparser     # RSS news feeds
+yfinance       # Stock prices
+qrcode         # QR code generator
+rapidfuzz      # Fuzzy string matching
+
+# ============ TEXT PROCESSING ============
+textblob       # Text analysis
+dateparser     # Date parsing
+thefuzz        # Fuzzy matching (alternative to rapidfuzz)
+
+# ============ UTILITIES ============
+networkx       # Graph/network analysis
+PyPDF2         # PDF reading (alternative to PyMuPDF)
