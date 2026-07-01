@@ -11,7 +11,7 @@ import operator
 import hashlib
 import time
 from datetime import datetime, timedelta
-from ddgs import DDGS
+from googlesearch import search
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import quote, urlparse
@@ -186,18 +186,17 @@ def _safe_eval_node(node):
         raise ValueError("invalid constant")
     if isinstance(node, ast.BinOp) and type(node.op) in _ALLOWED_BINOPS:
         return _ALLOWED_BINOPS[type(node.op)](_safe_eval_node(node.left), _safe_eval_node(node.right))
-    if isinstance(node, ast.UnaryOp) and type(node.op) in _ALLOWED_UNARYOPS:
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _ALLOWED_UNARYOPS):
         return _ALLOWED_UNARYOPS[type(node.op)](_safe_eval_node(node.operand))
     if isinstance(node, ast.Call):
-        if isinstance(node.func, ast.Name) and node.func.id in _ALLOWED_FUNCS:
+        if isinstance(node.func, ast.Name) and node.func.id in _ALLOWED_FUNCS):
             args = [_safe_eval_node(a) for a in node.args]
             return _ALLOWED_FUNCS[node.func.id](*args)
         raise ValueError("function not allowed")
-    if isinstance(node, ast.Name) and node.id in _ALLOWED_NAMES:
+    if isinstance(node, ast.Name) and node.id in _ALLOWED_NAMES):
         return _ALLOWED_NAMES[node.id]
     raise ValueError("disallowed expression")
 
-# ===== FIXED: Removed .replace('x', '*') bug =====
 def safe_calculate(expr):
     expr = expr.replace('^', '**').replace('×', '*').replace('÷', '/')
     parsed = ast.parse(expr, mode='eval')
@@ -227,7 +226,6 @@ def _sp_safe_parse(text):
     local_dict = {s: sp.Symbol(s) for s in _SP_SYMBOLS}
     return parse_expr(text, local_dict=local_dict, transformations=_SP_TRANSFORMS)
 
-# ===== FIXED: Calculus Detection with proper step-by-step =====
 def solve_step_by_step(message):
     """Returns a formatted, narrated solution with actual step-by-step logic."""
     msg = message.strip()
@@ -255,7 +253,7 @@ def solve_step_by_step(message):
             ]
             return "\n".join(steps)
         
-        # ===== DIFFERENTIATION - FIXED: Better detection and steps =====
+        # ===== DIFFERENTIATION =====
         deriv_keywords = ['derivative of', 'differentiate', 'diff', 'd/dx']
         deriv_match = None
         for kw in deriv_keywords:
@@ -272,7 +270,6 @@ def solve_step_by_step(message):
             expr = _sp_safe_parse(expr_str)
             x = sp.Symbol('x')
             
-            # Generate step-by-step differentiation
             terms = expr.as_ordered_terms() if expr.is_Add else [expr]
             term_steps = []
             for term in terms:
@@ -300,7 +297,7 @@ def solve_step_by_step(message):
             
             return "\n".join(steps)
         
-        # ===== INTEGRATION - FIXED: Better detection and steps =====
+        # ===== INTEGRATION =====
         int_keywords = ['integrate', 'integral of', '∫']
         int_match = None
         for kw in int_keywords:
@@ -317,7 +314,6 @@ def solve_step_by_step(message):
             expr = _sp_safe_parse(expr_str)
             x = sp.Symbol('x')
             
-            # Generate step-by-step integration
             terms = expr.as_ordered_terms() if expr.is_Add else [expr]
             term_steps = []
             for term in terms:
@@ -345,12 +341,11 @@ def solve_step_by_step(message):
             
             return "\n".join(steps)
         
-        # ===== MATRICES - FIXED: Better regex for nested matrices =====
+        # ===== MATRICES =====
         mat_match = re.search(r'\[\[.*?\]\]', msg, re.DOTALL)
         if mat_match and ('matrix' in lower or 'determinant' in lower or 'det' in lower or 'inverse' in lower):
             try:
                 mat_str = mat_match.group(0)
-                # Parse matrix string safely
                 rows = []
                 for row_str in re.findall(r'\[([^\[\]]+)\]', mat_str):
                     values = [float(x.strip()) for x in row_str.split(',')]
@@ -380,8 +375,7 @@ def solve_step_by_step(message):
                     ]
                     return "\n".join(steps)
                     
-            except Exception as e:
-                print(f"Matrix parsing error: {e}")
+            except Exception:
                 pass
         
         # ===== STATISTICS =====
@@ -422,8 +416,7 @@ def solve_step_by_step(message):
             expr = _sp_safe_parse(expr_str)
             return f"📐 **Simplify:** {expr_str}\n\n**Result:** {sp.simplify(expr)}"
         
-    except Exception as e:
-        print(f"Math solver error: {e}")
+    except Exception:
         return None
     return None
 
@@ -432,25 +425,20 @@ def is_math_query(query: str) -> bool:
     """Detect if query is mathematical and should bypass web search"""
     query_lower = query.lower()
     
-    # Calculus keywords
     calculus_keywords = ['differentiate', 'derivative of', 'diff', 'd/dx', 'integrate', 'integral of', '∫', 'limit']
     for kw in calculus_keywords:
         if kw in query_lower:
             return True
     
-    # Equation detection
     if '=' in query and re.search(r'[a-zA-Z]', query):
         return True
     
-    # Matrix detection
     if re.search(r'\[\[.*?\]\]', query):
         return True
     
-    # Statistics detection
     if re.search(r'(mean|median|stdev|variance|average) of [\d.,\s]+', query_lower):
         return True
     
-    # Math symbols
     if re.search(r'[\^]', query) and re.search(r'[a-zA-Z]', query):
         return True
     
@@ -704,20 +692,38 @@ def cache_get(text):
 def cache_set(text, result):
     _response_cache[_cache_key(text)] = (time.time(), result)
 
-# ============ SEARCH FUNCTION ============
+# ============ SEARCH FUNCTION (Using Google) ============
 def search_web(query):
+    """Search using Google Search"""
     results = []
     try:
-        with DDGS() as ddgs:
-            search_results = list(ddgs.text(query, max_results=7))
-            for r in search_results:
+        search_results = list(search(query, num_results=7))
+        for url in search_results:
+            try:
+                headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+                response = requests.get(url, headers=headers, timeout=5)
+                soup = BeautifulSoup(response.text, 'html.parser')
+                title = soup.find('title')
+                title_text = title.get_text().strip() if title else url
+                
+                meta = soup.find('meta', attrs={'name': 'description'})
+                snippet = meta.get('content', '')[:300] if meta else ''
+                
                 results.append({
-                    "title": r.get('title', ''),
-                    "snippet": r.get('body', '')[:300],
-                    "url": r.get('href', '')
+                    "title": title_text,
+                    "snippet": snippet,
+                    "url": url
                 })
+            except:
+                results.append({
+                    "title": url,
+                    "snippet": "",
+                    "url": url
+                })
+        return results
     except Exception as e:
-        print(f"Search error: {e}")
+        print(f"Google search error: {e}")
+    
     return results
 
 def read_full_webpage(url):
@@ -773,7 +779,6 @@ def datetime_answer(msg):
 
 # ============ CONTEXT RESOLUTION ============
 def resolve_followup(msg, memory):
-    """Enhanced context resolution for follow-up questions."""
     history = memory.get("conversation_history", [])
     if not history:
         return msg
@@ -785,14 +790,12 @@ def resolve_followup(msg, memory):
     
     msg_lower = msg.lower()
     
-    # If user says "tell me more", expand using last topic
     if re.match(r'^(tell me more|more|expand|explain more|continue|go on|elaborate|what about it)[\.\?!]?$', msg_lower, re.IGNORECASE):
         topic = context.get("topic") or context.get("entity")
         if topic:
             return f"tell me more about {topic}"
         return f"{last_user} - tell me more details"
     
-    # Pronoun resolution: "who is he/she/they/it?"
     if re.match(r'^(?:who|what) (?:is|are|was|were) (?:he|she|they|it|him|her|them)\??$', msg_lower, re.IGNORECASE):
         names = re.findall(r'\b[A-Z][a-z]+ [A-Z][a-z]+\b', last_yama)
         if names:
@@ -801,7 +804,6 @@ def resolve_followup(msg, memory):
         if entity:
             return f"tell me about {entity}"
     
-    # "What about [X]" pattern
     what_about_match = re.match(r'^what about (.+)$', msg_lower)
     if what_about_match:
         new_topic = what_about_match.group(1).strip()
@@ -813,17 +815,9 @@ def resolve_followup(msg, memory):
                 return f"current head of state of {new_topic}"
             return f"tell me about {new_topic}"
     
-    # "What about Italy?" pattern
-    if re.match(r'^what about ([A-Z][a-z]+)$', msg_lower):
-        new_topic = re.search(r'what about ([A-Z][a-z]+)', msg_lower, re.IGNORECASE).group(1)
-        if context.get("category") == "person":
-            return f"current status of {new_topic}"
-        return f"information about {new_topic}"
-    
     return msg
 
 def detect_intent_and_context(msg):
-    """Detect intent and extract context information."""
     msg_lower = msg.lower().strip()
     context = {"topic": None, "entity": None, "intent": "general", "category": None}
     
@@ -1579,7 +1573,6 @@ def get_response(message, email):
         save_memory(email, memory)
         return {"text": reply, "image": image} if image else reply
     
-    # ===== FIXED: Math detection bypasses web search =====
     if is_math_query(raw_message):
         solved = solve_step_by_step(raw_message)
         if solved:
@@ -1788,6 +1781,7 @@ if __name__ == "__main__":
     print("="*55)
     print(f"🌐 Running on port: {port}")
     print("="*55)
+    print("✅ Google Search Integrated (googlesearch-python)")
     print("✅ Calculus Routing Fixed (differentiate, integrate)")
     print("✅ Expression Corruption Fixed (removed .replace('x', '*'))")
     print("✅ Mobile Keyboard Fix (No fixed values)")
