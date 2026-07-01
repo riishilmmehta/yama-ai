@@ -21,7 +21,7 @@ import io
 import base64
 from typing import List, Dict, Any, Optional, Tuple
 
-# ============ NEW DEPENDENCIES ============
+# ============ MATHEMATICS ============
 import sympy as sp
 from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
 import matplotlib
@@ -29,43 +29,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-# ============ DOCUMENT PROCESSING (Optional - install if needed) ============
-try:
-    import fitz  # PyMuPDF
-    HAS_PYMUPDF = True
-except ImportError:
-    HAS_PYMUPDF = False
-    print("⚠️ PyMuPDF not installed. PDF support disabled.")
-
-try:
-    import docx as docx_lib
-    HAS_DOCX = True
-except ImportError:
-    HAS_DOCX = False
-    print("⚠️ python-docx not installed. DOCX support disabled.")
-
-try:
-    import pandas as pd
-    HAS_PANDAS = True
-except ImportError:
-    HAS_PANDAS = False
-    print("⚠️ pandas not installed. Spreadsheet support disabled.")
-
-try:
-    from PIL import Image
-    HAS_PIL = True
-except ImportError:
-    HAS_PIL = False
-    print("⚠️ Pillow not installed. Image support disabled.")
-
-try:
-    import pytesseract
-    HAS_TESSERACT = True
-except ImportError:
-    HAS_TESSERACT = False
-    print("⚠️ pytesseract not installed. OCR support disabled.")
-
-app = FastAPI(title="Yama AI V3.0")
+app = FastAPI(title="Yama AI")
 
 # ============ DATA DIRECTORY ============
 DATA_DIR = os.environ.get("DATA_DIR", "./data")
@@ -77,11 +41,42 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 user_db = TinyDB(os.path.join(DATA_DIR, 'users.json'))
 User = Query()
 
-message_feedback_db = TinyDB(os.path.join(DATA_DIR, 'feedback.json'))
-Feedback = Query()
+# ============ CONTEXT MEMORY (Enhanced) ============
+MEMORY_TURN_LIMIT = 15
+_context_memory = {}
 
-# ============ CONVERSATION MEMORY ============
-MEMORY_TURN_LIMIT = 12
+class ConversationContext:
+    """Stores and manages conversation context for follow-up questions."""
+    
+    def __init__(self):
+        self.topic = None
+        self.entity = None
+        self.intent = None
+        self.category = None
+        self.last_question = None
+        self.last_answer = None
+    
+    def update(self, topic=None, entity=None, intent=None, category=None, question=None, answer=None):
+        if topic is not None:
+            self.topic = topic
+        if entity is not None:
+            self.entity = entity
+        if intent is not None:
+            self.intent = intent
+        if category is not None:
+            self.category = category
+        if question is not None:
+            self.last_question = question
+        if answer is not None:
+            self.last_answer = answer
+    
+    def get_context(self):
+        return {
+            "topic": self.topic,
+            "entity": self.entity,
+            "intent": self.intent,
+            "category": self.category
+        }
 
 def _memory_path(email):
     safe_email = (email or "anon").replace('@', '_at_').replace('.', '_dot_')
@@ -96,7 +91,7 @@ def load_memory(email):
                 return json.load(f)
         except Exception:
             pass
-    return {"conversation_history": [], "user_preferences": {}, "long_term_memory": {}}
+    return {"conversation_history": [], "context": {}, "long_term_memory": {}}
 
 def save_memory(email, memory):
     path = _memory_path(email)
@@ -225,10 +220,10 @@ def _safe_eval_node(node):
         raise ValueError("invalid constant")
     if isinstance(node, ast.BinOp) and type(node.op) in _ALLOWED_BINOPS:
         return _ALLOWED_BINOPS[type(node.op)](_safe_eval_node(node.left), _safe_eval_node(node.right))
-    if isinstance(node, ast.UnaryOp) and type(node.op) in _ALLOWED_UNARYOPS:
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _ALLOWED_UNARYOPS):
         return _ALLOWED_UNARYOPS[type(node.op)](_safe_eval_node(node.operand))
     if isinstance(node, ast.Call):
-        if isinstance(node.func, ast.Name) and node.func.id in _ALLOWED_FUNCS:
+        if isinstance(node.func, ast.Name) and node.func.id in _ALLOWED_FUNCS):
             args = [_safe_eval_node(a) for a in node.args]
             return _ALLOWED_FUNCS[node.func.id](*args)
         raise ValueError("function not allowed")
@@ -267,41 +262,69 @@ def solve_step_by_step(message):
             x = sp.Symbol('x') if 'x' in lower else list((lhs - rhs).free_symbols)[0]
             equation = sp.Eq(lhs, rhs)
             solutions = sp.solve(equation, x)
-            steps = (
-                f"**Step 1 — Original equation**\n{sp.pretty(equation)}\n\n"
-                f"**Step 2 — Move everything to one side**\n{sp.pretty(sp.Eq(lhs - rhs, 0))}\n\n"
-                f"**Step 3 — Solve for {x}**\n"
-            )
-            return f"📐 {steps}**Final Answer:** {x} = {', '.join(str(s) for s in solutions)}"
+            
+            # Build step-by-step explanation
+            steps = [
+                f"📐 **Equation:** {equation}",
+                "",
+                "**Step 1:** Move everything to one side",
+                f"{sp.pretty(sp.Eq(lhs - rhs, 0))}",
+                "",
+                "**Step 2:** Solve for the variable",
+                f"**Solution:** {x} = {', '.join(str(s) for s in solutions)}"
+            ]
+            return "\n".join(steps)
         
-        # Derivatives
+        # Derivatives - Enhanced
         deriv_match = re.search(r'(?:derivative of|differentiate)\s+(.+)', lower)
         if deriv_match:
             expr = _sp_safe_parse(deriv_match.group(1))
             x = sp.Symbol('x')
             result = sp.diff(expr, x)
-            return (f"📐 **Step 1 — Function**\nf(x) = {expr}\n\n"
-                    f"**Step 2 — Apply differentiation rules**\nf'(x) = d/dx [{expr}]\n\n"
-                    f"**Final Answer:** f'(x) = {sp.simplify(result)}")
+            
+            steps = [
+                f"📐 **Derivative:** d/dx({expr})",
+                "",
+                "**Method:** Power Rule",
+                "",
+                "**Step 1:** Identify each term",
+                f"Original: {expr}",
+                "",
+                "**Step 2:** Apply power rule (d/dx(xⁿ) = n·xⁿ⁻¹)",
+                "",
+                f"**Final Answer:** f'(x) = {sp.simplify(result)}"
+            ]
+            return "\n".join(steps)
         
-        # Integrals
+        # Integrals - Enhanced
         int_match = re.search(r'(?:integrate|integral of)\s+(.+)', lower)
         if int_match:
             expr = _sp_safe_parse(int_match.group(1))
             x = sp.Symbol('x')
             result = sp.integrate(expr, x)
-            return (f"📐 **Step 1 — Function**\nf(x) = {expr}\n\n"
-                    f"**Step 2 — Apply integration rules**\n∫ {expr} dx\n\n"
-                    f"**Final Answer:** {result} + C")
+            
+            steps = [
+                f"📐 **Integral:** ∫{expr} dx",
+                "",
+                "**Method:** Power Rule (∫xⁿ dx = xⁿ⁺¹/(n+1))",
+                "",
+                "**Step 1:** Identify each term",
+                f"Original: {expr}",
+                "",
+                "**Step 2:** Apply integration rules",
+                "",
+                f"**Final Answer:** ∫{expr} dx = {result} + C"
+            ]
+            return "\n".join(steps)
         
         # Matrices
         mat_match = re.search(r'\[\[.+\]\]', msg)
         if mat_match and ('matrix' in lower or 'determinant' in lower or 'inverse' in lower):
             M = sp.Matrix(ast.literal_eval(mat_match.group(0)))
             if 'determinant' in lower or 'det' in lower:
-                return f"📐 **Matrix**\n{sp.pretty(M)}\n\n**Step — Compute determinant**\n\n**Final Answer:** det = {M.det()}"
+                return f"📐 **Matrix:**\n{sp.pretty(M)}\n\n**Determinant:** {M.det()}"
             if 'inverse' in lower:
-                return f"📐 **Matrix**\n{sp.pretty(M)}\n\n**Step — Compute inverse**\n\n**Final Answer:**\n{sp.pretty(M.inv())}"
+                return f"📐 **Matrix:**\n{sp.pretty(M)}\n\n**Inverse:**\n{sp.pretty(M.inv())}"
         
         # Statistics
         stat_match = re.search(r'(mean|average|median|stdev|std|variance) of ([\d.,\s]+)', lower)
@@ -323,17 +346,22 @@ def solve_step_by_step(message):
                 var = sum((n - mean) ** 2 for n in nums) / len(nums)
                 result = var if kind == 'variance' else math.sqrt(var)
                 label = "Variance" if kind == 'variance' else "Standard deviation"
-            return (f"📐 **Step 1 — Data**\n{nums}\n\n"
-                    f"**Step 2 — Compute {label.lower()}**\n\n"
-                    f"**Final Answer:** {label} = {round(result, 4)}")
+            
+            steps = [
+                f"📐 **Data:** {nums}",
+                "",
+                f"**Step 1:** Sort and analyze data",
+                f"**Step 2:** Compute {label.lower()}",
+                "",
+                f"**Final Answer:** {label} = {round(result, 4)}"
+            ]
+            return "\n".join(steps)
         
         # Simplify
         simplify_match = re.search(r'simplify\s+(.+)', lower)
         if simplify_match:
             expr = _sp_safe_parse(simplify_match.group(1))
-            return (f"📐 **Step 1 — Expression**\n{expr}\n\n"
-                    f"**Step 2 — Simplify**\n\n"
-                    f"**Final Answer:** {sp.simplify(expr)}")
+            return f"📐 **Simplify:** {expr}\n\n**Result:** {sp.simplify(expr)}"
         
     except Exception:
         return None
@@ -653,20 +681,107 @@ def datetime_answer(msg):
         return f"📅 Today is **{datetime.now().strftime('%A, %B %d, %Y')}**."
     return None
 
-# ============ MULTI-TURN CONTEXT ============
+# ============ CONTEXT RESOLUTION (Enhanced) ============
 def resolve_followup(msg, memory):
+    """Enhanced context resolution for follow-up questions."""
     history = memory.get("conversation_history", [])
     if not history:
         return msg
-    last_user = history[-1].get("user", "") if history else ""
-    last_yama = history[-1].get("yama", "") if history else ""
-    if re.match(r'^(tell me more|more|expand|explain more|continue|go on|elaborate)[\.\?!]?$', msg, re.IGNORECASE):
+    
+    last_turn = history[-1] if history else {}
+    last_user = last_turn.get("user", "")
+    last_yama = last_turn.get("yama", "")
+    context = memory.get("context", {})
+    
+    # Track intent and entities
+    msg_lower = msg.lower()
+    
+    # If user says "tell me more", expand using last topic
+    if re.match(r'^(tell me more|more|expand|explain more|continue|go on|elaborate|what about it)[\.\?!]?$', msg_lower, re.IGNORECASE):
+        topic = context.get("topic") or context.get("entity")
+        if topic:
+            return f"tell me more about {topic}"
         return f"{last_user} - tell me more details"
-    if re.match(r'^(?:who|what) (?:is|are|was|were) (?:he|she|they|it)\??$', msg, re.IGNORECASE):
+    
+    # Pronoun resolution: "who is he/she/they/it?"
+    if re.match(r'^(?:who|what) (?:is|are|was|were) (?:he|she|they|it|him|her|them)\??$', msg_lower, re.IGNORECASE):
+        # Try to find names in previous response
         names = re.findall(r'\b[A-Z][a-z]+ [A-Z][a-z]+\b', last_yama)
         if names:
             return f"who is {names[0]}"
+        # Try to find entity from context
+        entity = context.get("entity")
+        if entity:
+            return f"tell me about {entity}"
+    
+    # "What about [X]" pattern
+    what_about_match = re.match(r'^what about (.+)$', msg_lower)
+    if what_about_match:
+        new_topic = what_about_match.group(1).strip()
+        old_topic = context.get("topic") or context.get("entity")
+        if old_topic and len(new_topic) < 3:
+            # If "what about it" or "what about that"
+            return f"tell me about {old_topic} {new_topic}"
+        elif old_topic:
+            # "what about Italy" after "President of USA"
+            if context.get("category") == "head_of_state":
+                return f"current head of state of {new_topic}"
+            return f"tell me about {new_topic}"
+    
+    # "What about Italy?" pattern
+    if re.match(r'^what about ([A-Z][a-z]+)$', msg_lower):
+        new_topic = re.search(r'what about ([A-Z][a-z]+)', msg_lower, re.IGNORECASE).group(1)
+        if context.get("category") == "person":
+            return f"current status of {new_topic}"
+        return f"information about {new_topic}"
+    
     return msg
+
+def detect_intent_and_context(msg):
+    """Detect intent and extract context information."""
+    msg_lower = msg.lower().strip()
+    context = {"topic": None, "entity": None, "intent": "general", "category": None}
+    
+    # Extract entities (capitalized words or quoted phrases)
+    entities = re.findall(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b', msg)
+    if entities:
+        context["entity"] = entities[0]
+    
+    # Detect intent
+    if any(word in msg_lower for word in ["who", "person", "president", "prime minister", "ceo", "founder"]):
+        context["intent"] = "person"
+        context["category"] = "person"
+    elif any(word in msg_lower for word in ["what", "define", "meaning", "what is"]):
+        context["intent"] = "definition"
+        context["category"] = "definition"
+    elif any(word in msg_lower for word in ["explain", "how", "why", "does"]):
+        context["intent"] = "explanation"
+        context["category"] = "explanation"
+    elif any(word in msg_lower for word in ["weather", "temperature", "forecast"]):
+        context["intent"] = "weather"
+        context["category"] = "weather"
+    elif any(word in msg_lower for word in ["news", "headlines", "latest"]):
+        context["intent"] = "news"
+        context["category"] = "news"
+    elif any(word in msg_lower for word in ["math", "solve", "calculate", "integrate", "differentiate"]):
+        context["intent"] = "math"
+        context["category"] = "math"
+    elif any(word in msg_lower for word in ["convert", "km", "miles", "kg", "lbs"]):
+        context["intent"] = "conversion"
+        context["category"] = "conversion"
+    
+    # Extract topic (what the question is about)
+    for word in ["about", "on", "regarding"]:
+        if word in msg_lower:
+            parts = msg_lower.split(word, 1)
+            if len(parts) > 1:
+                context["topic"] = parts[1].strip().strip('?')
+                break
+    
+    if not context["topic"] and entities:
+        context["topic"] = entities[0]
+    
+    return context
 
 # ============ KNOWLEDGE BASE ============
 _KNOWLEDGE_BASE = {
@@ -740,8 +855,771 @@ def knowledge_base_lookup(msg):
             return ans
     return None
 
-# ============ RESPONSE FUNCTION ============
-def get_response(message, email, regenerate=False):
+# ============ HTML ============
+HTML = f'''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover, interactive-widget=resizes-content">
+    <title>Yama AI - Your Intelligent Assistant</title>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }}
+        html, body {{
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            overflow-x: hidden; overflow-y: auto; 
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f0e8; transition: all 0.3s ease;
+            -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+            position: relative;
+        }}
+        img, video, iframe {{ max-width: 100%; height: auto; }}
+        
+        body.dark {{ background: #1a1a2e; }}
+        body.dark .app {{ background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); }}
+        body.dark .header {{ background: rgba(26,26,46,0.95); border-bottom-color: #2a2a4e; }}
+        body.dark .logo h1 {{ color: #d4c5a9; }}
+        body.dark .input-wrapper {{ background: #2a2a4e; border-color: #3a3a5e; }}
+        body.dark textarea {{ color: #e0e0e0; }}
+        body.dark textarea::placeholder {{ color: #6a5a7a; }}
+        body.dark .message-content {{ color: #e0e0e0; }}
+        body.dark .ai-message .message-content {{ background: #2a2a4e !important; color: #e0e0e0 !important; }}
+        body.dark .suggestion {{ background: #2a2a4e; border-color: #3a3a5e; color: #e0e0e0; }}
+        body.dark .suggestion:hover {{ background: #3a3a5e; color: white; }}
+        body.dark .welcome h2 {{ color: #d4c5a9; }}
+        body.dark .welcome p {{ color: #8a7a6a; }}
+        body.dark .sidebar {{ background: #0f0f23; border-right-color: #2a2a4e; }}
+        body.dark .sidebar-header {{ background: #0a0a1a; }}
+        body.dark .history-question {{ color: #d4c5a9; }}
+        body.dark .history-time {{ color: #6a5a7a; }}
+        body.dark .history-item:hover {{ background: rgba(212,197,169,0.08); border-color: #3a3a5e; }}
+        body.dark .clear-history {{ color: #d4c5a9; border-color: #3a3a5e; }}
+        body.dark .clear-history:hover {{ background: rgba(212,197,169,0.2); border-color: #c4a57b; }}
+        body.dark .new-chat-btn {{ background: #3a3a5e; color: #d4c5a9; }}
+        body.dark .new-chat-btn:hover {{ background: #4a4a6e; }}
+        body.dark .typing span {{ background: #d4c5a9; }}
+        body.dark .typing {{ color: #d4c5a9; }}
+        body.dark a {{ color: #4ecdc4; }}
+        body.dark .message-content a {{ color: #4ecdc4; }}
+        body.dark .message-content a:hover {{ color: #6ee7de; }}
+        body.dark .control-btn {{ color: #d4c5a9; }}
+        body.dark .control-btn:hover {{ background: #3a3a5e; color: white; }}
+        
+        .login-overlay {{ position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); z-index: 2000; display: flex; justify-content: center; align-items: center; padding: 20px; }}
+        .login-card {{ background: white; border-radius: 30px; padding: 40px 30px; text-align: center; max-width: 400px; width: 100%; box-shadow: 0 25px 50px rgba(0,0,0,0.2); }}
+        .login-card .logo-icon {{ font-size: 4rem; margin-bottom: 20px; }}
+        .login-card h2 {{ font-family: 'Playfair Display', serif; font-size: 2rem; margin-bottom: 10px; }}
+        .login-card p {{ color: #666; font-size: 1rem; margin-bottom: 30px; }}
+        
+        .app {{
+            display: flex; flex-direction: column;
+            height: 100dvh; min-height: 100vh;
+            width: 100%;
+            background: linear-gradient(135deg, #f5f0e8 0%, #e8e0d5 100%);
+            position: relative; overflow: hidden;
+        }}
+        
+        .sidebar {{ position: fixed; left: 0; top: 0; bottom: 0; width: min(280px, 80vw); background: #2c2418; border-right: 1px solid #4a3f2f; display: flex; flex-direction: column; transform: translateX(-100%); transition: transform 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55); z-index: 1000; box-shadow: 4px 0 20px rgba(0,0,0,0.1); }}
+        .sidebar.open {{ transform: translateX(0); }}
+        .sidebar-header {{ padding: 20px; border-bottom: 1px solid #4a3f2f; background: #1f1912; flex-shrink: 0; }}
+        .sidebar-header h3 {{ color: #d4c5a9; font-family: 'Playfair Display', serif; font-size: 1rem; }}
+        .user-profile {{ display: none; align-items: center; gap: 12px; padding: 12px; background: rgba(212,197,169,0.1); border-radius: 12px; margin-top: 15px; }}
+        .user-profile-img {{ width: 45px; height: 45px; border-radius: 50%; object-fit: cover; }}
+        .user-profile-info {{ flex: 1; min-width: 0; }}
+        .user-profile-name {{ color: #d4c5a9; font-weight: 600; font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+        .user-profile-email {{ color: #8a7a6a; font-size: 0.65rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+        .logout-btn {{ background: rgba(212,197,169,0.1); border: 1px solid #4a3f2f; border-radius: 20px; padding: 6px 12px; color: #d4c5a9; cursor: pointer; font-size: 0.65rem; white-space: nowrap; }}
+        .history-list {{ flex: 1; overflow-y: auto; padding: 12px; -webkit-overflow-scrolling: touch; }}
+        .history-item {{ padding: 10px; margin-bottom: 6px; border-radius: 10px; cursor: pointer; transition: all 0.2s; border: 1px solid transparent; }}
+        .history-item:hover {{ background: rgba(212,197,169,0.08); border-color: #4a3f2f; }}
+        .history-question {{ font-size: 0.8rem; color: #d4c5a9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+        .history-time {{ font-size: 0.6rem; color: #6a5a4a; margin-top: 4px; }}
+        .sidebar-footer {{ padding: 16px; border-top: 1px solid #4a3f2f; background: #1f1912; flex-shrink: 0; }}
+        .new-chat-btn {{ background: #4a3f2f; border: none; border-radius: 25px; padding: 12px 16px; color: #d4c5a9; cursor: pointer; width: 100%; font-size: 0.85rem; display: flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.2s; }}
+        .new-chat-btn:hover {{ background: #5a4f3f; }}
+        .clear-history {{ background: rgba(212,197,169,0.1); border: 1px solid #4a3f2f; border-radius: 20px; padding: 8px 16px; color: #d4c5a9; cursor: pointer; font-size: 0.7rem; margin-top: 10px; width: 100%; }}
+        .overlay {{ position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.4); display: none; z-index: 999; }}
+        .overlay.show {{ display: block; }}
+        
+        .main {{
+            flex: 1; display: flex; flex-direction: column;
+            min-height: 0; height: 100%; width: 100%;
+            overflow: hidden;
+        }}
+        
+        .header {{
+            padding: 12px 16px; display: flex; align-items: center; gap: 12px;
+            border-bottom: 1px solid #d4c5a9;
+            background: rgba(245,240,232,0.95);
+            flex-shrink: 0; min-height: 56px; width: 100%;
+            position: relative; z-index: 10;
+        }}
+        .menu-btn {{ background: none; border: none; font-size: 1.3rem; cursor: pointer; color: #6a5a4a; padding: 8px; border-radius: 10px; display: flex; align-items: center; justify-content: center; }}
+        .menu-btn:hover {{ background: #d4c5a9; color: #2c2418; }}
+        .logo {{ flex: 1; display: flex; align-items: baseline; gap: 6px; min-width: 0; }}
+        .logo-icon {{ font-size: 1.8rem; }}
+        .logo h1 {{ font-family: 'Playfair Display', serif; font-size: 1.3rem; color: #2c2418; white-space: nowrap; }}
+        .new-chat-mobile {{ background: none; border: none; font-size: 1.2rem; cursor: pointer; padding: 8px; border-radius: 10px; color: #6a5a4a; display: none; }}
+        .control-btn {{ background: none; border: none; font-size: 1.2rem; cursor: pointer; padding: 8px 12px; border-radius: 20px; color: #6a5a4a; transition: all 0.2s; display: flex; align-items: center; justify-content: center; }}
+        .control-btn:hover {{ background: #d4c5a9; }}
+        .user-btn {{ background: none; border: none; cursor: pointer; display: none; padding: 4px; }}
+        .user-btn img {{ width: 35px; height: 35px; border-radius: 50%; object-fit: cover; }}
+        
+        .messages {{
+            flex: 1; overflow-y: auto;
+            padding: 16px; padding-bottom: 20px;
+            -webkit-overflow-scrolling: touch;
+            scroll-behavior: smooth;
+            min-height: 0;
+        }}
+        .message {{ margin-bottom: 20px; animation: fadeIn 0.3s ease; }}
+        .message-wrapper {{ display: inline-block; max-width: 85%; }}
+        @keyframes fadeIn {{ from {{ opacity: 0; transform: translateY(10px); }} to {{ opacity: 1; transform: translateY(0); }} }}
+        .user-message {{ text-align: right; }}
+        .ai-message {{ text-align: left; }}
+        .message-content {{ display: inline-block; max-width: 100%; font-size: 0.9rem; line-height: 1.5; color: #2c2418; background: transparent !important; padding: 0 !important; }}
+        .user-message .message-content {{ background: #2c2418 !important; color: white !important; padding: 10px 16px !important; border-radius: 20px !important; }}
+        .ai-message .message-content {{ background: white !important; color: #2c2418 !important; padding: 12px 18px !important; border-radius: 20px !important; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }}
+        
+        .message-actions {{ display: flex; gap: 8px; margin-top: 8px; opacity: 0.6; transition: opacity 0.2s; flex-wrap: wrap; }}
+        .message-actions:hover {{ opacity: 1; }}
+        .message-actions button {{ background: none; border: none; cursor: pointer; padding: 4px 8px; font-size: 0.75rem; border-radius: 6px; color: #6a5a4a; transition: all 0.2s; display: flex; align-items: center; gap: 4px; }}
+        .message-actions button:hover {{ background: rgba(44,36,24,0.1); color: #2c2418; }}
+        body.dark .message-actions button {{ color: #8a7a6a; }}
+        body.dark .message-actions button:hover {{ background: rgba(212,197,169,0.1); color: #d4c5a9; }}
+        .message-actions .liked {{ color: #4caf50 !important; }}
+        .message-actions .disliked {{ color: #f44336 !important; }}
+        
+        .edit-message-input {{ display: none; width: 100%; padding: 8px 12px; border: 2px solid #2c2418; border-radius: 12px; font-size: 0.9rem; font-family: inherit; background: white; color: #2c2418; }}
+        body.dark .edit-message-input {{ background: #2a2a4e; color: #e0e0e0; border-color: #4a3f2f; }}
+        .edit-message-input.active {{ display: block; }}
+        .edit-actions {{ display: none; gap: 8px; margin-top: 8px; }}
+        .edit-actions.active {{ display: flex; }}
+        .edit-actions button {{ padding: 4px 12px; border-radius: 6px; border: none; cursor: pointer; font-size: 0.75rem; }}
+        .edit-actions .save-edit {{ background: #2c2418; color: white; }}
+        .edit-actions .cancel-edit {{ background: #e0d5c8; color: #2c2418; }}
+        body.dark .edit-actions .cancel-edit {{ background: #3a3a5e; color: #d4c5a9; }}
+        
+        .typing {{ display: none; padding: 10px 16px; gap: 5px; color: #888; font-size: 0.8rem; flex-shrink: 0; }}
+        .typing span {{ width: 6px; height: 6px; background: #c4a57b; border-radius: 50%; display: inline-block; animation: bounce 1.4s infinite; }}
+        @keyframes bounce {{ 0%, 60%, 100% {{ transform: translateY(0); }} 30% {{ transform: translateY(-6px); }} }}
+        
+        /* ===== MOBILE KEYBOARD FIX - DYNAMIC ===== */
+        .input-area {{
+            position: sticky;
+            bottom: 0;
+            z-index: 100;
+            background: #f5f0e8;
+            padding: 12px 16px env(safe-area-inset-bottom, 20px);
+            padding-bottom: max(12px, env(safe-area-inset-bottom, 20px));
+            flex-shrink: 0;
+            border-top: 1px solid rgba(212,197,169,0.3);
+            width: 100%;
+            transition: padding-bottom 0.15s ease;
+        }}
+        body.dark .input-area {{ background: #1a1a2e; border-top-color: rgba(42,42,78,0.3); }}
+        
+        .input-wrapper {{
+            display: flex; align-items: flex-end; gap: 12px;
+            background: white; border-radius: 28px;
+            padding: 8px 8px 8px 20px;
+            border: 1px solid #d4c5a9;
+            width: 100%; max-width: 760px;
+            margin: 0 auto;
+            min-height: 56px;
+        }}
+        body.dark .input-wrapper {{ background: #2a2a4e; border-color: #3a3a5e; }}
+        
+        .input-text-wrapper {{ flex: 1; min-width: 0; }}
+        textarea {{
+            width: 100%; background: transparent; border: none; outline: none;
+            font-size: 16px; line-height: 1.5; resize: none;
+            padding: 8px 0; font-family: inherit; color: #2c2418;
+            min-height: 24px; max-height: 180px; overflow-y: auto;
+        }}
+        body.dark textarea {{ color: #e0e0e0; }}
+        textarea::placeholder {{ color: #b8a88a; font-size: 0.95rem; }}
+        @media (max-width: 768px) {{ textarea {{ font-size: 16px !important; }} }}
+        
+        .submit-btn {{
+            display: flex; align-items: center; justify-content: center;
+            flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%;
+            border: none; background-color: #2c2418; color: white;
+            cursor: pointer; transition: all 0.2s;
+            min-width: 44px; min-height: 44px;
+        }}
+        body.dark .submit-btn {{ background-color: #4a3f2f; }}
+        .submit-btn:hover {{ background-color: #4a3f2f; transform: scale(1.02); }}
+        .submit-btn:active {{ transform: scale(0.96); }}
+        .submit-icon {{ width: 20px; height: 20px; fill: currentColor; }}
+        
+        .attach-btn {{
+            display: flex; align-items: center; justify-content: center;
+            flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%;
+            border: 1px solid #e0d5c0; background-color: transparent;
+            color: #2c2418; cursor: pointer; transition: all 0.2s;
+            min-width: 44px; min-height: 44px;
+        }}
+        body.dark .attach-btn {{ border-color: #4a3f2f; color: #e0e0e0; }}
+        .attach-btn:hover {{ background-color: rgba(44,36,24,0.06); }}
+        .attach-icon {{ width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; }}
+        .message-content img.chat-image {{ max-width: 100%; border-radius: 10px; margin-top: 10px; display: block; }}
+        
+        /* ===== RESPONSIVE DESIGN - DYNAMIC ===== */
+        .welcome {{
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            min-height: 40vh; text-align: center; padding: 20px;
+        }}
+        .welcome-icon {{ font-size: 3rem; margin-bottom: 15px; animation: float 3s ease-in-out infinite; }}
+        @keyframes float {{ 0%, 100% {{ transform: translateY(0); }} 50% {{ transform: translateY(-8px); }} }}
+        .welcome h2 {{ font-family: 'Playfair Display', serif; font-size: clamp(1.5rem, 4vw, 2.5rem); color: #2c2418; margin-bottom: 8px; }}
+        .welcome p {{ color: #6a5a4a; font-size: clamp(0.75rem, 1.5vw, 0.95rem); margin-bottom: 20px; }}
+        .suggestions {{
+            display: flex; flex-wrap: wrap; gap: 8px;
+            justify-content: center; margin-top: 15px;
+            max-width: 100%;
+        }}
+        .suggestion {{
+            background: white; border: 1px solid #d4c5a9; border-radius: 30px;
+            padding: 6px 14px; font-size: clamp(0.6rem, 1.2vw, 0.75rem);
+            color: #2c2418; cursor: pointer; transition: all 0.2s;
+            white-space: nowrap;
+        }}
+        .suggestion:hover {{ background: #2c2418; color: white; border-color: #2c2418; }}
+        
+        /* ===== BREAKPOINTS ===== */
+        @media (max-width: 480px) {{
+            .header {{ padding: 8px 12px; min-height: 48px; gap: 8px; }}
+            .logo h1 {{ font-size: 1rem; }}
+            .logo-icon {{ font-size: 1.2rem; }}
+            .messages {{ padding: 10px 12px; }}
+            .input-area {{ padding: 8px 10px 14px; padding-bottom: max(8px, env(safe-area-inset-bottom, 14px)); }}
+            .input-wrapper {{ padding: 5px 5px 5px 14px; min-height: 44px; gap: 8px; border-radius: 24px; }}
+            textarea {{ font-size: 15px !important; padding: 6px 0; min-height: 20px; }}
+            .submit-btn {{ width: 40px; height: 40px; min-width: 40px; min-height: 40px; }}
+            .submit-icon {{ width: 16px; height: 16px; }}
+            .message-content {{ font-size: 0.8rem; }}
+            .suggestions {{ display: none; }}
+            .new-chat-mobile {{ display: block; }}
+        }}
+        @media (max-width: 380px) {{
+            .header {{ padding: 6px 10px; min-height: 44px; gap: 6px; }}
+            .logo h1 {{ font-size: 0.85rem; }}
+            .logo-icon {{ font-size: 1rem; }}
+            .messages {{ padding: 8px 10px; }}
+            .input-area {{ padding: 6px 8px 12px; padding-bottom: max(6px, env(safe-area-inset-bottom, 12px)); }}
+            .input-wrapper {{ padding: 4px 4px 4px 12px; min-height: 40px; gap: 6px; border-radius: 22px; }}
+            textarea {{ font-size: 14px !important; padding: 5px 0; min-height: 18px; }}
+            .submit-btn {{ width: 36px; height: 36px; min-width: 36px; min-height: 36px; }}
+            .submit-icon {{ width: 14px; height: 14px; }}
+            .message-content {{ font-size: 0.75rem; }}
+        }}
+        @media (max-height: 500px) and (orientation: landscape) {{
+            .header {{ min-height: 40px; padding: 4px 12px; gap: 6px; }}
+            .logo h1 {{ font-size: 0.9rem; }}
+            .logo-icon {{ font-size: 1.1rem; }}
+            .messages {{ padding: 6px 12px; padding-bottom: 10px; }}
+            .input-area {{ padding: 4px 12px 8px; padding-bottom: max(4px, env(safe-area-inset-bottom, 8px)); }}
+            .input-wrapper {{ min-height: 38px; padding: 4px 4px 4px 12px; }}
+            textarea {{ min-height: 20px; max-height: 80px; font-size: 14px !important; padding: 4px 0; }}
+            .submit-btn {{ width: 36px; height: 36px; min-width: 36px; min-height: 36px; }}
+            .submit-icon {{ width: 14px; height: 14px; }}
+            .welcome {{ min-height: 20vh; }}
+            .suggestions {{ display: none; }}
+        }}
+        @media (min-width: 769px) and (max-width: 1024px) {{
+            .input-wrapper {{ max-width: 90%; }}
+            .messages {{ padding: 16px 24px; }}
+            .header {{ padding: 14px 20px; }}
+        }}
+        @media (min-width: 1025px) {{
+            .input-wrapper {{ max-width: 760px; }}
+            .messages {{ padding: 24px 32px; }}
+            .header {{ padding: 16px 32px; }}
+        }}
+        
+        /* ===== DYNAMIC KEYBOARD ADJUSTMENT ===== */
+        @supports (height: 100dvh) {{
+            .app {{ height: 100dvh; min-height: 100dvh; }}
+        }}
+    </style>
+</head>
+<body>
+    <div id="loginOverlay" class="login-overlay">
+        <div class="login-card">
+            <div class="logo-icon">🏛️</div>
+            <h2>Welcome to Yama AI</h2>
+            <p>Your Intelligent Assistant</p>
+            <div id="g_id_onload" data-client_id="{GOOGLE_CLIENT_ID}" data-context="signin" data-ux_mode="popup" data-callback="handleCredentialResponse" data-auto_prompt="false"></div>
+            <div class="g_id_signin" data-type="standard" data-shape="rectangular" data-theme="outline" data-text="signin_with" data-size="large" data-logo_alignment="left"></div>
+        </div>
+    </div>
+    <div class="app" id="app">
+        <div class="overlay" id="overlay" onclick="closeSidebar()"></div>
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-header"><h3>📜 CONVERSATIONS</h3><div class="user-profile" id="userProfile"></div></div>
+            <div class="history-list" id="historyList"><div style="color:#6a5a4a;text-align:center;padding:20px;">No conversations yet</div></div>
+            <div class="sidebar-footer"><button class="new-chat-btn" onclick="newChat()">➕ New Chat</button><button class="clear-history" onclick="clearHistory()">Clear all history</button></div>
+        </div>
+        <div class="main">
+            <div class="header">
+                <button class="menu-btn" onclick="toggleSidebar()">☰</button>
+                <div class="logo" id="logo"><span class="logo-icon">🏛️</span><h1>YAMA</h1></div>
+                <button class="new-chat-mobile" onclick="newChat()">➕</button>
+                <button class="control-btn" onclick="toggleTheme()" title="Dark/Light Mode">🌓</button>
+                <button class="control-btn" onclick="exportChat()" title="Export Chat">📥</button>
+                <button class="user-btn" id="userBtn" onclick="toggleUserMenu()"><img id="userAvatar" src="" alt="User"></button>
+            </div>
+            <div class="messages" id="messages">
+                <div class="welcome" id="welcome">
+                    <div class="welcome-icon">🏛️</div>
+                    <h2>Yama AI</h2>
+                    <p>Your Intelligent Assistant — Developed by <strong>Riishil M Mehta</strong></p>
+                    <p style="font-size:0.8rem; color:#888; margin-bottom:10px;">⚡ No LLM • Pure Logic & Search • Fast & Reliable</p>
+                    <div class="suggestions">
+                        <div class="suggestion" onclick="askSuggestion('weather in Mumbai')">🌤️ Weather</div>
+                        <div class="suggestion" onclick="askSuggestion('graph sin(x)')">📊 Graph</div>
+                        <div class="suggestion" onclick="askSuggestion('5 km to miles')">📏 Convert</div>
+                        <div class="suggestion" onclick="askSuggestion('latest tech news')">📰 News</div>
+                        <div class="suggestion" onclick="askSuggestion('solve x^2 - 4 = 0')">📐 Math</div>
+                        <div class="suggestion" onclick="askSuggestion('tell me a joke')">😄 Joke</div>
+                        <div class="suggestion" onclick="askSuggestion('info about Japan')">🌍 Facts</div>
+                        <div class="suggestion" onclick="askSuggestion('who made you')">👨‍💻 About</div>
+                    </div>
+                </div>
+            </div>
+            <div class="typing" id="typing"><span></span><span></span><span></span> Yama is thinking...</div>
+            <div class="input-area" id="inputArea">
+                <div class="input-wrapper">
+                    <input type="file" id="fileInput" style="display:none" accept=".pdf,.docx,.xlsx,.csv,.txt,.png,.jpg,.jpeg" onchange="handleFileUpload(event)">
+                    <button class="attach-btn" onclick="document.getElementById('fileInput').click()" aria-label="Attach file" type="button">
+                        <svg class="attach-icon" viewBox="0 0 24 24" width="18" height="18"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+                    </button>
+                    <div class="input-text-wrapper"><textarea id="userInput" placeholder="Ask Yama anything..." rows="1" onkeypress="handleKey(event)"></textarea></div>
+                    <button class="submit-btn" onclick="sendMessage()" aria-label="Send message">
+                        <svg class="submit-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script>
+        let currentUser = null, hasMessages = false, messageCounter = 0, isGenerating = false;
+        
+        function toggleTheme() {{ document.body.classList.toggle('dark'); localStorage.setItem('theme', document.body.classList.contains('dark') ? 'dark' : 'light'); }}
+        
+        function exportChat() {{
+            const messages = document.querySelectorAll('.message');
+            let exportText = '';
+            messages.forEach(msg => {{
+                const sender = msg.classList.contains('user-message') ? 'You' : 'Yama';
+                const text = msg.querySelector('.message-content').innerText;
+                exportText += sender + ': ' + text + '\\n\\n';
+            }});
+            const blob = new Blob([exportText], {{type: 'text/plain'}});
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'yama_chat_' + new Date().toISOString() + '.txt';
+            a.click();
+        }}
+        
+        if (localStorage.getItem('theme') === 'dark') document.body.classList.add('dark');
+        
+        function toggleUserMenu() {{ document.getElementById('sidebar').classList.toggle('open'); document.getElementById('overlay').classList.toggle('show'); }}
+        
+        function handleCredentialResponse(response) {{
+            const payload = JSON.parse(atob(response.credential.split('.')[1]));
+            currentUser = {{ name: payload.name, email: payload.email, picture: payload.picture }};
+            document.getElementById('loginOverlay').style.display = 'none';
+            document.getElementById('app').style.display = 'flex';
+            document.getElementById('userBtn').style.display = 'block';
+            document.getElementById('userAvatar').src = currentUser.picture;
+            document.getElementById('userProfile').style.display = 'flex';
+            document.getElementById('userProfile').innerHTML = `
+                <img src="${{currentUser.picture}}" class="user-profile-img">
+                <div class="user-profile-info">
+                    <div class="user-profile-name">${{currentUser.name}}</div>
+                    <div class="user-profile-email">${{currentUser.email}}</div>
+                </div>
+                <button class="logout-btn" onclick="logout()">Logout</button>
+            `;
+            loadHistory();
+            fetch('/set_user', {{ method: 'POST', headers: {{ 'Content-Type': 'application/json' }}, body: JSON.stringify({{ email: currentUser.email, name: currentUser.name, picture: currentUser.picture }}) }});
+        }}
+        
+        function logout() {{
+            currentUser = null;
+            document.getElementById('loginOverlay').style.display = 'flex';
+            document.getElementById('app').style.display = 'none';
+            document.getElementById('userBtn').style.display = 'none';
+            document.getElementById('userProfile').style.display = 'none';
+            if (google && google.accounts) google.accounts.id.disableAutoSelect();
+        }}
+        
+        function newChat() {{ if (confirm('Start a new chat?')) location.reload(); }}
+        function toggleSidebar() {{ document.getElementById('sidebar').classList.toggle('open'); document.getElementById('overlay').classList.toggle('show'); }}
+        function closeSidebar() {{ document.getElementById('sidebar').classList.remove('open'); document.getElementById('overlay').classList.remove('show'); }}
+        function askSuggestion(q) {{ document.getElementById('userInput').value = q; sendMessage(); }}
+        
+        async function loadHistory() {{
+            if (!currentUser) return;
+            const res = await fetch('/get_history?email=' + encodeURIComponent(currentUser.email));
+            const history = await res.json();
+            const container = document.getElementById('historyList');
+            if (history.length === 0) {{ container.innerHTML = '<div style="color:#6a5a4a;text-align:center;padding:20px;">No conversations yet</div>'; return; }}
+            let html = '';
+            for (let i = history.length - 1; i >= 0; i--) {{
+                let item = history[i];
+                html += '<div class="history-item" onclick="loadChatMessage(\\'' + escapeHtml(item.user) + '\\')">' +
+                        '<div class="history-question">' + escapeHtml(item.user.substring(0, 45)) + '</div>' +
+                        '<div class="history-time">' + item.timestamp + '</div></div>';
+            }}
+            container.innerHTML = html;
+        }}
+        
+        function escapeHtml(text) {{ const div = document.createElement('div'); div.textContent = text; return div.innerHTML; }}
+        function loadChatMessage(msg) {{ document.getElementById('userInput').value = msg; closeSidebar(); sendMessage(); }}
+        async function clearHistory() {{ if (confirm('Clear all history?')) {{ await fetch('/clear_history', {{ method: 'POST' }}); location.reload(); }} }}
+        
+        const textarea = document.getElementById('userInput');
+        function autoAdjustHeight() {{ this.style.height = 'auto'; this.style.height = this.scrollHeight + 'px'; }}
+        textarea.addEventListener('input', autoAdjustHeight);
+        
+        // ===== DYNAMIC KEYBOARD HANDLING - NO FIXED VALUES =====
+        if (window.visualViewport) {{
+            let lastHeight = window.visualViewport.height;
+            let isKeyboardVisible = false;
+            
+            window.visualViewport.addEventListener('resize', function() {{
+                const inputArea = document.querySelector('.input-area');
+                const currentHeight = window.visualViewport.height;
+                const heightDiff = lastHeight - currentHeight;
+                
+                // Detect keyboard open (viewport shrinks significantly)
+                if (heightDiff > 100) {{
+                    isKeyboardVisible = true;
+                    // The input area is sticky bottom, so it stays visible naturally
+                    // Just ensure we scroll to the input area
+                    if (inputArea) {{
+                        setTimeout(() => {{
+                            inputArea.scrollIntoView({{ behavior: 'smooth', block: 'nearest' }});
+                        }}, 50);
+                    }}
+                }} else if (heightDiff < -50) {{
+                    isKeyboardVisible = false;
+                }}
+                
+                lastHeight = currentHeight;
+            }});
+        }}
+        
+        // Fallback for devices without visualViewport
+        if (window.visualViewport) {{
+            // Also handle resize events for safety
+            window.addEventListener('resize', function() {{
+                const inputArea = document.querySelector('.input-area');
+                if (inputArea && window.innerHeight < 500) {{
+                    setTimeout(() => {{
+                        inputArea.scrollIntoView({{ behavior: 'smooth', block: 'nearest' }});
+                    }}, 100);
+                }}
+            }});
+        }}
+        
+        function handleKey(e) {{ if (e.key === 'Enter' && !e.shiftKey) {{ e.preventDefault(); sendMessage(); }} }}
+        
+        function copyResponse(messageId) {{
+            const content = document.querySelector(`#message-${{messageId}} .message-content`);
+            if (content) {{
+                navigator.clipboard.writeText(content.innerText).then(() => {{
+                    const btn = document.querySelector(`#message-${{messageId}} .copy-btn`);
+                    const originalText = btn.textContent;
+                    btn.textContent = '✅ Copied!';
+                    setTimeout(() => {{ btn.textContent = originalText; }}, 2000);
+                }});
+            }}
+        }}
+        
+        async function regenerateResponse(messageId, userMessage) {{
+            if (isGenerating) return;
+            isGenerating = true;
+            document.getElementById('typing').style.display = 'block';
+            const content = document.querySelector(`#message-${{messageId}} .message-content`);
+            try {{
+                const res = await fetch('/regenerate', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ email: currentUser.email, message: userMessage }})
+                }});
+                const data = await res.json();
+                content.innerHTML = data.response.replace(/\\n/g, '<br>').replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>');
+            }} catch(e) {{ console.error(e); }}
+            document.getElementById('typing').style.display = 'none';
+            isGenerating = false;
+            scrollToBottom();
+        }}
+        
+        function editMessage(messageId) {{
+            const div = document.getElementById(`message-${{messageId}}`);
+            const content = div.querySelector('.message-content');
+            const editInput = div.querySelector('.edit-message-input');
+            const editActions = div.querySelector('.edit-actions');
+            if (content.style.display !== 'none') {{
+                content.style.display = 'none';
+                editInput.value = content.innerText;
+                editInput.classList.add('active');
+                editActions.classList.add('active');
+                editInput.focus();
+            }}
+        }}
+        
+        function saveEdit(messageId) {{
+            const div = document.getElementById(`message-${{messageId}}`);
+            const editInput = div.querySelector('.edit-message-input');
+            const content = div.querySelector('.message-content');
+            const editActions = div.querySelector('.edit-actions');
+            const newText = editInput.value.trim();
+            if (newText) {{
+                content.innerText = newText;
+                content.style.display = 'block';
+                editInput.classList.remove('active');
+                editActions.classList.remove('active');
+            }}
+        }}
+        
+        function cancelEdit(messageId) {{
+            const div = document.getElementById(`message-${{messageId}}`);
+            const content = div.querySelector('.message-content');
+            const editInput = div.querySelector('.edit-message-input');
+            const editActions = div.querySelector('.edit-actions');
+            content.style.display = 'block';
+            editInput.classList.remove('active');
+            editActions.classList.remove('active');
+        }}
+        
+        async function continueGenerating(messageId) {{
+            if (isGenerating) return;
+            isGenerating = true;
+            document.getElementById('typing').style.display = 'block';
+            const content = document.querySelector(`#message-${{messageId}} .message-content`);
+            const userMessage = getLastUserMessage();
+            try {{
+                const res = await fetch('/continue_generating', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ email: currentUser.email, message: userMessage }})
+                }});
+                const data = await res.json();
+                content.innerHTML += data.response.replace(/\\n/g, '<br>').replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>');
+            }} catch(e) {{ console.error(e); }}
+            document.getElementById('typing').style.display = 'none';
+            isGenerating = false;
+            scrollToBottom();
+        }}
+        
+        function getLastUserMessage() {{
+            const messages = document.querySelectorAll('.user-message');
+            if (messages.length > 0) return messages[messages.length-1].querySelector('.message-content').innerText;
+            return '';
+        }}
+        
+        async function shareConversation() {{
+            if (!currentUser) return;
+            try {{
+                const res = await fetch('/share_conversation?email=' + encodeURIComponent(currentUser.email));
+                const data = await res.json();
+                const shareText = data.conversation.map(item => `User: ${{item.user}}\\nYama: ${{item.ai}}\\n`).join('\\n');
+                await navigator.clipboard.writeText(shareText);
+                alert('✅ Conversation copied to clipboard!');
+            }} catch(e) {{ alert('Could not share conversation.'); }}
+        }}
+        
+        async function submitFeedback(messageId, feedbackType) {{
+            const div = document.getElementById(`message-${{messageId}}`);
+            const likeBtn = div.querySelector('.like-btn');
+            const dislikeBtn = div.querySelector('.dislike-btn');
+            try {{
+                await fetch('/feedback', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ email: currentUser.email, message_index: parseInt(messageId.split('-')[1]), feedback_type: feedbackType }})
+                }});
+                if (feedbackType === 'like') {{
+                    likeBtn.classList.toggle('liked');
+                    if (dislikeBtn.classList.contains('disliked')) dislikeBtn.classList.remove('disliked');
+                }} else {{
+                    dislikeBtn.classList.toggle('disliked');
+                    if (likeBtn.classList.contains('liked')) likeBtn.classList.remove('liked');
+                }}
+            }} catch(e) {{ console.error(e); }}
+        }}
+        
+        function stopGenerating() {{ isGenerating = false; document.getElementById('typing').style.display = 'none'; }}
+        
+        async function sendMessage() {{
+            if (!currentUser) {{ alert('Please sign in first!'); return; }}
+            const message = textarea.value.trim();
+            if (!message) return;
+            if (isGenerating) {{ stopGenerating(); return; }}
+            if (!hasMessages) {{
+                const welcome = document.getElementById('welcome');
+                if (welcome) welcome.style.display = 'none';
+                hasMessages = true;
+            }}
+            const messageId = 'msg-' + (++messageCounter);
+            addMessage(message, 'user', messageId);
+            textarea.value = '';
+            textarea.style.height = 'auto';
+            document.getElementById('typing').style.display = 'block';
+            scrollToBottom();
+            try {{
+                const res = await fetch('/chat', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ message: message, email: currentUser.email }})
+                }});
+                const data = await res.json();
+                const aiMessageId = 'msg-' + (++messageCounter);
+                addMessage(data.response, 'ai', aiMessageId, message);
+                document.getElementById('typing').style.display = 'none';
+                loadHistory();
+                scrollToBottom();
+            }} catch(e) {{ console.error(e); document.getElementById('typing').style.display = 'none'; }}
+        }}
+        
+        function addMessage(text, sender, messageId, userMessage = '') {{
+            const messages = document.getElementById('messages');
+            const div = document.createElement('div');
+            div.className = 'message ' + sender + '-message';
+            div.id = messageId;
+            const wrapper = document.createElement('div');
+            wrapper.className = 'message-wrapper';
+            const content = document.createElement('div');
+            content.className = 'message-content';
+            content.innerHTML = text.replace(/\\n/g, '<br>').replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>');
+            wrapper.appendChild(content);
+            if (sender === 'user') {{
+                const editInput = document.createElement('input');
+                editInput.type = 'text';
+                editInput.className = 'edit-message-input';
+                editInput.value = text;
+                wrapper.appendChild(editInput);
+                const editActions = document.createElement('div');
+                editActions.className = 'edit-actions';
+                editActions.innerHTML = `<button class="save-edit" onclick="saveEdit('${{messageId}}')">Save</button><button class="cancel-edit" onclick="cancelEdit('${{messageId}}')">Cancel</button>`;
+                wrapper.appendChild(editActions);
+            }}
+            const actions = document.createElement('div');
+            actions.className = 'message-actions';
+            if (sender === 'ai') {{
+                actions.innerHTML = `
+                    <button class="copy-btn" onclick="copyResponse('${{messageId}}')">📋 Copy</button>
+                    <button onclick="regenerateResponse('${{messageId}}', '${{escapeJs(userMessage || getLastUserMessage())}}')">🔄 Regenerate</button>
+                    <button onclick="continueGenerating('${{messageId}}')">📝 Continue</button>
+                    <button onclick="stopGenerating()">⏹️ Stop</button>
+                    <button onclick="shareConversation()">📤 Share</button>
+                    <button class="like-btn" onclick="submitFeedback('${{messageId}}', 'like')">👍</button>
+                    <button class="dislike-btn" onclick="submitFeedback('${{messageId}}', 'dislike')">👎</button>
+                `;
+            }} else {{
+                actions.innerHTML = `<button onclick="editMessage('${{messageId}}')">✏️ Edit</button>`;
+            }}
+            wrapper.appendChild(actions);
+            div.appendChild(wrapper);
+            messages.appendChild(div);
+            scrollToBottom();
+        }}
+        
+        function escapeJs(text) {{ return text.replace(/\\\\/g, '\\\\\\\\').replace(/'/g, "\\\\'").replace(/"/g, '\\\\"'); }}
+        
+        function scrollToBottom() {{ const messages = document.getElementById('messages'); messages.scrollTop = messages.scrollHeight; }}
+        
+        async function handleFileUpload(event) {{
+            if (!currentUser) {{ alert('Please sign in first!'); event.target.value = ''; return; }}
+            const file = event.target.files[0];
+            if (!file) return;
+            if (!hasMessages) {{
+                const welcome = document.getElementById('welcome');
+                if (welcome) welcome.style.display = 'none';
+                hasMessages = true;
+            }}
+            addMessage('📎 Uploading "' + file.name + '"...', 'user');
+            document.getElementById('typing').style.display = 'block';
+            scrollToBottom();
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('email', currentUser.email);
+            try {{
+                const res = await fetch('/upload', {{ method: 'POST', body: formData }});
+                const data = await res.json();
+                addMessage(data.message || 'Upload failed.', 'ai');
+            }} catch (err) {{
+                addMessage('⚠️ Upload failed, please try again.', 'ai');
+            }}
+            document.getElementById('typing').style.display = 'none';
+            event.target.value = '';
+            scrollToBottom();
+        }}
+        
+        loadHistory();
+        textarea.focus();
+    </script>
+</body>
+</html>
+'''
+
+# ============ ENDPOINTS ============
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    return HTML
+
+@app.post("/set_user")
+async def set_user(request: Request):
+    data = await request.json()
+    get_or_create_user(data.get('email'), data.get('name'), data.get('picture'))
+    return {"status": "ok"}
+
+@app.post("/chat")
+async def chat(request: Request):
+    data = await request.json()
+    message = data.get('message', '')
+    email = data.get('email', '')
+    
+    result = get_response(message, email)
+    if isinstance(result, dict):
+        response_text, response_image = result["text"], result.get("image")
+    else:
+        response_text, response_image = result, None
+    
+    if email:
+        history = load_history(email)
+        history.append({
+            "user": message,
+            "ai": response_text,
+            "timestamp": datetime.now().strftime("%H:%M")
+        })
+        save_history(email, history)
+    
+    return {"response": response_text, "image": response_image}
+
+@app.get("/get_history")
+async def get_history(email: str = ""):
+    return load_history(email)
+
+@app.post("/clear_history")
+async def clear_history_endpoint():
+    save_history("", [])
+    return {"status": "cleared"}
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "service": "Yama AI", "timestamp": datetime.now().isoformat()}
+
+# ============ MISSING FUNCTIONS ============
+def get_response(message, email):
+    """Main response function."""
     raw_message = message.strip()
     msg = raw_message.lower().strip()
     
@@ -761,6 +1639,9 @@ def get_response(message, email, regenerate=False):
             memory["conversation_history"] = memory["conversation_history"][-MEMORY_TURN_LIMIT:]
         if topic:
             memory["last_topic"] = topic
+        # Store context for follow-ups
+        context = detect_intent_and_context(msg)
+        memory["context"] = context
         save_memory(email, memory)
         return {"text": reply, "image": image} if image else reply
     
@@ -925,612 +1806,28 @@ def get_response(message, email, regenerate=False):
     cache_set(f"search:{message}", response)
     return _finish(response, topic="search")
 
-# ============ HISTORY ============
-def load_history(email):
-    if not email:
-        return []
-    safe_email = email.replace('@', '_at_').replace('.', '_dot_')
-    filepath = os.path.join(DATA_DIR, f"history_{safe_email}.json")
-    if os.path.exists(filepath):
-        with open(filepath, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    return []
-
-def save_history(email, history):
-    if not email:
-        return
-    safe_email = email.replace('@', '_at_').replace('.', '_dot_')
-    filepath = os.path.join(DATA_DIR, f"history_{safe_email}.json")
-    with open(filepath, 'w', encoding='utf-8') as f:
-        json.dump(history, f, ensure_ascii=False, indent=2)
-
-# ============ GOOGLE CLIENT ID ============
-GOOGLE_CLIENT_ID = "46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com"
-
-# ============ HTML (COMPLETE) ============
-HTML = f'''
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
-    <title>Yama AI - Your Intelligent Assistant</title>
-    <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
-    <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }}
-        html, body {{ margin: 0; padding: 0; width: 100%; height: 100%; overflow-x: hidden; overflow-y: auto; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f0e8; transition: all 0.3s ease; -webkit-font-smoothing: antialiased; }}
-        img, video, iframe {{ max-width: 100%; height: auto; }}
-        
-        body.dark {{ background: #1a1a2e; }}
-        body.dark .app {{ background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); }}
-        body.dark .header {{ background: rgba(26,26,46,0.95); border-bottom-color: #2a2a4e; }}
-        body.dark .logo h1 {{ color: #d4c5a9; }}
-        body.dark .input-wrapper {{ background: #2a2a4e; border-color: #3a3a5e; }}
-        body.dark textarea {{ color: #e0e0e0; }}
-        body.dark textarea::placeholder {{ color: #6a5a7a; }}
-        body.dark .message-content {{ color: #e0e0e0; }}
-        body.dark .ai-message .message-content {{ background: #2a2a4e !important; color: #e0e0e0 !important; }}
-        body.dark .suggestion {{ background: #2a2a4e; border-color: #3a3a5e; color: #e0e0e0; }}
-        body.dark .suggestion:hover {{ background: #3a3a5e; color: white; }}
-        body.dark .welcome h2 {{ color: #d4c5a9; }}
-        body.dark .welcome p {{ color: #8a7a6a; }}
-        body.dark .sidebar {{ background: #0f0f23; border-right-color: #2a2a4e; }}
-        body.dark .sidebar-header {{ background: #0a0a1a; }}
-        body.dark .history-question {{ color: #d4c5a9; }}
-        body.dark .history-time {{ color: #6a5a7a; }}
-        body.dark .history-item:hover {{ background: rgba(212,197,169,0.08); border-color: #3a3a5e; }}
-        body.dark .clear-history {{ color: #d4c5a9; border-color: #3a3a5e; }}
-        body.dark .clear-history:hover {{ background: rgba(212,197,169,0.2); border-color: #c4a57b; }}
-        body.dark .new-chat-btn {{ background: #3a3a5e; color: #d4c5a9; }}
-        body.dark .new-chat-btn:hover {{ background: #4a4a6e; }}
-        body.dark .typing span {{ background: #d4c5a9; }}
-        body.dark .typing {{ color: #d4c5a9; }}
-        body.dark a {{ color: #4ecdc4; }}
-        body.dark .message-content a {{ color: #4ecdc4; }}
-        body.dark .message-content a:hover {{ color: #6ee7de; }}
-        body.dark .control-btn {{ color: #d4c5a9; }}
-        body.dark .control-btn:hover {{ background: #3a3a5e; color: white; }}
-        .login-overlay {{ position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); z-index: 2000; display: flex; justify-content: center; align-items: center; padding: 20px; }}
-        .login-card {{ background: white; border-radius: 30px; padding: 40px 30px; text-align: center; max-width: 400px; width: 100%; box-shadow: 0 25px 50px rgba(0,0,0,0.2); }}
-        .login-card .logo-icon {{ font-size: 4rem; margin-bottom: 20px; }}
-        .login-card h2 {{ font-family: 'Playfair Display', serif; font-size: 2rem; margin-bottom: 10px; }}
-        .login-card p {{ color: #666; font-size: 1rem; margin-bottom: 30px; }}
-        .app {{ display: flex; flex-direction: column; height: 100dvh; min-height: 100vh; width: 100%; background: linear-gradient(135deg, #f5f0e8 0%, #e8e0d5 100%); position: relative; overflow: hidden; }}
-        .sidebar {{ position: fixed; left: 0; top: 0; bottom: 0; width: min(280px, 80vw); background: #2c2418; border-right: 1px solid #4a3f2f; display: flex; flex-direction: column; transform: translateX(-100%); transition: transform 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55); z-index: 1000; box-shadow: 4px 0 20px rgba(0,0,0,0.1); }}
-        .sidebar.open {{ transform: translateX(0); }}
-        .sidebar-header {{ padding: 20px; border-bottom: 1px solid #4a3f2f; background: #1f1912; flex-shrink: 0; }}
-        .sidebar-header h3 {{ color: #d4c5a9; font-family: 'Playfair Display', serif; font-size: 1rem; }}
-        .user-profile {{ display: none; align-items: center; gap: 12px; padding: 12px; background: rgba(212,197,169,0.1); border-radius: 12px; margin-top: 15px; }}
-        .user-profile-img {{ width: 45px; height: 45px; border-radius: 50%; object-fit: cover; }}
-        .user-profile-info {{ flex: 1; min-width: 0; }}
-        .user-profile-name {{ color: #d4c5a9; font-weight: 600; font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
-        .user-profile-email {{ color: #8a7a6a; font-size: 0.65rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
-        .logout-btn {{ background: rgba(212,197,169,0.1); border: 1px solid #4a3f2f; border-radius: 20px; padding: 6px 12px; color: #d4c5a9; cursor: pointer; font-size: 0.65rem; white-space: nowrap; }}
-        .history-list {{ flex: 1; overflow-y: auto; padding: 12px; -webkit-overflow-scrolling: touch; }}
-        .history-item {{ padding: 10px; margin-bottom: 6px; border-radius: 10px; cursor: pointer; transition: all 0.2s; border: 1px solid transparent; }}
-        .history-item:hover {{ background: rgba(212,197,169,0.08); border-color: #4a3f2f; }}
-        .history-question {{ font-size: 0.8rem; color: #d4c5a9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
-        .history-time {{ font-size: 0.6rem; color: #6a5a4a; margin-top: 4px; }}
-        .sidebar-footer {{ padding: 16px; border-top: 1px solid #4a3f2f; background: #1f1912; flex-shrink: 0; }}
-        .new-chat-btn {{ background: #4a3f2f; border: none; border-radius: 25px; padding: 12px 16px; color: #d4c5a9; cursor: pointer; width: 100%; font-size: 0.85rem; display: flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.2s; }}
-        .new-chat-btn:hover {{ background: #5a4f3f; }}
-        .clear-history {{ background: rgba(212,197,169,0.1); border: 1px solid #4a3f2f; border-radius: 20px; padding: 8px 16px; color: #d4c5a9; cursor: pointer; font-size: 0.7rem; margin-top: 10px; width: 100%; }}
-        .overlay {{ position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.4); display: none; z-index: 999; }}
-        .overlay.show {{ display: block; }}
-        .main {{ flex: 1; display: flex; flex-direction: column; min-height: 0; height: 100%; width: 100%; overflow: hidden; }}
-        .header {{ padding: 12px 16px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #d4c5a9; background: rgba(245,240,232,0.95); flex-shrink: 0; min-height: 56px; width: 100%; position: relative; z-index: 10; }}
-        .menu-btn {{ background: none; border: none; font-size: 1.3rem; cursor: pointer; color: #6a5a4a; padding: 8px; border-radius: 10px; display: flex; align-items: center; justify-content: center; }}
-        .menu-btn:hover {{ background: #d4c5a9; color: #2c2418; }}
-        .logo {{ flex: 1; display: flex; align-items: baseline; gap: 6px; min-width: 0; }}
-        .logo-icon {{ font-size: 1.8rem; }}
-        .logo h1 {{ font-family: 'Playfair Display', serif; font-size: 1.3rem; color: #2c2418; white-space: nowrap; }}
-        .new-chat-mobile {{ background: none; border: none; font-size: 1.2rem; cursor: pointer; padding: 8px; border-radius: 10px; color: #6a5a4a; display: none; }}
-        .control-btn {{ background: none; border: none; font-size: 1.2rem; cursor: pointer; padding: 8px 12px; border-radius: 20px; color: #6a5a4a; transition: all 0.2s; display: flex; align-items: center; justify-content: center; }}
-        .control-btn:hover {{ background: #d4c5a9; }}
-        .user-btn {{ background: none; border: none; cursor: pointer; display: none; padding: 4px; }}
-        .user-btn img {{ width: 35px; height: 35px; border-radius: 50%; object-fit: cover; }}
-        .messages {{ flex: 1; overflow-y: auto; padding: 16px; padding-bottom: 20px; -webkit-overflow-scrolling: touch; scroll-behavior: smooth; min-height: 0; }}
-        .message {{ margin-bottom: 20px; animation: fadeIn 0.3s ease; }}
-        .message-wrapper {{ display: inline-block; max-width: 85%; }}
-        @keyframes fadeIn {{ from {{ opacity: 0; transform: translateY(10px); }} to {{ opacity: 1; transform: translateY(0); }} }}
-        .user-message {{ text-align: right; }}
-        .ai-message {{ text-align: left; }}
-        .message-content {{ display: inline-block; max-width: 100%; font-size: 0.9rem; line-height: 1.5; color: #2c2418; background: transparent !important; padding: 0 !important; }}
-        .user-message .message-content {{ background: #2c2418 !important; color: white !important; padding: 10px 16px !important; border-radius: 20px !important; }}
-        .ai-message .message-content {{ background: white !important; color: #2c2418 !important; padding: 12px 18px !important; border-radius: 20px !important; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }}
-        .message-actions {{ display: flex; gap: 8px; margin-top: 8px; opacity: 0.6; transition: opacity 0.2s; flex-wrap: wrap; }}
-        .message-actions:hover {{ opacity: 1; }}
-        .message-actions button {{ background: none; border: none; cursor: pointer; padding: 4px 8px; font-size: 0.75rem; border-radius: 6px; color: #6a5a4a; transition: all 0.2s; display: flex; align-items: center; gap: 4px; }}
-        .message-actions button:hover {{ background: rgba(44,36,24,0.1); color: #2c2418; }}
-        body.dark .message-actions button {{ color: #8a7a6a; }}
-        body.dark .message-actions button:hover {{ background: rgba(212,197,169,0.1); color: #d4c5a9; }}
-        .message-actions .liked {{ color: #4caf50 !important; }}
-        .message-actions .disliked {{ color: #f44336 !important; }}
-        .edit-message-input {{ display: none; width: 100%; padding: 8px 12px; border: 2px solid #2c2418; border-radius: 12px; font-size: 0.9rem; font-family: inherit; background: white; color: #2c2418; }}
-        body.dark .edit-message-input {{ background: #2a2a4e; color: #e0e0e0; border-color: #4a3f2f; }}
-        .edit-message-input.active {{ display: block; }}
-        .edit-actions {{ display: none; gap: 8px; margin-top: 8px; }}
-        .edit-actions.active {{ display: flex; }}
-        .edit-actions button {{ padding: 4px 12px; border-radius: 6px; border: none; cursor: pointer; font-size: 0.75rem; }}
-        .edit-actions .save-edit {{ background: #2c2418; color: white; }}
-        .edit-actions .cancel-edit {{ background: #e0d5c8; color: #2c2418; }}
-        body.dark .edit-actions .cancel-edit {{ background: #3a3a5e; color: #d4c5a9; }}
-        .typing {{ display: none; padding: 10px 16px; gap: 5px; color: #888; font-size: 0.8rem; flex-shrink: 0; }}
-        .typing span {{ width: 6px; height: 6px; background: #c4a57b; border-radius: 50%; display: inline-block; animation: bounce 1.4s infinite; }}
-        @keyframes bounce {{ 0%, 60%, 100% {{ transform: translateY(0); }} 30% {{ transform: translateY(-6px); }} }}
-        .input-area {{ position: sticky; bottom: 0; z-index: 100; background: #f5f0e8; padding: 12px 16px 20px; padding-bottom: env(safe-area-inset-bottom, 20px); flex-shrink: 0; border-top: 1px solid rgba(212,197,169,0.3); }}
-        body.dark .input-area {{ background: #1a1a2e; border-top-color: rgba(42,42,78,0.3); }}
-        .input-wrapper {{ display: flex; align-items: flex-end; gap: 12px; background: white; border-radius: 28px; padding: 8px 8px 8px 20px; border: 1px solid #d4c5a9; width: 100%; max-width: 760px; margin: 0 auto; min-height: 56px; }}
-        body.dark .input-wrapper {{ background: #2a2a4e; border-color: #3a3a5e; }}
-        .input-text-wrapper {{ flex: 1; min-width: 0; }}
-        textarea {{ width: 100%; background: transparent; border: none; outline: none; font-size: 16px; line-height: 1.5; resize: none; padding: 8px 0; font-family: inherit; color: #2c2418; min-height: 24px; max-height: 180px; overflow-y: auto; }}
-        body.dark textarea {{ color: #e0e0e0; }}
-        textarea::placeholder {{ color: #b8a88a; font-size: 0.95rem; }}
-        @media (max-width: 768px) {{ textarea {{ font-size: 16px !important; }} }}
-        .submit-btn {{ display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%; border: none; background-color: #2c2418; color: white; cursor: pointer; transition: all 0.2s; min-width: 44px; min-height: 44px; }}
-        body.dark .submit-btn {{ background-color: #4a3f2f; }}
-        .submit-btn:hover {{ background-color: #4a3f2f; transform: scale(1.02); }}
-        .submit-btn:active {{ transform: scale(0.96); }}
-        .submit-icon {{ width: 20px; height: 20px; fill: currentColor; }}
-        .attach-btn {{ display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%; border: 1px solid #e0d5c0; background-color: transparent; color: #2c2418; cursor: pointer; transition: all 0.2s; min-width: 44px; min-height: 44px; }}
-        body.dark .attach-btn {{ border-color: #4a3f2f; color: #e0e0e0; }}
-        .attach-btn:hover {{ background-color: rgba(44,36,24,0.06); }}
-        .attach-icon {{ width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; }}
-        .message-content img.chat-image {{ max-width: 100%; border-radius: 10px; margin-top: 10px; display: block; }}
-        .welcome {{ display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 50vh; text-align: center; padding: 20px; }}
-        .welcome-icon {{ font-size: 3rem; margin-bottom: 15px; animation: float 3s ease-in-out infinite; }}
-        @keyframes float {{ 0%, 100% {{ transform: translateY(0); }} 50% {{ transform: translateY(-8px); }} }}
-        .welcome h2 {{ font-family: 'Playfair Display', serif; font-size: 2rem; color: #2c2418; margin-bottom: 8px; }}
-        .welcome p {{ color: #6a5a4a; font-size: 0.85rem; margin-bottom: 20px; }}
-        .suggestions {{ display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 15px; }}
-        .suggestion {{ background: white; border: 1px solid #d4c5a9; border-radius: 30px; padding: 6px 14px; font-size: 0.75rem; color: #2c2418; cursor: pointer; transition: all 0.2s; white-space: nowrap; }}
-        .suggestion:hover {{ background: #2c2418; color: white; border-color: #2c2418; }}
-        @media (max-width: 768px) {{ .messages {{ padding: 12px 16px; padding-bottom: 16px; }} .suggestions {{ display: none; }} .new-chat-mobile {{ display: block; }} .header {{ padding: 10px 14px; min-height: 52px; }} .logo h1 {{ font-size: 1.1rem; }} .logo-icon {{ font-size: 1.4rem; }} .message-content {{ max-width: 100%; font-size: 0.85rem; }} .input-area {{ padding: 10px 12px 16px; }} .input-wrapper {{ padding: 6px 6px 6px 16px; min-height: 50px; border-radius: 26px; }} textarea {{ font-size: 16px !important; padding: 8px 0; }} .submit-btn {{ width: 40px; height: 40px; min-width: 40px; min-height: 40px; }} .submit-icon {{ width: 18px; height: 18px; }} .message-actions button {{ font-size: 0.65rem; padding: 2px 6px; }} }}
-        @media (max-width: 480px) {{ .header {{ padding: 8px 12px; min-height: 48px; gap: 8px; }} .logo h1 {{ font-size: 1rem; }} .logo-icon {{ font-size: 1.2rem; }} .control-btn {{ font-size: 0.9rem; padding: 6px 8px; }} .menu-btn {{ font-size: 1.1rem; padding: 6px; }} .messages {{ padding: 10px 12px; }} .input-area {{ padding: 8px 10px 14px; padding-bottom: env(safe-area-inset-bottom, 14px); }} .input-wrapper {{ padding: 5px 5px 5px 14px; min-height: 44px; gap: 8px; border-radius: 24px; }} textarea {{ font-size: 15px !important; padding: 6px 0; min-height: 20px; }} .submit-btn {{ width: 40px; height: 40px; min-width: 40px; min-height: 40px; }} .submit-icon {{ width: 16px; height: 16px; }} .message-content {{ font-size: 0.8rem; }} }}
-        @media (max-width: 380px) {{ .header {{ padding: 6px 10px; min-height: 44px; gap: 6px; }} .logo h1 {{ font-size: 0.85rem; }} .logo-icon {{ font-size: 1rem; }} .control-btn {{ font-size: 0.8rem; padding: 4px 6px; }} .messages {{ padding: 8px 10px; }} .input-area {{ padding: 6px 8px 12px; }} .input-wrapper {{ padding: 4px 4px 4px 12px; min-height: 40px; gap: 6px; border-radius: 22px; }} textarea {{ font-size: 14px !important; padding: 5px 0; min-height: 18px; }} .submit-btn {{ width: 36px; height: 36px; min-width: 36px; min-height: 36px; }} .submit-icon {{ width: 14px; height: 14px; }} .message-content {{ font-size: 0.75rem; }} }}
-        @media (max-height: 500px) and (orientation: landscape) {{ .header {{ min-height: 40px; padding: 4px 12px; gap: 6px; }} .logo h1 {{ font-size: 0.9rem; }} .logo-icon {{ font-size: 1.1rem; }} .messages {{ padding: 6px 12px; padding-bottom: 10px; }} .input-area {{ padding: 4px 12px 8px; }} .input-wrapper {{ min-height: 38px; padding: 4px 4px 4px 12px; }} textarea {{ min-height: 20px; max-height: 80px; font-size: 14px !important; padding: 4px 0; }} .submit-btn {{ width: 36px; height: 36px; min-width: 36px; min-height: 36px; }} .submit-icon {{ width: 14px; height: 14px; }} .welcome {{ min-height: 20vh; }} .suggestions {{ display: none; }} .control-btn {{ font-size: 0.8rem; padding: 3px 6px; }} }}
-        @media (min-width: 769px) and (max-width: 1024px) {{ .input-wrapper {{ max-width: 90%; }} .messages {{ padding: 16px 24px; }} .header {{ padding: 14px 20px; }} }}
-        @media (min-width: 1025px) {{ .input-wrapper {{ max-width: 760px; }} .messages {{ padding: 24px 32px; }} .header {{ padding: 16px 32px; }} }}
-    </style>
-</head>
-<body>
-    <div id="loginOverlay" class="login-overlay">
-        <div class="login-card">
-            <div class="logo-icon">🏛️</div>
-            <h2>Welcome to Yama AI</h2>
-            <p>Your Intelligent Assistant</p>
-            <div id="g_id_onload" data-client_id="{GOOGLE_CLIENT_ID}" data-context="signin" data-ux_mode="popup" data-callback="handleCredentialResponse" data-auto_prompt="false"></div>
-            <div class="g_id_signin" data-type="standard" data-shape="rectangular" data-theme="outline" data-text="signin_with" data-size="large" data-logo_alignment="left"></div>
-        </div>
-    </div>
-    <div class="app" id="app">
-        <div class="overlay" id="overlay" onclick="closeSidebar()"></div>
-        <div class="sidebar" id="sidebar">
-            <div class="sidebar-header"><h3>📜 CONVERSATIONS</h3><div class="user-profile" id="userProfile"></div></div>
-            <div class="history-list" id="historyList"><div style="color:#6a5a4a;text-align:center;padding:20px;">No conversations yet</div></div>
-            <div class="sidebar-footer">
-                <button class="new-chat-btn" onclick="newChat()">➕ New Chat</button>
-                <button class="clear-history" onclick="clearHistory()">Clear all history</button>
-            </div>
-        </div>
-        <div class="main">
-            <div class="header">
-                <button class="menu-btn" onclick="toggleSidebar()">☰</button>
-                <div class="logo" id="logo"><span class="logo-icon">🏛️</span><h1>YAMA</h1></div>
-                <button class="new-chat-mobile" onclick="newChat()">➕</button>
-                <button class="control-btn" onclick="toggleTheme()" title="Dark/Light Mode">🌓</button>
-                <button class="control-btn" onclick="exportChat()" title="Export Chat">📥</button>
-                <button class="user-btn" id="userBtn" onclick="toggleUserMenu()"><img id="userAvatar" src="" alt="User"></button>
-            </div>
-            <div class="messages" id="messages">
-                <div class="welcome" id="welcome">
-                    <div class="welcome-icon">🏛️</div>
-                    <h2>Yama AI</h2>
-                    <p>Your Intelligent Assistant — Developed by <strong>Riishil M Mehta</strong></p>
-                    <p style="font-size:0.8rem; color:#888; margin-bottom:10px;">⚡ No LLM • Pure Logic & Search • Fast & Reliable</p>
-                    <div class="suggestions">
-                        <div class="suggestion" onclick="askSuggestion('weather in Mumbai')">🌤️ Weather</div>
-                        <div class="suggestion" onclick="askSuggestion('graph sin(x)')">📊 Graph</div>
-                        <div class="suggestion" onclick="askSuggestion('5 km to miles')">📏 Convert</div>
-                        <div class="suggestion" onclick="askSuggestion('latest tech news')">📰 News</div>
-                        <div class="suggestion" onclick="askSuggestion('solve x^2 - 4 = 0')">📐 Math</div>
-                        <div class="suggestion" onclick="askSuggestion('tell me a joke')">😄 Joke</div>
-                        <div class="suggestion" onclick="askSuggestion('info about Japan')">🌍 Facts</div>
-                        <div class="suggestion" onclick="askSuggestion('who made you')">👨‍💻 About</div>
-                    </div>
-                </div>
-            </div>
-            <div class="typing" id="typing"><span></span><span></span><span></span> Yama is thinking...</div>
-            <div class="input-area">
-                <div class="input-wrapper">
-                    <input type="file" id="fileInput" style="display:none" accept=".pdf,.docx,.xlsx,.csv,.txt,.png,.jpg,.jpeg" onchange="handleFileUpload(event)">
-                    <button class="attach-btn" onclick="document.getElementById('fileInput').click()" aria-label="Attach file" type="button">
-                        <svg class="attach-icon" viewBox="0 0 24 24" width="18" height="18"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
-                    </button>
-                    <div class="input-text-wrapper"><textarea id="userInput" placeholder="Ask Yama anything..." rows="1" onkeypress="handleKey(event)"></textarea></div>
-                    <button class="submit-btn" onclick="sendMessage()" aria-label="Send message">
-                        <svg class="submit-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-    <script>
-        let currentUser = null, hasMessages = false;
-        function toggleTheme() {{ document.body.classList.toggle('dark'); localStorage.setItem('theme', document.body.classList.contains('dark') ? 'dark' : 'light'); }}
-        function exportChat() {{
-            const messages = document.querySelectorAll('.message');
-            let exportText = '';
-            messages.forEach(msg => {{
-                const sender = msg.classList.contains('user-message') ? 'You' : 'Yama';
-                const text = msg.querySelector('.message-content').innerText;
-                exportText += sender + ': ' + text + '\\n\\n';
-            }});
-            const blob = new Blob([exportText], {{type: 'text/plain'}});
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = 'yama_chat_' + new Date().toISOString() + '.txt';
-            a.click();
-        }}
-        if (localStorage.getItem('theme') === 'dark') document.body.classList.add('dark');
-        function toggleUserMenu() {{ document.getElementById('sidebar').classList.toggle('open'); document.getElementById('overlay').classList.toggle('show'); }}
-        function handleCredentialResponse(response) {{
-            const payload = JSON.parse(atob(response.credential.split('.')[1]));
-            currentUser = {{ name: payload.name, email: payload.email, picture: payload.picture }};
-            document.getElementById('loginOverlay').style.display = 'none';
-            document.getElementById('app').style.display = 'flex';
-            document.getElementById('userBtn').style.display = 'block';
-            document.getElementById('userAvatar').src = currentUser.picture;
-            document.getElementById('userProfile').style.display = 'flex';
-            document.getElementById('userProfile').innerHTML = `
-                <img src="${{currentUser.picture}}" class="user-profile-img">
-                <div class="user-profile-info">
-                    <div class="user-profile-name">${{currentUser.name}}</div>
-                    <div class="user-profile-email">${{currentUser.email}}</div>
-                </div>
-                <button class="logout-btn" onclick="logout()">Logout</button>
-            `;
-            loadHistory();
-            fetch('/set_user', {{ method: 'POST', headers: {{ 'Content-Type': 'application/json' }}, body: JSON.stringify({{ email: currentUser.email, name: currentUser.name, picture: currentUser.picture }}) }});
-        }}
-        function logout() {{
-            currentUser = null;
-            document.getElementById('loginOverlay').style.display = 'flex';
-            document.getElementById('app').style.display = 'none';
-            document.getElementById('userBtn').style.display = 'none';
-            document.getElementById('userProfile').style.display = 'none';
-            if (google && google.accounts) google.accounts.id.disableAutoSelect();
-        }}
-        function newChat() {{ if (confirm('Start a new chat?')) location.reload(); }}
-        function toggleSidebar() {{ document.getElementById('sidebar').classList.toggle('open'); document.getElementById('overlay').classList.toggle('show'); }}
-        function closeSidebar() {{ document.getElementById('sidebar').classList.remove('open'); document.getElementById('overlay').classList.remove('show'); }}
-        function askSuggestion(q) {{ document.getElementById('userInput').value = q; sendMessage(); }}
-        async function loadHistory() {{
-            if (!currentUser) return;
-            const res = await fetch('/get_history?email=' + encodeURIComponent(currentUser.email));
-            const history = await res.json();
-            const container = document.getElementById('historyList');
-            if (history.length === 0) {{ container.innerHTML = '<div style="color:#6a5a4a;text-align:center;padding:20px;">No conversations yet</div>'; return; }}
-            let html = '';
-            for (let i = history.length - 1; i >= 0; i--) {{
-                let item = history[i];
-                html += '<div class="history-item" onclick="loadChatMessage(\\'' + escapeHtml(item.user) + '\\')">' +
-                        '<div class="history-question">' + escapeHtml(item.user.substring(0, 45)) + '</div>' +
-                        '<div class="history-time">' + item.timestamp + '</div></div>';
-            }}
-            container.innerHTML = html;
-        }}
-        function escapeHtml(text) {{ const div = document.createElement('div'); div.textContent = text; return div.innerHTML; }}
-        function loadChatMessage(msg) {{ document.getElementById('userInput').value = msg; closeSidebar(); sendMessage(); }}
-        async function clearHistory() {{ if (confirm('Clear all history?')) {{ await fetch('/clear_history', {{ method: 'POST' }}); location.reload(); }} }}
-        const textarea = document.getElementById('userInput');
-        function autoAdjustHeight() {{ this.style.height = 'auto'; this.style.height = this.scrollHeight + 'px'; }}
-        textarea.addEventListener('input', autoAdjustHeight);
-        if (window.visualViewport) {{
-            let lastHeight = window.visualViewport.height;
-            window.visualViewport.addEventListener('resize', function() {{
-                const inputArea = document.querySelector('.input-area');
-                if (inputArea && window.visualViewport.height < lastHeight) {{
-                    setTimeout(() => {{ inputArea.scrollIntoView({{ behavior: 'smooth', block: 'end' }}); }}, 100);
-                }}
-                lastHeight = window.visualViewport.height;
-            }});
-        }}
-        function handleKey(e) {{ if (e.key === 'Enter' && !e.shiftKey) {{ e.preventDefault(); sendMessage(); }} }}
-        function copyResponse(messageId) {{
-            const content = document.querySelector(`#message-${{messageId}} .message-content`);
-            if (content) {{
-                navigator.clipboard.writeText(content.innerText).then(() => {{
-                    const btn = document.querySelector(`#message-${{messageId}} .copy-btn`);
-                    const originalText = btn.textContent;
-                    btn.textContent = '✅ Copied!';
-                    setTimeout(() => {{ btn.textContent = originalText; }}, 2000);
-                }});
-            }}
-        }}
-        async function regenerateResponse(messageId, userMessage) {{
-            if (isGenerating) return;
-            isGenerating = true;
-            document.getElementById('typing').style.display = 'block';
-            const content = document.querySelector(`#message-${{messageId}} .message-content`);
-            try {{
-                const res = await fetch('/regenerate', {{
-                    method: 'POST',
-                    headers: {{ 'Content-Type': 'application/json' }},
-                    body: JSON.stringify({{ email: currentUser.email, message: userMessage }})
-                }});
-                const data = await res.json();
-                content.innerHTML = data.response.replace(/\\n/g, '<br>').replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>');
-            }} catch(e) {{ console.error(e); }}
-            document.getElementById('typing').style.display = 'none';
-            isGenerating = false;
-            scrollToBottom();
-        }}
-        function editMessage(messageId) {{
-            const div = document.getElementById(`message-${{messageId}}`);
-            const content = div.querySelector('.message-content');
-            const editInput = div.querySelector('.edit-message-input');
-            const editActions = div.querySelector('.edit-actions');
-            if (content.style.display !== 'none') {{
-                content.style.display = 'none';
-                editInput.value = content.innerText;
-                editInput.classList.add('active');
-                editActions.classList.add('active');
-                editInput.focus();
-            }}
-        }}
-        function saveEdit(messageId) {{
-            const div = document.getElementById(`message-${{messageId}}`);
-            const editInput = div.querySelector('.edit-message-input');
-            const content = div.querySelector('.message-content');
-            const editActions = div.querySelector('.edit-actions');
-            const newText = editInput.value.trim();
-            if (newText) {{
-                content.innerText = newText;
-                content.style.display = 'block';
-                editInput.classList.remove('active');
-                editActions.classList.remove('active');
-            }}
-        }}
-        function cancelEdit(messageId) {{
-            const div = document.getElementById(`message-${{messageId}}`);
-            const content = div.querySelector('.message-content');
-            const editInput = div.querySelector('.edit-message-input');
-            const editActions = div.querySelector('.edit-actions');
-            content.style.display = 'block';
-            editInput.classList.remove('active');
-            editActions.classList.remove('active');
-        }}
-        async function continueGenerating(messageId) {{
-            if (isGenerating) return;
-            isGenerating = true;
-            document.getElementById('typing').style.display = 'block';
-            const content = document.querySelector(`#message-${{messageId}} .message-content`);
-            const userMessage = getLastUserMessage();
-            try {{
-                const res = await fetch('/continue_generating', {{
-                    method: 'POST',
-                    headers: {{ 'Content-Type': 'application/json' }},
-                    body: JSON.stringify({{ email: currentUser.email, message: userMessage }})
-                }});
-                const data = await res.json();
-                content.innerHTML += data.response.replace(/\\n/g, '<br>').replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>');
-            }} catch(e) {{ console.error(e); }}
-            document.getElementById('typing').style.display = 'none';
-            isGenerating = false;
-            scrollToBottom();
-        }}
-        function getLastUserMessage() {{
-            const messages = document.querySelectorAll('.user-message');
-            if (messages.length > 0) return messages[messages.length-1].querySelector('.message-content').innerText;
-            return '';
-        }}
-        async function shareConversation() {{
-            if (!currentUser) return;
-            try {{
-                const res = await fetch('/share_conversation?email=' + encodeURIComponent(currentUser.email));
-                const data = await res.json();
-                const shareText = data.conversation.map(item => `User: ${{item.user}}\\nYama: ${{item.ai}}\\n`).join('\\n');
-                await navigator.clipboard.writeText(shareText);
-                alert('✅ Conversation copied to clipboard!');
-            }} catch(e) {{ alert('Could not share conversation.'); }}
-        }}
-        async function submitFeedback(messageId, feedbackType) {{
-            const div = document.getElementById(`message-${{messageId}}`);
-            const likeBtn = div.querySelector('.like-btn');
-            const dislikeBtn = div.querySelector('.dislike-btn');
-            try {{
-                await fetch('/feedback', {{
-                    method: 'POST',
-                    headers: {{ 'Content-Type': 'application/json' }},
-                    body: JSON.stringify({{ email: currentUser.email, message_index: parseInt(messageId.split('-')[1]), feedback_type: feedbackType }})
-                }});
-                if (feedbackType === 'like') {{
-                    likeBtn.classList.toggle('liked');
-                    if (dislikeBtn.classList.contains('disliked')) dislikeBtn.classList.remove('disliked');
-                }} else {{
-                    dislikeBtn.classList.toggle('disliked');
-                    if (likeBtn.classList.contains('liked')) likeBtn.classList.remove('liked');
-                }}
-            }} catch(e) {{ console.error(e); }}
-        }}
-        function stopGenerating() {{ isGenerating = false; document.getElementById('typing').style.display = 'none'; }}
-        async function sendMessage() {{
-            if (!currentUser) {{ alert('Please sign in first!'); return; }}
-            const message = textarea.value.trim();
-            if (!message) return;
-            if (isGenerating) {{ stopGenerating(); return; }}
-            if (!hasMessages) {{
-                const welcome = document.getElementById('welcome');
-                if (welcome) welcome.style.display = 'none';
-                hasMessages = true;
-            }}
-            const messageId = 'msg-' + (++messageCounter);
-            addMessage(message, 'user', messageId);
-            textarea.value = '';
-            textarea.style.height = 'auto';
-            document.getElementById('typing').style.display = 'block';
-            scrollToBottom();
-            try {{
-                const res = await fetch('/chat', {{
-                    method: 'POST',
-                    headers: {{ 'Content-Type': 'application/json' }},
-                    body: JSON.stringify({{ message: message, email: currentUser.email }})
-                }});
-                const data = await res.json();
-                const aiMessageId = 'msg-' + (++messageCounter);
-                addMessage(data.response, 'ai', aiMessageId, message);
-                document.getElementById('typing').style.display = 'none';
-                loadHistory();
-                scrollToBottom();
-            }} catch(e) {{ console.error(e); document.getElementById('typing').style.display = 'none'; }}
-        }}
-        let messageCounter = 0, isGenerating = false;
-        function addMessage(text, sender, messageId, userMessage = '') {{
-            const messages = document.getElementById('messages');
-            const div = document.createElement('div');
-            div.className = 'message ' + sender + '-message';
-            div.id = messageId;
-            const wrapper = document.createElement('div');
-            wrapper.className = 'message-wrapper';
-            const content = document.createElement('div');
-            content.className = 'message-content';
-            content.innerHTML = text.replace(/\\n/g, '<br>').replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>');
-            wrapper.appendChild(content);
-            if (sender === 'user') {{
-                const editInput = document.createElement('input');
-                editInput.type = 'text';
-                editInput.className = 'edit-message-input';
-                editInput.value = text;
-                wrapper.appendChild(editInput);
-                const editActions = document.createElement('div');
-                editActions.className = 'edit-actions';
-                editActions.innerHTML = `<button class="save-edit" onclick="saveEdit('${{messageId}}')">Save</button><button class="cancel-edit" onclick="cancelEdit('${{messageId}}')">Cancel</button>`;
-                wrapper.appendChild(editActions);
-            }}
-            const actions = document.createElement('div');
-            actions.className = 'message-actions';
-            if (sender === 'ai') {{
-                actions.innerHTML = `
-                    <button class="copy-btn" onclick="copyResponse('${{messageId}}')">📋 Copy</button>
-                    <button onclick="regenerateResponse('${{messageId}}', '${{escapeJs(userMessage || getLastUserMessage())}}')">🔄 Regenerate</button>
-                    <button onclick="continueGenerating('${{messageId}}')">📝 Continue</button>
-                    <button onclick="stopGenerating()">⏹️ Stop</button>
-                    <button onclick="shareConversation()">📤 Share</button>
-                    <button class="like-btn" onclick="submitFeedback('${{messageId}}', 'like')">👍</button>
-                    <button class="dislike-btn" onclick="submitFeedback('${{messageId}}', 'dislike')">👎</button>
-                `;
-            }} else {{
-                actions.innerHTML = `<button onclick="editMessage('${{messageId}}')">✏️ Edit</button>`;
-            }}
-            wrapper.appendChild(actions);
-            div.appendChild(wrapper);
-            messages.appendChild(div);
-            scrollToBottom();
-        }}
-        function escapeJs(text) {{ return text.replace(/\\\\/g, '\\\\\\\\').replace(/'/g, "\\\\'").replace(/"/g, '\\\\"'); }}
-        function scrollToBottom() {{ const messages = document.getElementById('messages'); messages.scrollTop = messages.scrollHeight; }}
-        async function handleFileUpload(event) {{
-            if (!currentUser) {{ alert('Please sign in first!'); event.target.value = ''; return; }}
-            const file = event.target.files[0];
-            if (!file) return;
-            if (!hasMessages) {{
-                const welcome = document.getElementById('welcome');
-                if (welcome) welcome.style.display = 'none';
-                hasMessages = true;
-            }}
-            addMessage('📎 Uploading "' + file.name + '"...', 'user');
-            document.getElementById('typing').style.display = 'block';
-            scrollToBottom();
-            const formData = new FormData();
-            formData.append('file', file);
-            formData.append('email', currentUser.email);
-            try {{
-                const res = await fetch('/upload', {{ method: 'POST', body: formData }});
-                const data = await res.json();
-                addMessage(data.message || 'Upload failed.', 'ai');
-            }} catch (err) {{
-                addMessage('⚠️ Upload failed, please try again.', 'ai');
-            }}
-            document.getElementById('typing').style.display = 'none';
-            event.target.value = '';
-            scrollToBottom();
-        }}
-        loadHistory();
-        textarea.focus();
-    </script>
-</body>
-</html>
-'''
-
-# ============ ENDPOINTS ============
-@app.get("/", response_class=HTMLResponse)
-async def root():
-    return HTML
-
-@app.post("/set_user")
-async def set_user(request: Request):
-    data = await request.json()
-    get_or_create_user(data.get('email'), data.get('name'), data.get('picture'))
-    return {"status": "ok"}
-
-@app.post("/chat")
-async def chat(request: Request):
-    data = await request.json()
-    message = data.get('message', '')
-    email = data.get('email', '')
-    
-    result = get_response(message, email)
-    if isinstance(result, dict):
-        response_text, response_image = result["text"], result.get("image")
-    else:
-        response_text, response_image = result, None
-    
-    if email:
-        history = load_history(email)
-        history.append({
-            "user": message,
-            "ai": response_text,
-            "timestamp": datetime.now().strftime("%H:%M")
-        })
-        save_history(email, history)
-    
-    return {"response": response_text, "image": response_image}
-
-@app.get("/get_history")
-async def get_history(email: str = ""):
-    return load_history(email)
-
-@app.post("/clear_history")
-async def clear_history_endpoint():
-    save_history("", [])
-    return {"status": "cleared"}
-
-@app.get("/health")
-async def health_check():
-    return {"status": "healthy", "service": "Yama AI V3.0", "timestamp": datetime.now().isoformat()}
+# ============ UPLOAD ENDPOINT ============
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...), email: str = Form(...)):
+    return {"status": "ok", "message": "File upload is available but requires additional libraries installed."}
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     print("\n" + "="*55)
-    print("🏛️ YAMA AI V3.0 - COMPLETE UPGRADE")
+    print("🏛️ YAMA AI - FINAL UPGRADE")
     print("="*55)
     print(f"🌐 Running on port: {port}")
     print("="*55)
-    print("✅ USER MEMORY - Stores name, location, favorites")
-    print("✅ STEP-BY-STEP MATH - SymPy with narration")
-    print("✅ UNIT CONVERSION - Length, weight, volume, temp")
-    print("✅ WEATHER - wttr.in (free, no key)")
-    print("✅ NEWS - RSS feeds (BBC, TechCrunch, etc.)")
-    print("✅ COUNTRY FACTS - restcountries.com")
-    print("✅ GRAPH GENERATION - Matplotlib")
-    print("✅ RESPONSE CACHE - 5-minute TTL")
-    print("✅ KNOWLEDGE BASE - 20+ common questions")
-    print("✅ JOKES & FACTS - Free APIs")
-    print("✅ CONVERSATION MEMORY - Persistent per user")
-    print("✅ GOOGLE SIGN-IN - Authentication")
-    print("✅ DARK/LIGHT MODE - Theme toggle")
+    print("✅ Enhanced Context Understanding")
+    print("✅ Follow-up Question Resolution")
+    print("✅ Step-by-Step Math Explanations")
+    print("✅ Mobile Keyboard Fix (No Fixed Values)")
+    print("✅ Fully Responsive Design")
+    print("✅ Unit Conversion")
+    print("✅ Weather & News")
+    print("✅ Country Facts")
+    print("✅ Graph Generation")
+    print("✅ User Memory")
     print("="*55)
     print("🏛️ Developed by: Riishil M Mehta")
     print("="*55 + "\n")
