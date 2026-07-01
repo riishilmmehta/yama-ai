@@ -193,7 +193,7 @@ def _safe_eval_node(node):
             args = [_safe_eval_node(a) for a in node.args]
             return _ALLOWED_FUNCS[node.func.id](*args)
         raise ValueError("function not allowed")
-    if isinstance(node, ast.Name) and node.id in _ALLOWED_NAMES):
+    if isinstance(node, ast.Name) and node.id in _ALLOWED_NAMES:
         return _ALLOWED_NAMES[node.id]
     raise ValueError("disallowed expression")
 
@@ -227,7 +227,7 @@ def _sp_safe_parse(text):
     local_dict = {s: sp.Symbol(s) for s in _SP_SYMBOLS}
     return parse_expr(text, local_dict=local_dict, transformations=_SP_TRANSFORMS)
 
-# ===== FIXED: Better detection for differentiate and integrate =====
+# ===== FIXED: Calculus Detection with proper step-by-step =====
 def solve_step_by_step(message):
     """Returns a formatted, narrated solution with actual step-by-step logic."""
     msg = message.strip()
@@ -255,7 +255,7 @@ def solve_step_by_step(message):
             ]
             return "\n".join(steps)
         
-        # ===== DIFFERENTIATION - FIXED: Better detection =====
+        # ===== DIFFERENTIATION - FIXED: Better detection and steps =====
         deriv_keywords = ['derivative of', 'differentiate', 'diff', 'd/dx']
         deriv_match = None
         for kw in deriv_keywords:
@@ -271,6 +271,14 @@ def solve_step_by_step(message):
             expr_str = expr_str.replace('^', '**')
             expr = _sp_safe_parse(expr_str)
             x = sp.Symbol('x')
+            
+            # Generate step-by-step differentiation
+            terms = expr.as_ordered_terms() if expr.is_Add else [expr]
+            term_steps = []
+            for term in terms:
+                diff_term = sp.diff(term, x)
+                term_steps.append(f"d/dx({term}) = {diff_term}")
+            
             result = sp.diff(expr, x)
             
             steps = [
@@ -281,13 +289,18 @@ def solve_step_by_step(message):
                 "**Step 1:** Identify each term",
                 f"f(x) = {expr_str}",
                 "",
-                "**Step 2:** Apply power rule (d/dx(xⁿ) = n·xⁿ⁻¹)",
-                "",
-                f"**Final Answer:** f'(x) = {sp.simplify(result)}"
+                "**Step 2:** Apply power rule (d/dx(xⁿ) = n·xⁿ⁻¹) to each term"
             ]
+            
+            for i, step in enumerate(term_steps, 1):
+                steps.append(f"  {step}")
+            
+            steps.append("")
+            steps.append(f"**Final Answer:** f'(x) = {sp.simplify(result)}")
+            
             return "\n".join(steps)
         
-        # ===== INTEGRATION - FIXED: Better detection =====
+        # ===== INTEGRATION - FIXED: Better detection and steps =====
         int_keywords = ['integrate', 'integral of', '∫']
         int_match = None
         for kw in int_keywords:
@@ -303,6 +316,14 @@ def solve_step_by_step(message):
             expr_str = expr_str.replace('^', '**')
             expr = _sp_safe_parse(expr_str)
             x = sp.Symbol('x')
+            
+            # Generate step-by-step integration
+            terms = expr.as_ordered_terms() if expr.is_Add else [expr]
+            term_steps = []
+            for term in terms:
+                int_term = sp.integrate(term, x)
+                term_steps.append(f"∫{term} dx = {int_term}")
+            
             result = sp.integrate(expr, x)
             
             steps = [
@@ -313,23 +334,54 @@ def solve_step_by_step(message):
                 "**Step 1:** Identify each term",
                 f"f(x) = {expr_str}",
                 "",
-                "**Step 2:** Apply integration rules",
-                "",
-                f"**Final Answer:** ∫{expr_str} dx = {result} + C"
+                "**Step 2:** Apply integration rules to each term"
             ]
+            
+            for i, step in enumerate(term_steps, 1):
+                steps.append(f"  {step}")
+            
+            steps.append("")
+            steps.append(f"**Final Answer:** ∫{expr_str} dx = {result} + C")
+            
             return "\n".join(steps)
         
-        # ===== MATRICES =====
-        mat_match = re.search(r'\[\[.*?\]\]', msg)
+        # ===== MATRICES - FIXED: Better regex for nested matrices =====
+        mat_match = re.search(r'\[\[.*?\]\]', msg, re.DOTALL)
         if mat_match and ('matrix' in lower or 'determinant' in lower or 'det' in lower or 'inverse' in lower):
             try:
                 mat_str = mat_match.group(0)
-                M = sp.Matrix(ast.literal_eval(mat_str))
+                # Parse matrix string safely
+                rows = []
+                for row_str in re.findall(r'\[([^\[\]]+)\]', mat_str):
+                    values = [float(x.strip()) for x in row_str.split(',')]
+                    rows.append(values)
+                M = sp.Matrix(rows)
+                
                 if 'determinant' in lower or 'det' in lower:
-                    return f"📐 **Matrix:**\n{sp.pretty(M)}\n\n**Determinant:** {M.det()}"
+                    result = M.det()
+                    steps = [
+                        f"📐 **Matrix:**\n{sp.pretty(M)}",
+                        "",
+                        "**Step 1:** Apply determinant formula",
+                        f"det = {result}",
+                        "",
+                        f"**Final Answer:** {result}"
+                    ]
+                    return "\n".join(steps)
+                    
                 if 'inverse' in lower:
-                    return f"📐 **Matrix:**\n{sp.pretty(M)}\n\n**Inverse:**\n{sp.pretty(M.inv())}"
-            except:
+                    result = M.inv()
+                    steps = [
+                        f"📐 **Matrix:**\n{sp.pretty(M)}",
+                        "",
+                        "**Step 1:** Calculate inverse matrix",
+                        "",
+                        f"**Final Answer:**\n{sp.pretty(result)}"
+                    ]
+                    return "\n".join(steps)
+                    
+            except Exception as e:
+                print(f"Matrix parsing error: {e}")
                 pass
         
         # ===== STATISTICS =====
@@ -374,6 +426,35 @@ def solve_step_by_step(message):
         print(f"Math solver error: {e}")
         return None
     return None
+
+# ============ MATH INTENT DETECTION ============
+def is_math_query(query: str) -> bool:
+    """Detect if query is mathematical and should bypass web search"""
+    query_lower = query.lower()
+    
+    # Calculus keywords
+    calculus_keywords = ['differentiate', 'derivative of', 'diff', 'd/dx', 'integrate', 'integral of', '∫', 'limit']
+    for kw in calculus_keywords:
+        if kw in query_lower:
+            return True
+    
+    # Equation detection
+    if '=' in query and re.search(r'[a-zA-Z]', query):
+        return True
+    
+    # Matrix detection
+    if re.search(r'\[\[.*?\]\]', query):
+        return True
+    
+    # Statistics detection
+    if re.search(r'(mean|median|stdev|variance|average) of [\d.,\s]+', query_lower):
+        return True
+    
+    # Math symbols
+    if re.search(r'[\^]', query) and re.search(r'[a-zA-Z]', query):
+        return True
+    
+    return False
 
 # ============ GRAPH GENERATOR ============
 _GRAPH_TRIGGER_RE = re.compile(r'^(?:graph|plot)\s+(.+)$', re.IGNORECASE)
@@ -732,6 +813,13 @@ def resolve_followup(msg, memory):
                 return f"current head of state of {new_topic}"
             return f"tell me about {new_topic}"
     
+    # "What about Italy?" pattern
+    if re.match(r'^what about ([A-Z][a-z]+)$', msg_lower):
+        new_topic = re.search(r'what about ([A-Z][a-z]+)', msg_lower, re.IGNORECASE).group(1)
+        if context.get("category") == "person":
+            return f"current status of {new_topic}"
+        return f"information about {new_topic}"
+    
     return msg
 
 def detect_intent_and_context(msg):
@@ -847,7 +935,7 @@ def knowledge_base_lookup(msg):
 # ============ GOOGLE CLIENT ID ============
 GOOGLE_CLIENT_ID = "46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com"
 
-# ============ HTML (FIXED: Mobile Keyboard & Responsive) ============
+# ============ HTML ============
 HTML = f'''
 <!DOCTYPE html>
 <html lang="en">
@@ -858,19 +946,10 @@ HTML = f'''
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
     <style>
-        /* ===== RESET ===== */
         * {{ margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }}
-        html, body {{
-            margin: 0; padding: 0; width: 100%; height: 100%; 
-            overflow-x: hidden; overflow-y: auto; 
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #f5f0e8; transition: all 0.3s ease;
-            -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
-            position: relative;
-        }}
+        html, body {{ margin: 0; padding: 0; width: 100%; height: 100%; overflow-x: hidden; overflow-y: auto; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f0e8; transition: all 0.3s ease; -webkit-font-smoothing: antialiased; position: relative; }}
         img, video, iframe {{ max-width: 100%; height: auto; }}
         
-        /* ===== DARK MODE ===== */
         body.dark {{ background: #1a1a2e; }}
         body.dark .app {{ background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); }}
         body.dark .header {{ background: rgba(26,26,46,0.95); border-bottom-color: #2a2a4e; }}
@@ -901,23 +980,14 @@ HTML = f'''
         body.dark .control-btn {{ color: #d4c5a9; }}
         body.dark .control-btn:hover {{ background: #3a3a5e; color: white; }}
         
-        /* ===== LOGIN OVERLAY ===== */
         .login-overlay {{ position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); z-index: 2000; display: flex; justify-content: center; align-items: center; padding: 20px; }}
         .login-card {{ background: white; border-radius: 30px; padding: 40px 30px; text-align: center; max-width: 400px; width: 100%; box-shadow: 0 25px 50px rgba(0,0,0,0.2); }}
         .login-card .logo-icon {{ font-size: 4rem; margin-bottom: 20px; }}
         .login-card h2 {{ font-family: 'Playfair Display', serif; font-size: 2rem; margin-bottom: 10px; }}
         .login-card p {{ color: #666; font-size: 1rem; margin-bottom: 30px; }}
         
-        /* ===== APP ===== */
-        .app {{
-            display: flex; flex-direction: column;
-            height: 100dvh; min-height: 100vh;
-            width: 100%;
-            background: linear-gradient(135deg, #f5f0e8 0%, #e8e0d5 100%);
-            position: relative; overflow: hidden;
-        }}
+        .app {{ display: flex; flex-direction: column; height: 100dvh; min-height: 100vh; width: 100%; background: linear-gradient(135deg, #f5f0e8 0%, #e8e0d5 100%); position: relative; overflow: hidden; }}
         
-        /* ===== SIDEBAR ===== */
         .sidebar {{ position: fixed; left: 0; top: 0; bottom: 0; width: min(280px, 80vw); background: #2c2418; border-right: 1px solid #4a3f2f; display: flex; flex-direction: column; transform: translateX(-100%); transition: transform 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55); z-index: 1000; box-shadow: 4px 0 20px rgba(0,0,0,0.1); }}
         .sidebar.open {{ transform: translateX(0); }}
         .sidebar-header {{ padding: 20px; border-bottom: 1px solid #4a3f2f; background: #1f1912; flex-shrink: 0; }}
@@ -940,21 +1010,9 @@ HTML = f'''
         .overlay {{ position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.4); display: none; z-index: 999; }}
         .overlay.show {{ display: block; }}
         
-        /* ===== MAIN ===== */
-        .main {{
-            flex: 1; display: flex; flex-direction: column;
-            min-height: 0; height: 100%; width: 100%;
-            overflow: hidden;
-        }}
+        .main {{ flex: 1; display: flex; flex-direction: column; min-height: 0; height: 100%; width: 100%; overflow: hidden; }}
         
-        /* ===== HEADER ===== */
-        .header {{
-            padding: 12px 16px; display: flex; align-items: center; gap: 12px;
-            border-bottom: 1px solid #d4c5a9;
-            background: rgba(245,240,232,0.95);
-            flex-shrink: 0; min-height: 56px; width: 100%;
-            position: relative; z-index: 10;
-        }}
+        .header {{ padding: 12px 16px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #d4c5a9; background: rgba(245,240,232,0.95); flex-shrink: 0; min-height: 56px; width: 100%; position: relative; z-index: 10; }}
         .menu-btn {{ background: none; border: none; font-size: 1.3rem; cursor: pointer; color: #6a5a4a; padding: 8px; border-radius: 10px; display: flex; align-items: center; justify-content: center; }}
         .menu-btn:hover {{ background: #d4c5a9; color: #2c2418; }}
         .logo {{ flex: 1; display: flex; align-items: baseline; gap: 6px; min-width: 0; }}
@@ -966,14 +1024,7 @@ HTML = f'''
         .user-btn {{ background: none; border: none; cursor: pointer; display: none; padding: 4px; }}
         .user-btn img {{ width: 35px; height: 35px; border-radius: 50%; object-fit: cover; }}
         
-        /* ===== MESSAGES ===== */
-        .messages {{
-            flex: 1; overflow-y: auto;
-            padding: 16px; padding-bottom: 20px;
-            -webkit-overflow-scrolling: touch;
-            scroll-behavior: smooth;
-            min-height: 0;
-        }}
+        .messages {{ flex: 1; overflow-y: auto; padding: 16px; padding-bottom: 20px; -webkit-overflow-scrolling: touch; scroll-behavior: smooth; min-height: 0; }}
         .message {{ margin-bottom: 20px; animation: fadeIn 0.3s ease; }}
         .message-wrapper {{ display: inline-block; max-width: 85%; }}
         @keyframes fadeIn {{ from {{ opacity: 0; transform: translateY(10px); }} to {{ opacity: 1; transform: translateY(0); }} }}
@@ -1007,145 +1058,44 @@ HTML = f'''
         .typing span {{ width: 6px; height: 6px; background: #c4a57b; border-radius: 50%; display: inline-block; animation: bounce 1.4s infinite; }}
         @keyframes bounce {{ 0%, 60%, 100% {{ transform: translateY(0); }} 30% {{ transform: translateY(-6px); }} }}
         
-        /* ===== INPUT AREA - MOBILE KEYBOARD FIX (NO FIXED VALUES) ===== */
-        .input-area {{
-            position: sticky;
-            bottom: 0;
-            z-index: 100;
-            background: #f5f0e8;
-            padding: 12px 16px env(safe-area-inset-bottom, 20px);
-            padding-bottom: max(12px, env(safe-area-inset-bottom, 20px));
-            flex-shrink: 0;
-            border-top: 1px solid rgba(212,197,169,0.3);
-            width: 100%;
-            transition: padding-bottom 0.15s ease;
-            margin-top: auto;
-        }}
+        .input-area {{ position: sticky; bottom: 0; z-index: 100; background: #f5f0e8; padding: 12px 16px env(safe-area-inset-bottom, 20px); padding-bottom: max(12px, env(safe-area-inset-bottom, 20px)); flex-shrink: 0; border-top: 1px solid rgba(212,197,169,0.3); width: 100%; transition: padding-bottom 0.15s ease; margin-top: auto; }}
         body.dark .input-area {{ background: #1a1a2e; border-top-color: rgba(42,42,78,0.3); }}
         
-        .input-wrapper {{
-            display: flex; align-items: flex-end; gap: 12px;
-            background: white; border-radius: 28px;
-            padding: 8px 8px 8px 20px;
-            border: 1px solid #d4c5a9;
-            width: 100%; max-width: 760px;
-            margin: 0 auto;
-            min-height: 56px;
-        }}
+        .input-wrapper {{ display: flex; align-items: flex-end; gap: 12px; background: white; border-radius: 28px; padding: 8px 8px 8px 20px; border: 1px solid #d4c5a9; width: 100%; max-width: 760px; margin: 0 auto; min-height: 56px; }}
         body.dark .input-wrapper {{ background: #2a2a4e; border-color: #3a3a5e; }}
         
         .input-text-wrapper {{ flex: 1; min-width: 0; }}
-        textarea {{
-            width: 100%; background: transparent; border: none; outline: none;
-            font-size: 16px; line-height: 1.5; resize: none;
-            padding: 8px 0; font-family: inherit; color: #2c2418;
-            min-height: 24px; max-height: 180px; overflow-y: auto;
-        }}
+        textarea {{ width: 100%; background: transparent; border: none; outline: none; font-size: 16px; line-height: 1.5; resize: none; padding: 8px 0; font-family: inherit; color: #2c2418; min-height: 24px; max-height: 180px; overflow-y: auto; }}
         body.dark textarea {{ color: #e0e0e0; }}
         textarea::placeholder {{ color: #b8a88a; font-size: 0.95rem; }}
         @media (max-width: 768px) {{ textarea {{ font-size: 16px !important; }} }}
         
-        .submit-btn {{
-            display: flex; align-items: center; justify-content: center;
-            flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%;
-            border: none; background-color: #2c2418; color: white;
-            cursor: pointer; transition: all 0.2s;
-            min-width: 44px; min-height: 44px;
-        }}
+        .submit-btn {{ display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%; border: none; background-color: #2c2418; color: white; cursor: pointer; transition: all 0.2s; min-width: 44px; min-height: 44px; }}
         body.dark .submit-btn {{ background-color: #4a3f2f; }}
         .submit-btn:hover {{ background-color: #4a3f2f; transform: scale(1.02); }}
         .submit-btn:active {{ transform: scale(0.96); }}
         .submit-icon {{ width: 20px; height: 20px; fill: currentColor; }}
         
-        .attach-btn {{
-            display: flex; align-items: center; justify-content: center;
-            flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%;
-            border: 1px solid #e0d5c0; background-color: transparent;
-            color: #2c2418; cursor: pointer; transition: all 0.2s;
-            min-width: 44px; min-height: 44px;
-        }}
+        .attach-btn {{ display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%; border: 1px solid #e0d5c0; background-color: transparent; color: #2c2418; cursor: pointer; transition: all 0.2s; min-width: 44px; min-height: 44px; }}
         body.dark .attach-btn {{ border-color: #4a3f2f; color: #e0e0e0; }}
         .attach-btn:hover {{ background-color: rgba(44,36,24,0.06); }}
         .attach-icon {{ width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; }}
         .message-content img.chat-image {{ max-width: 100%; border-radius: 10px; margin-top: 10px; display: block; }}
         
-        /* ===== WELCOME - RESPONSIVE ===== */
-        .welcome {{
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
-            min-height: 40vh; text-align: center; padding: 20px;
-        }}
+        .welcome {{ display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 40vh; text-align: center; padding: 20px; }}
         .welcome-icon {{ font-size: clamp(2.5rem, 5vw, 3.5rem); margin-bottom: 15px; animation: float 3s ease-in-out infinite; }}
         @keyframes float {{ 0%, 100% {{ transform: translateY(0); }} 50% {{ transform: translateY(-8px); }} }}
         .welcome h2 {{ font-family: 'Playfair Display', serif; font-size: clamp(1.5rem, 4vw, 2.5rem); color: #2c2418; margin-bottom: 8px; }}
         .welcome p {{ color: #6a5a4a; font-size: clamp(0.75rem, 1.5vw, 0.95rem); margin-bottom: 20px; }}
-        .suggestions {{
-            display: flex; flex-wrap: wrap; gap: 8px;
-            justify-content: center; margin-top: 15px;
-            max-width: 100%;
-        }}
-        .suggestion {{
-            background: white; border: 1px solid #d4c5a9; border-radius: 30px;
-            padding: 6px 14px; font-size: clamp(0.6rem, 1.2vw, 0.75rem);
-            color: #2c2418; cursor: pointer; transition: all 0.2s;
-            white-space: nowrap;
-        }}
+        .suggestions {{ display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 15px; max-width: 100%; }}
+        .suggestion {{ background: white; border: 1px solid #d4c5a9; border-radius: 30px; padding: 6px 14px; font-size: clamp(0.6rem, 1.2vw, 0.75rem); color: #2c2418; cursor: pointer; transition: all 0.2s; white-space: nowrap; }}
         .suggestion:hover {{ background: #2c2418; color: white; border-color: #2c2418; }}
         
-        /* ===== RESPONSIVE BREAKPOINTS ===== */
-        @media (max-width: 480px) {{
-            .header {{ padding: 8px 12px; min-height: 48px; gap: 8px; }}
-            .logo h1 {{ font-size: 1rem; }}
-            .logo-icon {{ font-size: 1.2rem; }}
-            .messages {{ padding: 10px 12px; }}
-            .input-area {{ padding: 8px 10px 14px; padding-bottom: max(8px, env(safe-area-inset-bottom, 14px)); }}
-            .input-wrapper {{ padding: 5px 5px 5px 14px; min-height: 44px; gap: 8px; border-radius: 24px; }}
-            textarea {{ font-size: 15px !important; padding: 6px 0; min-height: 20px; }}
-            .submit-btn {{ width: 40px; height: 40px; min-width: 40px; min-height: 40px; }}
-            .submit-icon {{ width: 16px; height: 16px; }}
-            .message-content {{ font-size: 0.8rem; }}
-            .suggestions {{ display: none; }}
-            .new-chat-mobile {{ display: block; }}
-        }}
-        @media (max-width: 380px) {{
-            .header {{ padding: 6px 10px; min-height: 44px; gap: 6px; }}
-            .logo h1 {{ font-size: 0.85rem; }}
-            .logo-icon {{ font-size: 1rem; }}
-            .messages {{ padding: 8px 10px; }}
-            .input-area {{ padding: 6px 8px 12px; padding-bottom: max(6px, env(safe-area-inset-bottom, 12px)); }}
-            .input-wrapper {{ padding: 4px 4px 4px 12px; min-height: 40px; gap: 6px; border-radius: 22px; }}
-            textarea {{ font-size: 14px !important; padding: 5px 0; min-height: 18px; }}
-            .submit-btn {{ width: 36px; height: 36px; min-width: 36px; min-height: 36px; }}
-            .submit-icon {{ width: 14px; height: 14px; }}
-            .message-content {{ font-size: 0.75rem; }}
-        }}
-        @media (max-height: 500px) and (orientation: landscape) {{
-            .header {{ min-height: 40px; padding: 4px 12px; gap: 6px; }}
-            .logo h1 {{ font-size: 0.9rem; }}
-            .logo-icon {{ font-size: 1.1rem; }}
-            .messages {{ padding: 6px 12px; padding-bottom: 10px; }}
-            .input-area {{ padding: 4px 12px 8px; padding-bottom: max(4px, env(safe-area-inset-bottom, 8px)); }}
-            .input-wrapper {{ min-height: 38px; padding: 4px 4px 4px 12px; }}
-            textarea {{ min-height: 20px; max-height: 80px; font-size: 14px !important; padding: 4px 0; }}
-            .submit-btn {{ width: 36px; height: 36px; min-width: 36px; min-height: 36px; }}
-            .submit-icon {{ width: 14px; height: 14px; }}
-            .welcome {{ min-height: 20vh; }}
-            .suggestions {{ display: none; }}
-        }}
-        @media (min-width: 769px) and (max-width: 1024px) {{
-            .input-wrapper {{ max-width: 90%; }}
-            .messages {{ padding: 16px 24px; }}
-            .header {{ padding: 14px 20px; }}
-        }}
-        @media (min-width: 1025px) {{
-            .input-wrapper {{ max-width: 760px; }}
-            .messages {{ padding: 24px 32px; }}
-            .header {{ padding: 16px 32px; }}
-        }}
-        
-        /* ===== DYNAMIC KEYBOARD ADJUSTMENT ===== */
-        @supports (height: 100dvh) {{
-            .app {{ height: 100dvh; min-height: 100dvh; }}
-        }}
+        @media (max-width: 480px) {{ .header {{ padding: 8px 12px; min-height: 48px; gap: 8px; }} .logo h1 {{ font-size: 1rem; }} .logo-icon {{ font-size: 1.2rem; }} .messages {{ padding: 10px 12px; }} .input-area {{ padding: 8px 10px 14px; padding-bottom: max(8px, env(safe-area-inset-bottom, 14px)); }} .input-wrapper {{ padding: 5px 5px 5px 14px; min-height: 44px; gap: 8px; border-radius: 24px; }} textarea {{ font-size: 15px !important; padding: 6px 0; min-height: 20px; }} .submit-btn {{ width: 40px; height: 40px; min-width: 40px; min-height: 40px; }} .submit-icon {{ width: 16px; height: 16px; }} .message-content {{ font-size: 0.8rem; }} .suggestions {{ display: none; }} .new-chat-mobile {{ display: block; }} }}
+        @media (max-width: 380px) {{ .header {{ padding: 6px 10px; min-height: 44px; gap: 6px; }} .logo h1 {{ font-size: 0.85rem; }} .logo-icon {{ font-size: 1rem; }} .messages {{ padding: 8px 10px; }} .input-area {{ padding: 6px 8px 12px; padding-bottom: max(6px, env(safe-area-inset-bottom, 12px)); }} .input-wrapper {{ padding: 4px 4px 4px 12px; min-height: 40px; gap: 6px; border-radius: 22px; }} textarea {{ font-size: 14px !important; padding: 5px 0; min-height: 18px; }} .submit-btn {{ width: 36px; height: 36px; min-width: 36px; min-height: 36px; }} .submit-icon {{ width: 14px; height: 14px; }} .message-content {{ font-size: 0.75rem; }} }}
+        @media (max-height: 500px) and (orientation: landscape) {{ .header {{ min-height: 40px; padding: 4px 12px; gap: 6px; }} .logo h1 {{ font-size: 0.9rem; }} .logo-icon {{ font-size: 1.1rem; }} .messages {{ padding: 6px 12px; padding-bottom: 10px; }} .input-area {{ padding: 4px 12px 8px; padding-bottom: max(4px, env(safe-area-inset-bottom, 8px)); }} .input-wrapper {{ min-height: 38px; padding: 4px 4px 4px 12px; }} textarea {{ min-height: 20px; max-height: 80px; font-size: 14px !important; padding: 4px 0; }} .submit-btn {{ width: 36px; height: 36px; min-width: 36px; min-height: 36px; }} .submit-icon {{ width: 14px; height: 14px; }} .welcome {{ min-height: 20vh; }} .suggestions {{ display: none; }} }}
+        @media (min-width: 769px) and (max-width: 1024px) {{ .input-wrapper {{ max-width: 90%; }} .messages {{ padding: 16px 24px; }} .header {{ padding: 14px 20px; }} }}
+        @media (min-width: 1025px) {{ .input-wrapper {{ max-width: 760px; }} .messages {{ padding: 24px 32px; }} .header {{ padding: 16px 32px; }} }}
     </style>
 </head>
 <body>
@@ -1289,42 +1239,20 @@ HTML = f'''
         function autoAdjustHeight() {{ this.style.height = 'auto'; this.style.height = this.scrollHeight + 'px'; }}
         textarea.addEventListener('input', autoAdjustHeight);
         
-        // ===== DYNAMIC KEYBOARD HANDLING - NO FIXED VALUES =====
         if (window.visualViewport) {{
             let lastHeight = window.visualViewport.height;
-            let isKeyboardVisible = false;
-            
             window.visualViewport.addEventListener('resize', function() {{
                 const inputArea = document.querySelector('.input-area');
                 const currentHeight = window.visualViewport.height;
                 const heightDiff = lastHeight - currentHeight;
-                
-                // Detect keyboard open (viewport shrinks significantly)
                 if (heightDiff > 100) {{
-                    isKeyboardVisible = true;
-                    // The input area is sticky bottom, so it stays visible naturally
                     if (inputArea) {{
                         setTimeout(() => {{
                             inputArea.scrollIntoView({{ behavior: 'smooth', block: 'nearest' }});
                         }}, 50);
                     }}
-                }} else if (heightDiff < -50) {{
-                    isKeyboardVisible = false;
                 }}
-                
                 lastHeight = currentHeight;
-            }});
-        }}
-        
-        // Fallback for devices without visualViewport
-        if (window.visualViewport) {{
-            window.addEventListener('resize', function() {{
-                const inputArea = document.querySelector('.input-area');
-                if (inputArea && window.innerHeight < 500) {{
-                    setTimeout(() => {{
-                        inputArea.scrollIntoView({{ behavior: 'smooth', block: 'nearest' }});
-                    }}, 100);
-                }}
             }});
         }}
         
@@ -1651,6 +1579,23 @@ def get_response(message, email):
         save_memory(email, memory)
         return {"text": reply, "image": image} if image else reply
     
+    # ===== FIXED: Math detection bypasses web search =====
+    if is_math_query(raw_message):
+        solved = solve_step_by_step(raw_message)
+        if solved:
+            return _finish(solved + _suffix(), topic="math_steps")
+        
+        expr = looks_like_math(raw_message)
+        if expr:
+            try:
+                result = safe_calculate(expr)
+                reply = f"🧮 **{expr} = {result}**" + _suffix()
+                return _finish(reply, topic="math")
+            except ZeroDivisionError:
+                return _finish("🧮 Can't divide by zero!")
+            except Exception:
+                pass
+    
     resolved_msg = resolve_followup(msg, memory)
     if resolved_msg != msg:
         msg = resolved_msg
@@ -1748,21 +1693,6 @@ def get_response(message, email):
             if result:
                 return _finish(result + _suffix(), topic="country")
     
-    solved = solve_step_by_step(raw_message)
-    if solved:
-        return _finish(solved + _suffix(), topic="math_steps")
-    
-    expr = looks_like_math(raw_message)
-    if expr:
-        try:
-            result = safe_calculate(expr)
-            reply = f"🧮 **{expr} = {result}**" + _suffix()
-            return _finish(reply, topic="math")
-        except ZeroDivisionError:
-            return _finish("🧮 Can't divide by zero!")
-        except Exception:
-            pass
-    
     cached_search = cache_get(f"search:{message}")
     if cached_search:
         return _finish(cached_search, topic="search")
@@ -1854,16 +1784,18 @@ async def upload_file(file: UploadFile = File(...), email: str = Form(...)):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     print("\n" + "="*55)
-    print("🏛️ YAMA AI - COMPLETE FIXED VERSION")
+    print("🏛️ YAMA AI - PROFESSIONAL COMPLETE VERSION")
     print("="*55)
     print(f"🌐 Running on port: {port}")
     print("="*55)
+    print("✅ Calculus Routing Fixed (differentiate, integrate)")
+    print("✅ Expression Corruption Fixed (removed .replace('x', '*'))")
     print("✅ Mobile Keyboard Fix (No fixed values)")
     print("✅ Fully Responsive Design")
     print("✅ Clickable Source URLs")
     print("✅ Step-by-Step Math Explanations")
-    print("✅ Differentiate/Integrate Detection Fixed")
     print("✅ Context Understanding (Follow-ups)")
+    print("✅ Matrix Parsing (Nested matrices supported)")
     print("✅ Unit Conversion, Weather, News, Country Facts")
     print("✅ Graph Generation")
     print("✅ User Memory")
