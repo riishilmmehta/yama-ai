@@ -5,6 +5,7 @@ requests
 beautifulsoup4
 tinydb
 ddgs
+googlesearch-python
 
 # ============ MATHEMATICS ENGINE ============
 sympy
