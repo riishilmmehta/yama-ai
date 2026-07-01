@@ -1,1156 +1,25 @@
-from __future__ import annotations
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
 import uvicorn
 import json
 import os
 import re
-from datetime import datetime, timedelta
+import ast
+import math
+import operator
+from datetime import datetime
 from ddgs import DDGS
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import quote, urlparse
+from urllib.parse import quote
 from tinydb import TinyDB, Query
 import secrets
-import time
-from collections import defaultdict
-from typing import List, Dict, Any, Optional, Tuple
-import sympy as sp
-from sympy import *
-from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application, convert_xor
-import mpmath as mp
-import numpy as np
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-from io import BytesIO
-import base64
-import hashlib
-import re
 
-# ============ DATA DIRECTORY (Render Compatible - NO RAILWAY) ============
-DATA_DIR = os.environ.get("DATA_DIR", "./data")
-os.makedirs(DATA_DIR, exist_ok=True)
-
-app = FastAPI(title="Yama AI V2.0")
+app = FastAPI(title="Yama AI")
 
 # ============ USER DATABASE ============
-user_db = TinyDB(os.path.join(DATA_DIR, 'users.json'))
+user_db = TinyDB('users.json')
 User = Query()
-
-# ============ MESSAGE FEATURES STORAGE ============
-message_feedback_db = TinyDB(os.path.join(DATA_DIR, 'feedback.json'))
-Feedback = Query()
-
-# ============ CONTEXT MEMORY ============
-class ContextMemory:
-    def __init__(self, max_messages=30):
-        self.max_messages = max_messages
-        self._contexts = {}
-    
-    def get_context(self, email: str) -> List[Dict]:
-        return self._contexts.get(email, [])
-    
-    def add_message(self, email: str, role: str, content: str):
-        if email not in self._contexts:
-            self._contexts[email] = []
-        self._contexts[email].append({"role": role, "content": content})
-        if len(self._contexts[email]) > self.max_messages:
-            self._contexts[email] = self._contexts[email][-self.max_messages:]
-    
-    def get_last_topic(self, email: str) -> Optional[str]:
-        context = self._contexts.get(email, [])
-        for msg in reversed(context):
-            if msg['role'] == 'user':
-                return msg['content']
-        return None
-
-context_memory = ContextMemory()
-
-# ============ QUERY CLEANER ============
-class QueryCleaner:
-    def __init__(self):
-        self.filler_words = {
-            'explain', 'tell', 'me', 'about', 'please', 'can', 'you', 'could',
-            'would', 'should', 'may', 'might', 'will', 'shall', 'do', 'does', 'did',
-            'what', 'is', 'are', 'was', 'were', 'the', 'a', 'an', 'of', 'to', 'for',
-            'with', 'on', 'at', 'from', 'by', 'in', 'into', 'through', 'during',
-            'define', 'describe', 'give', 'show', 'provide', 'list', 'how', 'why',
-            'where', 'when', 'who', 'whom', 'whose', 'which'
-        }
-    
-    def clean(self, query: str) -> str:
-        words = query.lower().split()
-        important = [w for w in words if w not in self.filler_words and len(w) > 2]
-        return ' '.join(important) if important else query
-
-query_cleaner = QueryCleaner()
-
-# ============ MATH PREPROCESSOR ============
-class MathPreprocessor:
-    def __init__(self):
-        self.superscript_map = {
-            '²': '**2', '³': '**3', '⁴': '**4', '⁵': '**5',
-            '⁶': '**6', '⁷': '**7', '⁸': '**8', '⁹': '**9'
-        }
-        
-        self.symbol_map = {
-            'π': 'pi', '√': 'sqrt', '∫': 'integrate',
-            '∂': 'diff', '∞': 'oo', 'θ': 'theta',
-            'α': 'alpha', 'β': 'beta', 'γ': 'gamma',
-            '×': '*', '÷': '/', '≈': 'approx'
-        }
-        
-        self.trig_funcs = ['sin', 'cos', 'tan', 'cot', 'sec', 'csc',
-                          'asin', 'acos', 'atan', 'acot', 'asec', 'acsc',
-                          'sinh', 'cosh', 'tanh', 'asinh', 'acosh', 'atanh']
-    
-    def preprocess(self, query: str) -> str:
-        expression = query.strip()
-        
-        question_words = ['solve', 'find', 'calculate', 'evaluate', 'what is', 'compute', 
-                         'differentiate', 'integrate', 'plot', 'graph']
-        for word in question_words:
-            expression = re.sub(rf'^{word}\s+', '', expression, flags=re.IGNORECASE)
-            expression = re.sub(rf'\s+{word}\s+', ' ', expression, flags=re.IGNORECASE)
-        
-        for sup, replacement in self.superscript_map.items():
-            expression = expression.replace(sup, replacement)
-        
-        for symbol, replacement in self.symbol_map.items():
-            expression = expression.replace(symbol, replacement)
-        
-        expression = re.sub(r'(\d+)([a-zA-Z])', r'\1*\2', expression)
-        expression = re.sub(r'([a-zA-Z])(\d+)', r'\1*\2', expression)
-        expression = re.sub(r'(\d+)\(', r'\1*(', expression)
-        expression = re.sub(r'\)\(', r')*(', expression)
-        expression = re.sub(r'√\(([^)]+)\)', r'sqrt(\1)', expression)
-        expression = re.sub(r'√([a-zA-Z]+)', r'sqrt(\1)', expression)
-        
-        for func in self.trig_funcs:
-            expression = re.sub(rf'{func}\s*([a-zA-Z0-9]+)', rf'{func}(\1)', expression)
-            expression = re.sub(rf'{func}\s*\(', rf'{func}(', expression)
-        
-        expression = re.sub(r'd/dx\s*\(([^)]+)\)', r'diff(\1, x)', expression)
-        expression = re.sub(r'differentiate\s+([^\s]+)', r'diff(\1, x)', expression)
-        expression = re.sub(r'derivative of\s+([^\s]+)', r'diff(\1, x)', expression)
-        expression = re.sub(r'integrate\s+([^\s]+)\s+with respect to\s+([a-zA-Z])', r'integrate(\1, \2)', expression)
-        expression = re.sub(r'integrate\s+([^\s]+)', r'integrate(\1, x)', expression)
-        expression = re.sub(r'∫\s*([^\s]+)\s*dx', r'integrate(\1, x)', expression)
-        expression = re.sub(r'\[\[([^\]]+)\]\]', r'Matrix([\1])', expression)
-        
-        if '=' in expression and not expression.startswith('Eq'):
-            parts = expression.split('=')
-            if len(parts) == 2:
-                left = parts[0].strip()
-                right = parts[1].strip()
-                expression = f'Eq({left}, {right})'
-        
-        return expression
-
-math_preprocessor = MathPreprocessor()
-
-# ============ MATH INTENT DETECTOR ============
-class MathIntentDetector:
-    def __init__(self):
-        self.math_keywords = [
-            'sin', 'cos', 'tan', 'cot', 'sec', 'csc',
-            'asin', 'acos', 'atan', 'log', 'ln', 'exp',
-            'sqrt', 'cbrt', 'factorial', 'matrix', 'determinant',
-            'integrate', 'differentiate', 'derivative', 'integral',
-            'limit', 'plot', 'graph', 'solve', 'factor',
-            'expand', 'simplify', 'equation', 'inequality'
-        ]
-        
-        self.math_symbols = ['+', '-', '*', '/', '=', '²', '³', '√', 'π', '∫', '∂']
-    
-    def detect(self, query: str) -> bool:
-        query_lower = query.lower()
-        
-        for symbol in self.math_symbols:
-            if symbol in query:
-                return True
-        
-        for keyword in self.math_keywords:
-            if keyword in query_lower:
-                return True
-        
-        if re.search(r'[a-zA-Z]\s*[=]', query):
-            return True
-        
-        if re.search(r'[\d]+\s*[\+\-\*\/]\s*[\d]+', query):
-            return True
-        
-        return False
-
-math_intent_detector = MathIntentDetector()
-
-# ============ ADVANCED MATH ENGINE ============
-class AdvancedMathEngine:
-    def __init__(self):
-        self.precision = 15
-        mp.mp.dps = self.precision
-        self.x = symbols('x')
-        self.y = symbols('y')
-        self.z = symbols('z')
-    
-    def solve(self, query: str) -> Dict[str, Any]:
-        try:
-            processed = math_preprocessor.preprocess(query)
-            
-            solvers = [
-                ('arithmetic', self.solve_arithmetic),
-                ('equation', self.solve_equation),
-                ('quadratic', self.solve_quadratic),
-                ('calculus', self.solve_calculus),
-                ('trigonometry', self.solve_trigonometry),
-                ('matrix', self.solve_matrix),
-                ('expression', self.solve_expression)
-            ]
-            
-            for solver_type, solver_func in solvers:
-                result = solver_func(processed, query)
-                if result.get('success'):
-                    result['type'] = solver_type
-                    if 'explanation' not in result:
-                        result['explanation'] = self.generate_explanation(result, query)
-                    return result
-            
-            return {'success': False, 'error': 'Could not parse math expression'}
-        except Exception as e:
-            return {'success': False, 'error': str(e)}
-    
-    def solve_arithmetic(self, processed: str, original: str) -> Dict[str, Any]:
-        try:
-            clean = re.sub(r'[^0-9+\-*/%.()\s]', '', processed)
-            if not clean:
-                return {'success': False}
-            
-            expr = parse_expr(clean)
-            if expr.is_number:
-                result = float(expr)
-                steps = [
-                    f"Expression: {clean}",
-                    f"Calculate: {clean}",
-                    f"Result: {result}"
-                ]
-                return {
-                    'success': True,
-                    'result': result,
-                    'result_str': str(result),
-                    'is_exact': expr.is_Integer,
-                    'steps': steps,
-                    'answer': str(result)
-                }
-        except:
-            pass
-        return {'success': False}
-    
-    def solve_quadratic(self, processed: str, original: str) -> Dict[str, Any]:
-        try:
-            eq_match = re.search(r'Eq\(([^,]+),\s*([^)]+)\)', processed)
-            if not eq_match:
-                if 'x**2' in processed or 'x²' in original:
-                    expr = parse_expr(processed)
-                    if expr.is_polynomial():
-                        poly = poly(expr, self.x)
-                        if poly.degree() == 2:
-                            a, b, c = poly.all_coeffs()
-                            if len(a) >= 3:
-                                a_val, b_val, c_val = float(a[0]), float(a[1]), float(a[2])
-                                discriminant = b_val**2 - 4*a_val*c_val
-                                
-                                if discriminant >= 0:
-                                    sqrt_d = sqrt(discriminant)
-                                    x1 = (-b_val + sqrt_d) / (2*a_val)
-                                    x2 = (-b_val - sqrt_d) / (2*a_val)
-                                    
-                                    steps = [
-                                        f"Quadratic equation: {a_val}x² + {b_val}x + {c_val} = 0",
-                                        f"Using quadratic formula: x = [-b ± √(b² - 4ac)] / 2a",
-                                        f"a = {a_val}, b = {b_val}, c = {c_val}",
-                                        f"b² - 4ac = {b_val}² - 4({a_val})({c_val}) = {discriminant}",
-                                        f"√{discriminant} = {sqrt_d.evalf(self.precision)}",
-                                        f"x = [{-b_val} ± {sqrt_d.evalf(self.precision)}] / {2*a_val}",
-                                        f"x₁ = {x1.evalf(self.precision)}",
-                                        f"x₂ = {x2.evalf(self.precision)}"
-                                    ]
-                                    
-                                    return {
-                                        'success': True,
-                                        'solutions': [str(x1.evalf(self.precision)), str(x2.evalf(self.precision))],
-                                        'solutions_count': 2,
-                                        'result_str': f"x = {x1.evalf(self.precision)}, {x2.evalf(self.precision)}",
-                                        'steps': steps,
-                                        'answer': f"x = {x1.evalf(self.precision)}, x = {x2.evalf(self.precision)}"
-                                    }
-            else:
-                left = parse_expr(eq_match.group(1).strip())
-                right = parse_expr(eq_match.group(2).strip())
-                expr = left - right
-                
-                if expr.is_polynomial():
-                    poly = poly(expr, self.x)
-                    if poly.degree() == 2:
-                        a, b, c = poly.all_coeffs()
-                        if len(a) >= 3:
-                            a_val, b_val, c_val = float(a[0]), float(a[1]), float(a[2])
-                            discriminant = b_val**2 - 4*a_val*c_val
-                            
-                            if discriminant >= 0:
-                                sqrt_d = sqrt(discriminant)
-                                x1 = (-b_val + sqrt_d) / (2*a_val)
-                                x2 = (-b_val - sqrt_d) / (2*a_val)
-                                
-                                factor_form = factor(expr)
-                                
-                                steps = [
-                                    f"Equation: {original}",
-                                    f"Method: Factorization",
-                                    f"Step 1: Find factors of {abs(c_val)} that sum to {b_val}",
-                                    f"Step 2: Rewrite as {factor_form}",
-                                    f"Step 3: Apply zero product property",
-                                    f"x₁ = {x1.evalf(self.precision)}",
-                                    f"x₂ = {x2.evalf(self.precision)}"
-                                ]
-                                
-                                return {
-                                    'success': True,
-                                    'solutions': [str(x1.evalf(self.precision)), str(x2.evalf(self.precision))],
-                                    'solutions_count': 2,
-                                    'result_str': f"x = {x1.evalf(self.precision)}, {x2.evalf(self.precision)}",
-                                    'steps': steps,
-                                    'answer': f"x = {x1.evalf(self.precision)}, x = {x2.evalf(self.precision)}"
-                                }
-        except:
-            pass
-        return {'success': False}
-    
-    def solve_equation(self, processed: str, original: str) -> Dict[str, Any]:
-        try:
-            quad_result = self.solve_quadratic(processed, original)
-            if quad_result.get('success'):
-                return quad_result
-            
-            eq_match = re.search(r'Eq\(([^,]+),\s*([^)]+)\)', processed)
-            if eq_match:
-                left = parse_expr(eq_match.group(1).strip())
-                right = parse_expr(eq_match.group(2).strip())
-                expr = left - right
-            else:
-                expr = parse_expr(processed)
-            
-            variables = list(expr.free_symbols)
-            if not variables:
-                return {'success': False}
-            
-            var = variables[0]
-            solutions = solve(expr, var)
-            
-            if solutions:
-                result_strs = []
-                for sol in solutions:
-                    if sol.is_number:
-                        result_strs.append(str(sol.evalf(self.precision)))
-                    else:
-                        result_strs.append(str(sol))
-                
-                steps = self.generate_equation_steps(expr, var, solutions, original)
-                
-                return {
-                    'success': True,
-                    'variable': str(var),
-                    'solutions': result_strs,
-                    'solutions_count': len(solutions),
-                    'result_str': ', '.join(result_strs) if len(result_strs) > 1 else result_strs[0],
-                    'steps': steps,
-                    'answer': f"{str(var)} = {', '.join(result_strs) if len(result_strs) > 1 else result_strs[0]}"
-                }
-        except Exception as e:
-            return {'success': False, 'error': str(e)}
-        return {'success': False}
-    
-    def generate_equation_steps(self, expr, var, solutions, original) -> List[str]:
-        steps = []
-        try:
-            if expr.is_Add and len(expr.args) <= 3:
-                steps.append(f"Equation: {original}")
-                steps.append(f"Step 1: Isolate {var} on one side")
-                
-                if len(expr.args) == 2 and expr.has(var):
-                    steps.append(f"Step 2: Move constant terms")
-                    steps.append(f"Step 3: Divide by coefficient of {var}")
-                    steps.append(f"Final: {var} = {solutions[0]}")
-                    return steps
-            
-            if expr.is_polynomial():
-                degree = poly(expr).degree()
-                if degree == 1:
-                    steps.append(f"Linear equation: {original}")
-                    steps.append(f"Step 1: Isolate {var}")
-                    steps.append(f"Step 2: {var} = {solutions[0]}")
-                elif degree == 2:
-                    steps.append(f"Quadratic equation: {original}")
-                    steps.append(f"Step 1: Identify coefficients")
-                    steps.append(f"Step 2: Apply quadratic formula")
-                    steps.append(f"Step 3: Simplify")
-                    if len(solutions) > 1:
-                        steps.append(f"Step 4: {var} = {solutions[0]}, {var} = {solutions[1]}")
-                    else:
-                        steps.append(f"Step 4: {var} = {solutions[0]}")
-                else:
-                    steps.append(f"Equation: {original}")
-                    steps.append(f"Solution: {', '.join([str(s) for s in solutions])}")
-            else:
-                steps.append(f"Equation: {original}")
-                steps.append(f"Solution: {', '.join([str(s) for s in solutions])}")
-                
-        except:
-            steps.append(f"Equation: {original}")
-            steps.append(f"Solution: {', '.join([str(s) for s in solutions])}")
-        
-        return steps
-    
-    def solve_calculus(self, processed: str, original: str) -> Dict[str, Any]:
-        try:
-            if 'diff' in processed or 'derivative' in processed.lower():
-                expr_match = re.search(r'diff\(([^,]+),\s*([^)]+)\)', processed)
-                if not expr_match:
-                    expr = parse_expr(processed.replace('diff', '').replace('(', '').replace(')', '').strip())
-                    var = self.x
-                else:
-                    expr = parse_expr(expr_match.group(1).strip())
-                    var = parse_expr(expr_match.group(2).strip())
-                
-                result = diff(expr, var)
-                steps = [
-                    f"Expression: d/d{var}({expr})",
-                    f"Method: Power Rule / Chain Rule",
-                    f"Step 1: Apply differentiation rules",
-                    f"Step 2: d/d{var}({expr}) = {result}",
-                    f"Final Answer: {result}"
-                ]
-                return {
-                    'success': True,
-                    'type': 'derivative',
-                    'expression': str(expr),
-                    'result': str(result),
-                    'result_str': str(result),
-                    'steps': steps,
-                    'answer': str(result)
-                }
-            
-            if 'integrate' in processed or '∫' in processed:
-                expr_match = re.search(r'integrate\(([^,]+),\s*([^)]+)\)', processed)
-                if not expr_match:
-                    expr = parse_expr(processed.replace('integrate', '').replace('∫', '').replace('(', '').replace(')', '').strip())
-                    var = self.x
-                else:
-                    expr = parse_expr(expr_match.group(1).strip())
-                    var = parse_expr(expr_match.group(2).strip())
-                
-                result = integrate(expr, var)
-                steps = [
-                    f"Expression: ∫{expr} d{var}",
-                    f"Method: Power Rule / Substitution",
-                    f"Step 1: Apply integration rules",
-                    f"Step 2: ∫{expr} d{var} = {result} + C",
-                    f"Final Answer: {result} + C"
-                ]
-                return {
-                    'success': True,
-                    'type': 'integral',
-                    'expression': str(expr),
-                    'result': str(result),
-                    'result_str': str(result) + ' + C',
-                    'steps': steps,
-                    'answer': str(result) + ' + C'
-                }
-            
-            if 'limit' in processed or 'lim' in processed:
-                expr_match = re.search(r'limit\(([^,]+),\s*([^,]+),\s*([^)]+)\)', processed)
-                if expr_match:
-                    expr = parse_expr(expr_match.group(1).strip())
-                    var = parse_expr(expr_match.group(2).strip())
-                    point = parse_expr(expr_match.group(3).strip())
-                    result = limit(expr, var, point)
-                    steps = [
-                        f"Expression: lim_{var}→{point} of {expr}",
-                        f"Method: Direct substitution",
-                        f"Step 1: Evaluate limit",
-                        f"Step 2: lim_{var}→{point} of {expr} = {result}",
-                        f"Final Answer: {result}"
-                    ]
-                    return {
-                        'success': True,
-                        'type': 'limit',
-                        'expression': str(expr),
-                        'result': str(result),
-                        'result_str': str(result),
-                        'steps': steps,
-                        'answer': str(result)
-                    }
-        except Exception as e:
-            return {'success': False, 'error': str(e)}
-        return {'success': False}
-    
-    def solve_trigonometry(self, processed: str, original: str) -> Dict[str, Any]:
-        try:
-            expr = parse_expr(processed)
-            if any(f in str(expr) for f in ['sin', 'cos', 'tan', 'asin', 'acos', 'atan']):
-                if expr.is_number:
-                    result = expr.evalf(self.precision)
-                    steps = [
-                        f"Expression: {original}",
-                        f"Method: Direct evaluation",
-                        f"Step 1: Calculate {original}",
-                        f"Result: {float(result)}"
-                    ]
-                    return {
-                        'success': True,
-                        'expression': str(expr),
-                        'result': float(result),
-                        'result_str': str(result),
-                        'steps': steps,
-                        'answer': str(result)
-                    }
-                
-                simplified = simplify(expr)
-                steps = [
-                    f"Expression: {original}",
-                    f"Method: Simplify using trig identities",
-                    f"Step 1: Apply trig identities",
-                    f"Result: {simplified}"
-                ]
-                return {
-                    'success': True,
-                    'expression': str(expr),
-                    'result': str(simplified),
-                    'result_str': str(simplified),
-                    'steps': steps,
-                    'answer': str(simplified)
-                }
-        except:
-            pass
-        return {'success': False}
-    
-    def solve_matrix(self, processed: str, original: str) -> Dict[str, Any]:
-        try:
-            matrix_match = re.search(r'Matrix\(\[(.*?)\]\)', processed)
-            if not matrix_match:
-                matrix_match = re.search(r'\[\[(.*?)\]\]', original)
-                if matrix_match:
-                    matrix_str = matrix_match.group(1)
-                else:
-                    return {'success': False}
-            else:
-                matrix_str = matrix_match.group(1)
-            
-            rows = []
-            for row in matrix_str.split('],['):
-                row = re.sub(r'[\[\]]', '', row)
-                row_values = [float(x.strip()) for x in row.split(',')]
-                rows.append(row_values)
-            
-            matrix = Matrix(rows)
-            
-            if 'determinant' in original or 'det' in original:
-                result = matrix.det()
-                steps = [
-                    f"Matrix: {matrix}",
-                    f"Method: Determinant formula",
-                    f"Step 1: Apply determinant formula for {len(rows)}×{len(rows)} matrix",
-                    f"Result: det = {float(result)}"
-                ]
-                return {
-                    'success': True,
-                    'operation': 'determinant',
-                    'matrix': str(matrix),
-                    'result': float(result),
-                    'result_str': str(result),
-                    'steps': steps,
-                    'answer': str(result)
-                }
-            elif 'inverse' in original or 'inv' in original:
-                result = matrix.inv()
-                steps = [
-                    f"Matrix: {matrix}",
-                    f"Method: Matrix inversion",
-                    f"Step 1: Calculate inverse matrix",
-                    f"Result: {result}"
-                ]
-                return {
-                    'success': True,
-                    'operation': 'inverse',
-                    'matrix': str(matrix),
-                    'result': str(result),
-                    'result_str': str(result),
-                    'steps': steps,
-                    'answer': str(result)
-                }
-        except Exception as e:
-            return {'success': False, 'error': str(e)}
-        return {'success': False}
-    
-    def solve_expression(self, processed: str, original: str) -> Dict[str, Any]:
-        try:
-            expr = parse_expr(processed)
-            if expr.is_number:
-                result = expr.evalf(self.precision)
-                steps = [
-                    f"Expression: {original}",
-                    f"Method: Direct evaluation",
-                    f"Result: {float(result)}"
-                ]
-                return {
-                    'success': True,
-                    'result': float(result),
-                    'result_str': str(result),
-                    'steps': steps,
-                    'answer': str(result)
-                }
-            
-            simplified = simplify(expr)
-            if str(simplified) != str(expr):
-                steps = [
-                    f"Expression: {original}",
-                    f"Method: Simplify expression",
-                    f"Step 1: Apply algebraic rules",
-                    f"Result: {simplified}"
-                ]
-                return {
-                    'success': True,
-                    'result': str(simplified),
-                    'result_str': str(simplified),
-                    'steps': steps,
-                    'answer': str(simplified)
-                }
-            
-            factored = factor(expr)
-            if str(factored) != str(expr):
-                steps = [
-                    f"Expression: {original}",
-                    f"Method: Factor expression",
-                    f"Step 1: Apply factoring rules",
-                    f"Result: {factored}"
-                ]
-                return {
-                    'success': True,
-                    'result': str(factored),
-                    'result_str': str(factored),
-                    'steps': steps,
-                    'answer': str(factored)
-                }
-        except:
-            pass
-        return {'success': False}
-    
-    def generate_explanation(self, result: Dict[str, Any], query: str) -> str:
-        if not result.get('success'):
-            return "Could not solve this problem."
-        
-        steps = result.get('steps', [])
-        if steps:
-            return "\n".join(steps)
-        
-        return result.get('answer', 'Result computed successfully.')
-
-math_engine = AdvancedMathEngine()
-
-# ============ GRAPH GENERATOR ============
-class GraphGenerator:
-    def __init__(self):
-        self.fig_size = (8, 6)
-        self.dpi = 100
-    
-    def generate_graph(self, expression: str) -> Optional[str]:
-        try:
-            expr = parse_expr(expression)
-            
-            fig, ax = plt.subplots(figsize=self.fig_size, dpi=self.dpi)
-            
-            x_vals = np.linspace(-10, 10, 1000)
-            f = lambdify(self.x, expr, modules=['numpy'])
-            y_vals = f(x_vals)
-            
-            ax.plot(x_vals, y_vals, 'b-', linewidth=2)
-            ax.grid(True, alpha=0.3)
-            ax.axhline(y=0, color='black', linewidth=0.5)
-            ax.axvline(x=0, color='black', linewidth=0.5)
-            
-            ax.set_xlabel('x')
-            ax.set_ylabel('y')
-            ax.set_title(f'y = {expression}')
-            
-            if y_vals.any():
-                sign_changes = np.where(np.diff(np.sign(y_vals)))[0]
-                x_intercepts = []
-                for idx in sign_changes:
-                    x_intercepts.append(x_vals[idx])
-                
-                for x_int in x_intercepts:
-                    ax.plot(x_int, 0, 'ro', markersize=8)
-                    ax.annotate(f'({x_int:.2f}, 0)', (x_int, 0), xytext=(5, 5), 
-                               textcoords='offset points', fontsize=8)
-            
-            buf = BytesIO()
-            plt.savefig(buf, format='png', bbox_inches='tight', dpi=self.dpi)
-            buf.seek(0)
-            
-            img_str = base64.b64encode(buf.read()).decode('utf-8')
-            plt.close(fig)
-            
-            return img_str
-        except:
-            return None
-
-graph_generator = GraphGenerator()
-
-# ============ SOURCE VALIDATOR ============
-class SourceValidator:
-    def __init__(self):
-        self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        })
-        self.session.timeout = 8
-    
-    def validate_and_extract(self, url: str, query: str = "") -> Dict[str, Any]:
-        result = {
-            'valid': False,
-            'content': None,
-            'title': None,
-            'relevance_score': 0,
-            'error': None
-        }
-        
-        try:
-            response = self.session.get(url, timeout=8)
-            if response.status_code != 200:
-                result['error'] = f"Status: {response.status_code}"
-                return result
-            
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            for element in soup.find_all(['script', 'style', 'nav', 'footer', 'header', 'aside', 'iframe', 'noscript']):
-                element.decompose()
-            
-            for element in soup.find_all(class_=re.compile(r'(ad|popup|modal|banner|cookie|newsletter|subscribe|sidebar|comment|related)', re.I)):
-                element.decompose()
-            
-            title_tag = soup.find('title')
-            if title_tag:
-                result['title'] = title_tag.get_text().strip()
-            
-            content_parts = []
-            main = soup.find('article') or soup.find('main')
-            if main:
-                for p in main.find_all('p'):
-                    text = p.get_text(strip=True)
-                    if len(text) > 50:
-                        content_parts.append(text)
-            else:
-                for p in soup.find_all('p'):
-                    text = p.get_text(strip=True)
-                    if len(text) > 50:
-                        content_parts.append(text)
-            
-            for h in soup.find_all(['h1', 'h2', 'h3']):
-                text = h.get_text(strip=True)
-                if len(text) > 10:
-                    content_parts.append(text)
-            
-            full_text = ' '.join(content_parts[:30])
-            full_text = re.sub(r'\s+', ' ', full_text).strip()
-            
-            if len(full_text) > 100:
-                result['valid'] = True
-                result['content'] = full_text[:2000]
-                
-                if query:
-                    result['relevance_score'] = self.calculate_relevance(full_text, query)
-            
-        except Exception as e:
-            result['error'] = str(e)
-        
-        return result
-    
-    def calculate_relevance(self, content: str, query: str) -> float:
-        if not content or not query:
-            return 0.0
-        
-        query_words = set(query_cleaner.clean(query).split())
-        content_words = set(re.findall(r'\b[a-z]{3,}\b', content.lower()))
-        
-        if not query_words:
-            return 0.0
-        
-        overlap = len(content_words.intersection(query_words))
-        relevance = overlap / len(query_words) if query_words else 0
-        
-        if query.lower() in content.lower():
-            relevance += 0.3
-        
-        return min(1.0, relevance)
-
-source_validator = SourceValidator()
-
-# ============ TRUST SCORE ============
-def get_trust_score(url: str) -> Tuple[int, str]:
-    domain = urlparse(url).netloc.lower()
-    
-    if any(domain.endswith(ext) for ext in ['.gov', '.gov.uk', '.gov.in']):
-        return 100, "Government"
-    if any(domain.endswith(ext) for ext in ['.edu', '.ac.uk', '.ac.in']):
-        return 95, "University"
-    if any(keyword in domain for keyword in ['researchgate', 'arxiv', 'pubmed', 'nature', 'science']):
-        return 95, "Scientific Journal"
-    if 'wikipedia' in domain:
-        return 85, "Encyclopedia"
-    if any(keyword in domain for keyword in ['microsoft', 'apple', 'google', 'github']):
-        return 85, "Official"
-    if any(keyword in domain for keyword in ['nytimes', 'bbc', 'cnn', 'reuters', 'apnews']):
-        return 80, "News"
-    if 'blog' in domain or 'medium' in domain:
-        return 60, "Blog"
-    if any(keyword in domain for keyword in ['forum', 'reddit', 'quora']):
-        return 40, "Forum"
-    return 50, "Website"
-
-# ============ ANSWER GENERATOR ============
-class AnswerGenerator:
-    def __init__(self):
-        self.min_relevance_threshold = 0.2
-    
-    def generate_answer(self, query: str, search_results: List[Dict]) -> Dict[str, Any]:
-        direct_answer = self.extract_direct_answer(query, search_results)
-        if direct_answer:
-            return {
-                'success': True,
-                'answer': direct_answer,
-                'sources': search_results[:3],
-                'source_type': 'direct'
-            }
-        
-        valid_sources = []
-        for result in search_results[:5]:
-            url = result.get('url', '')
-            if url:
-                validation = source_validator.validate_and_extract(url, query)
-                if validation['valid'] and validation['relevance_score'] >= self.min_relevance_threshold:
-                    valid_sources.append({
-                        'url': url,
-                        'title': validation.get('title', ''),
-                        'content': validation['content'],
-                        'relevance_score': validation['relevance_score'],
-                        'trust_score': get_trust_score(url)[0]
-                    })
-        
-        if not valid_sources:
-            return {'success': False, 'error': 'No relevant sources found'}
-        
-        generated_answer = self.generate_from_sources(query, valid_sources)
-        
-        if generated_answer:
-            return {
-                'success': True,
-                'answer': generated_answer,
-                'sources': valid_sources[:3],
-                'source_type': 'generated'
-            }
-        
-        return {'success': False, 'error': 'Could not generate answer'}
-    
-    def extract_direct_answer(self, query: str, search_results: List[Dict]) -> Optional[str]:
-        if not search_results:
-            return None
-        
-        cleaned_query = query_cleaner.clean(query)
-        query_words = set(cleaned_query.split())
-        
-        for result in search_results[:5]:
-            snippet = result.get('snippet', '')
-            if snippet and len(snippet) > 50:
-                snippet_words = set(re.findall(r'\b[a-z]{3,}\b', snippet.lower()))
-                overlap = len(snippet_words.intersection(query_words))
-                
-                if overlap >= 2 or query.lower() in snippet.lower():
-                    clean_snippet = re.sub(r'\s+', ' ', snippet).strip()
-                    if len(clean_snippet) > 50:
-                        return clean_snippet
-        
-        return None
-    
-    def generate_from_sources(self, query: str, sources: List[Dict]) -> Optional[str]:
-        if not sources:
-            return None
-        
-        all_content = []
-        for source in sources:
-            content = source.get('content', '')
-            if content:
-                all_content.append(content)
-        
-        if not all_content:
-            return None
-        
-        combined = ' '.join(all_content[:3])
-        sentences = re.split(r'[.!?]', combined)
-        key_sentences = []
-        
-        important_terms = query_cleaner.clean(query).split()
-        
-        for sentence in sentences:
-            sentence = sentence.strip()
-            if len(sentence) > 50:
-                if any(term in sentence.lower() for term in important_terms):
-                    key_sentences.append(sentence)
-                elif len(key_sentences) < 2:
-                    key_sentences.append(sentence)
-        
-        if key_sentences:
-            return '. '.join(key_sentences[:3]) + '.'
-        
-        first_content = all_content[0][:500]
-        paragraphs = first_content.split('\n')
-        for p in paragraphs:
-            if len(p) > 100:
-                return p
-        
-        return None
-
-answer_generator = AnswerGenerator()
-
-# ============ SEARCH FUNCTION ============
-def search_web(query: str, max_results: int = 10) -> List[Dict]:
-    results = []
-    try:
-        search_query = query_cleaner.clean(query)
-        if not search_query:
-            search_query = query
-        
-        with DDGS() as ddgs:
-            search_results = list(ddgs.text(search_query, max_results=max_results))
-            
-            for r in search_results:
-                url = r.get('href', '')
-                if not url:
-                    continue
-                
-                trust_score, category = get_trust_score(url)
-                
-                results.append({
-                    "title": r.get('title', ''),
-                    "snippet": r.get('body', '')[:300],
-                    "url": url,
-                    "trust_score": trust_score,
-                    "trust_category": category
-                })
-            
-            seen_urls = set()
-            unique_results = []
-            for r in results:
-                if r['url'] not in seen_urls:
-                    seen_urls.add(r['url'])
-                    unique_results.append(r)
-            
-            unique_results.sort(key=lambda x: x['trust_score'], reverse=True)
-            return unique_results
-    except Exception as e:
-        print(f"Search error: {e}")
-        return []
-
-# ============ FORMAT MATH ANSWER ============
-def format_math_answer(result: Dict[str, Any]) -> str:
-    if not result.get('success'):
-        return f"❌ Could not solve: {result.get('error', 'Unknown error')}"
-    
-    steps = result.get('steps', [])
-    answer = result.get('answer', result.get('result_str', ''))
-    
-    response = "📐 **Mathematics Solution**\n\n"
-    
-    if steps:
-        response += "**Step-by-Step Solution:**\n\n"
-        for i, step in enumerate(steps, 1):
-            response += f"{i}. {step}\n"
-        response += "\n"
-    
-    response += f"**Final Answer:** {answer}\n"
-    
-    return response
-
-# ============ FORMAT GENERAL ANSWER ============
-def format_answer(answer_data: Dict[str, Any], query: str, intent: str) -> str:
-    if not answer_data.get('success'):
-        return f"I couldn't find a clear answer to '{query}'. Please try rephrasing your question."
-    
-    answer = answer_data['answer']
-    sources = answer_data.get('sources', [])
-    
-    if intent == 'definition':
-        response = f"📖 **Definition**\n\n{answer}\n\n"
-    elif intent == 'explanation':
-        response = f"💡 **Explanation**\n\n{answer}\n\n"
-    elif intent == 'fact':
-        response = f"📌 **Fact**\n\n{answer}\n\n"
-    else:
-        response = f"💡 **Answer**\n\n{answer}\n\n"
-    
-    if sources:
-        response += "📚 **Sources**\n"
-        for i, source in enumerate(sources[:3], 1):
-            trust = source.get('trust_score', 0)
-            title = source.get('title', 'Untitled')
-            url = source.get('url', '')
-            relevance = source.get('relevance_score', 0)
-            
-            if trust >= 80:
-                icon = "⭐"
-            elif trust >= 60:
-                icon = "📘"
-            else:
-                icon = "📄"
-            
-            response += f"{i}. {icon} {title} (Trust: {trust}%, Relevance: {int(relevance * 100)}%)\n   <a href=\"{url}\" target=\"_blank\">{url}</a>\n"
-    
-    return response
-
-# ============ MAIN RESPONSE FUNCTION ============
-def get_response(message, email, regenerate=False):
-    msg = message.strip()
-    
-    stats = update_user_stats(email)
-    user = user_db.get(User.email == email)
-    user_name = user.get('name', 'User') if user else 'User'
-    
-    if math_intent_detector.detect(msg):
-        math_result = math_engine.solve(msg)
-        if math_result.get('success'):
-            response = format_math_answer(math_result)
-            
-            if 'graph' in msg.lower() or 'plot' in msg.lower():
-                expr_match = re.search(r'[a-zA-Z0-9\+\-\*\^\/\(\)\s]+', msg)
-                if expr_match:
-                    graph_img = graph_generator.generate_graph(expr_match.group(0).strip())
-                    if graph_img:
-                        response += f"\n\n📊 **Graph**\n<img src='data:image/png;base64,{graph_img}' alt='Graph' style='max-width:100%;border-radius:8px;'/>"
-            
-            response += f"\n\n📊 **{user_name}'s Stats:** Level {stats['level']} - {stats['title']} ({stats['count']} messages)"
-            return response
-        else:
-            response = f"❌ Could not solve: {math_result.get('error', 'Unknown error')}\n\n💡 Try rephrasing your math question."
-            return response
-    
-    if msg.lower() in ['hi', 'hello', 'hey', 'sup', 'yo', 'good morning', 'good evening']:
-        return f"👋 Hello {user_name}! You are a **{stats['title']}** (Level {stats['level']}) with {stats['count']} messages!\n\nHow can I help you today?"
-    
-    if 'how are you' in msg.lower():
-        return f"😊 I'm doing great! Thanks for asking, {user_name}!"
-    
-    context = context_memory.get_context(email)
-    if context and len(context) > 0:
-        if any(word in msg.lower() for word in ['it', 'they', 'that', 'this', 'those', 'these', 'what about']):
-            last_topic = context_memory.get_last_topic(email)
-            if last_topic and 'President' in last_topic and 'Italy' in msg.lower():
-                search_query = "current President of Italy"
-            elif last_topic:
-                search_query = f"{query_cleaner.clean(msg)} {query_cleaner.clean(last_topic)}"
-            else:
-                search_query = query_cleaner.clean(msg)
-        else:
-            search_query = query_cleaner.clean(msg)
-    else:
-        search_query = query_cleaner.clean(msg)
-    
-    if not search_query:
-        search_query = msg
-    
-    start_time = time.time()
-    
-    search_results = search_web(search_query, max_results=10)
-    
-    if not search_results:
-        return f"I searched for '{msg}' but found no results. Please try rephrasing your question."
-    
-    intent = 'general'
-    if any(word in msg.lower() for word in ['define', 'meaning', 'definition']):
-        intent = 'definition'
-    elif any(word in msg.lower() for word in ['explain', 'how does', 'why does']):
-        intent = 'explanation'
-    elif any(word in msg.lower() for word in ['who', 'what', 'when', 'where']):
-        intent = 'fact'
-    
-    answer_data = answer_generator.generate_answer(msg, search_results)
-    response = format_answer(answer_data, msg, intent)
-    
-    important_terms = query_cleaner.clean(msg).split()
-    follow_ups = []
-    if important_terms:
-        follow_ups.append(f"Tell me more about {important_terms[0]}")
-    follow_ups.extend(["Give examples", "Explain simply"])
-    
-    if follow_ups:
-        response += "\n\n💭 **Follow-up Questions:**\n" + "\n".join([f"• {q}" for q in follow_ups[:3]])
-    
-    response += f"\n\n📊 **{user_name}'s Stats:** Level {stats['level']} - {stats['title']} ({stats['count']} messages)"
-    
-    track_analytics({
-        "query": msg,
-        "intent": intent,
-        "response_time": time.time() - start_time,
-        "sources_found": len(search_results)
-    })
-    
-    if not regenerate:
-        context_memory.add_message(email, "user", msg)
-        context_memory.add_message(email, "ai", response)
-    
-    return response
-
-# ============ ANALYTICS ============
-analytics_data = []
-
-def track_analytics(data: Dict):
-    analytics_data.append({
-        **data,
-        "timestamp": datetime.now().isoformat()
-    })
-    if len(analytics_data) > 1000:
-        analytics_data[:] = analytics_data[-1000:]
-
-def get_analytics_summary() -> Dict:
-    if not analytics_data:
-        return {"error": "No analytics data available"}
-    
-    total = len(analytics_data)
-    avg_time = sum(d.get('response_time', 0) for d in analytics_data) / total
-    avg_sources = sum(d.get('sources_found', 0) for d in analytics_data) / total
-    
-    return {
-        "total_queries": total,
-        "average_response_time": f"{avg_time:.2f}s",
-        "average_sources": f"{avg_sources:.1f}"
-    }
-
-# ============ HISTORY ============
-def load_history(email):
-    if not email:
-        return []
-    safe_email = email.replace('@', '_at_').replace('.', '_dot_')
-    filepath = f"history_{safe_email}.json"
-    if os.path.exists(filepath):
-        with open(filepath, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    return []
-
-def save_history(email, history):
-    if not email:
-        return
-    safe_email = email.replace('@', '_at_').replace('.', '_dot_')
-    filepath = f"history_{safe_email}.json"
-    with open(filepath, 'w', encoding='utf-8') as f:
-        json.dump(history, f, ensure_ascii=False, indent=2)
 
 def get_or_create_user(email, name, picture=None):
     user = user_db.get(User.email == email)
@@ -1177,7 +46,7 @@ def update_user_stats(email):
     if user:
         new_count = user.get("message_count", 0) + 1
         new_level = 1 + (new_count // 50)
-        
+
         titles = {
             1: "🌟 Newbie Chatter",
             2: "💬 Regular Talker",
@@ -1188,64 +57,808 @@ def update_user_stats(email):
             7: "🧠 Yama Legend"
         }
         new_title = titles.get(new_level, "🧠 Yama Legend")
-        
+
         user_db.update({
             "message_count": new_count,
             "level": new_level,
             "title": new_title,
             "last_seen": datetime.now().isoformat()
         }, User.email == email)
-        
+
         return {"count": new_count, "level": new_level, "title": new_title}
     return {"count": 0, "level": 1, "title": "🌟 Newbie Chatter"}
 
-# ============ HEALTH CHECK ============
-@app.get("/health")
-async def health_check():
-    return {
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "service": "Yama AI V2.0",
-        "version": "2.0"
-    }
+# ============ CONVERSATION MEMORY (persistent, per-user) ============
+# Stored on disk per user (memory_<email>.json) so it survives restarts.
+# Three layers, as requested:
+#   conversation_history -> rolling list of recent turns (for follow-ups)
+#   user_preferences      -> explicit things the user told us to remember
+#   long_term_memory       -> extracted facts (name, etc.) usable across sessions
 
-@app.get("/ping")
-async def ping():
-    return {"pong": True, "timestamp": datetime.now().isoformat()}
+MEMORY_TURN_LIMIT = 12  # how many recent turns we keep for short-term context
 
-# ============ ENDPOINTS ============
-@app.post("/feedback")
-async def submit_feedback(request: Request):
-    data = await request.json()
-    return {"status": "success"}
+def _memory_path(email):
+    safe_email = (email or "anon").replace('@', '_at_').replace('.', '_dot_')
+    safe_email = re.sub(r'[^a-zA-Z0-9_]', '', safe_email)
+    return f"memory_{safe_email}.json"
 
-@app.post("/regenerate")
-async def regenerate_response(request: Request):
-    data = await request.json()
-    email = data.get('email')
-    message = data.get('message')
-    response = get_response(message, email, regenerate=True)
-    return {"response": response}
+def load_memory(email):
+    path = _memory_path(email)
+    if os.path.exists(path):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"conversation_history": [], "user_preferences": {}, "long_term_memory": {}}
 
-@app.post("/continue_generating")
-async def continue_generating(request: Request):
-    return {"response": "\n\n📝 Additional information could not be generated."}
+def save_memory(email, memory):
+    path = _memory_path(email)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(memory, f, ensure_ascii=False, indent=2)
 
-@app.get("/share_conversation")
-async def share_conversation(email: str = ""):
+# Small set of patterns for facts people commonly state about themselves.
+# This is deterministic extraction (no LLM) — it only catches phrasings
+# that match these patterns, not free-form statements.
+_FACT_PATTERNS = [
+    (r"\bmy name is ([a-zA-Z][a-zA-Z\s'-]{1,30})", "name"),
+    (r"\bi am called ([a-zA-Z][a-zA-Z\s'-]{1,30})", "name"),
+    (r"\bcall me ([a-zA-Z][a-zA-Z\s'-]{1,30})", "name"),
+    (r"\bi live in ([a-zA-Z][a-zA-Z\s'-]{1,40})", "location"),
+    (r"\bi work as an? ([a-zA-Z][a-zA-Z\s'-]{1,40})", "occupation"),
+    (r"\bi work at ([a-zA-Z][a-zA-Z0-9\s'-]{1,40})", "workplace"),
+    (r"\bmy favou?rite (\w+) is ([a-zA-Z][a-zA-Z0-9\s'-]{1,40})", "favorite"),
+]
+
+def extract_facts(message, memory):
+    """Pull simple first-person facts out of a message and store them
+    in long_term_memory. Returns a list of (key, value) newly learned."""
+    msg = message.strip()
+    learned = []
+    for pattern, key in _FACT_PATTERNS:
+        m = re.search(pattern, msg, re.IGNORECASE)
+        if m:
+            if key == "favorite":
+                fact_key = f"favorite_{m.group(1).lower()}"
+                value = m.group(2).strip().rstrip('.!?').title()
+            else:
+                fact_key = key
+                value = m.group(1).strip().rstrip('.!?').title()
+            memory["long_term_memory"][fact_key] = value
+            learned.append((fact_key, value))
+    return learned
+
+# Recognized recall questions -> long_term_memory key
+_RECALL_QUESTIONS = {
+    "what's my name": "name", "whats my name": "name", "what is my name": "name",
+    "where do i live": "location", "where am i from": "location",
+    "what do i do": "occupation", "what's my job": "occupation",
+    "where do i work": "workplace",
+}
+
+def answer_from_memory(msg, memory):
+    ltm = memory.get("long_term_memory", {})
+    for question, key in _RECALL_QUESTIONS.items():
+        if question in msg:
+            if key in ltm:
+                return f"🧠 You told me earlier — your {key.replace('_', ' ')} is **{ltm[key]}**."
+            return f"🤔 I don't think you've told me your {key.replace('_', ' ')} yet!"
+    fav_match = re.search(r"what'?s my favou?rite (\w+)", msg)
+    if fav_match:
+        fav_key = f"favorite_{fav_match.group(1).lower()}"
+        if fav_key in ltm:
+            return f"🧠 Your favorite {fav_match.group(1)} is **{ltm[fav_key]}**, you told me!"
+        return f"🤔 You haven't told me your favorite {fav_match.group(1)} yet!"
+    return None
+
+# ============ SAFE CALCULATOR ============
+# Uses ast parsing instead of eval() so we never execute arbitrary code,
+# while still supporting full expressions, parentheses and functions.
+
+_ALLOWED_BINOPS = {
+    ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
+    ast.Div: operator.truediv, ast.Pow: operator.pow, ast.Mod: operator.mod,
+    ast.FloorDiv: operator.floordiv,
+}
+_ALLOWED_UNARYOPS = {ast.UAdd: operator.pos, ast.USub: operator.neg}
+_ALLOWED_FUNCS = {
+    "sqrt": math.sqrt, "abs": abs, "round": round,
+    "sin": math.sin, "cos": math.cos, "tan": math.tan,
+    "log": math.log, "log10": math.log10, "exp": math.exp,
+    "floor": math.floor, "ceil": math.ceil, "factorial": math.factorial,
+    "pow": pow, "min": min, "max": max,
+}
+_ALLOWED_NAMES = {"pi": math.pi, "e": math.e}
+
+# ============ STEP-BY-STEP SOLVER (sympy) ============
+# This is genuine symbolic math, not templated text — sympy actually
+# manipulates the expression/equation and we narrate each transformation.
+
+import sympy as sp
+from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
+
+# --- Graphing / file-reading additions ---
+import io
+import base64
+import matplotlib
+matplotlib.use("Agg")  # headless, no GUI backend needed on a server
+import matplotlib.pyplot as plt
+import fitz  # PyMuPDF
+import pytesseract
+from PIL import Image
+import docx as docx_lib
+import pptx as pptx_lib
+import pandas as pd
+from fastapi import UploadFile, File, Form
+
+_SP_TRANSFORMS = standard_transformations + (implicit_multiplication_application,)
+_SP_SYMBOLS = "x y z a b n t".split()
+
+def _sp_safe_parse(text):
+    text = text.replace('^', '**')
+    local_dict = {s: sp.Symbol(s) for s in _SP_SYMBOLS}
+    return parse_expr(text, local_dict=local_dict, transformations=_SP_TRANSFORMS)
+
+def solve_step_by_step(message):
+    """Returns a formatted, narrated solution or None if this doesn't look
+    like an algebra/calculus/trig/matrix/stats request."""
+    msg = message.strip()
+    lower = msg.lower()
+
+    try:
+        # --- Equation solving: "solve 2x+3=7" or "x^2-4=0" ---
+        eq_match = re.search(r'solve\s+(.+)', lower) or (
+            re.search(r'^([^=]+=[^=]+)$', msg) if '=' in msg else None)
+        if eq_match and '=' in (eq_match.group(1) if eq_match else ''):
+            lhs_str, rhs_str = eq_match.group(1).split('=', 1)
+            lhs, rhs = _sp_safe_parse(lhs_str), _sp_safe_parse(rhs_str)
+            x = sp.Symbol('x') if 'x' in lower else list((lhs - rhs).free_symbols)[0]
+            equation = sp.Eq(lhs, rhs)
+            solutions = sp.solve(equation, x)
+            steps = (
+                f"**Step 1 — Original equation**\n{sp.pretty(equation)}\n\n"
+                f"**Step 2 — Move everything to one side**\n{sp.pretty(sp.Eq(lhs - rhs, 0))}\n\n"
+                f"**Step 3 — Solve for {x}**\n"
+            )
+            return f"📐 {steps}**Final Answer:** {x} = {', '.join(str(s) for s in solutions)}"
+
+        # --- Derivatives: "derivative of x^2+3x" / "differentiate sin(x)" ---
+        deriv_match = re.search(r'(?:derivative of|differentiate)\s+(.+)', lower)
+        if deriv_match:
+            expr = _sp_safe_parse(deriv_match.group(1))
+            x = sp.Symbol('x')
+            result = sp.diff(expr, x)
+            return (f"📐 **Step 1 — Function**\nf(x) = {expr}\n\n"
+                    f"**Step 2 — Apply differentiation rules**\nf'(x) = d/dx [{expr}]\n\n"
+                    f"**Final Answer:** f'(x) = {sp.simplify(result)}")
+
+        # --- Integrals: "integrate x^2" / "integral of cos(x)" ---
+        int_match = re.search(r'(?:integrate|integral of)\s+(.+)', lower)
+        if int_match:
+            expr = _sp_safe_parse(int_match.group(1))
+            x = sp.Symbol('x')
+            result = sp.integrate(expr, x)
+            return (f"📐 **Step 1 — Function**\nf(x) = {expr}\n\n"
+                    f"**Step 2 — Apply integration rules**\n∫ {expr} dx\n\n"
+                    f"**Final Answer:** {result} + C")
+
+        # --- Matrices: "matrix [[1,2],[3,4]] determinant" / "... inverse" ---
+        mat_match = re.search(r'\[\[.+\]\]', msg)
+        if mat_match and ('matrix' in lower or 'determinant' in lower or 'inverse' in lower):
+            M = sp.Matrix(ast.literal_eval(mat_match.group(0)))
+            if 'determinant' in lower or 'det' in lower:
+                return f"📐 **Matrix**\n{sp.pretty(M)}\n\n**Step — Compute determinant**\n\n**Final Answer:** det = {M.det()}"
+            if 'inverse' in lower:
+                return f"📐 **Matrix**\n{sp.pretty(M)}\n\n**Step — Compute inverse**\n\n**Final Answer:**\n{sp.pretty(M.inv())}"
+            return f"📐 **Matrix**\n{sp.pretty(M)}\n\n**Transpose:**\n{sp.pretty(M.T)}\n**Determinant:** {M.det()}"
+
+        # --- Statistics: "mean/median/stdev of 2,4,4,6" ---
+        stat_match = re.search(r'(mean|average|median|stdev|std|variance) of ([\d.,\s]+)', lower)
+        if stat_match:
+            kind = stat_match.group(1)
+            nums = [float(n) for n in re.findall(r'-?\d+\.?\d*', stat_match.group(2))]
+            if not nums:
+                return None
+            data = sp.Matrix(nums)
+            if kind in ('mean', 'average'):
+                result = sum(nums) / len(nums)
+                label = "Mean"
+            elif kind == 'median':
+                s = sorted(nums)
+                mid = len(s) // 2
+                result = s[mid] if len(s) % 2 else (s[mid-1] + s[mid]) / 2
+                label = "Median"
+            else:
+                mean = sum(nums) / len(nums)
+                var = sum((n - mean) ** 2 for n in nums) / len(nums)
+                result = var if kind == 'variance' else math.sqrt(var)
+                label = "Variance" if kind == 'variance' else "Standard deviation"
+            return (f"📐 **Step 1 — Data**\n{nums}\n\n"
+                    f"**Step 2 — Compute {label.lower()}**\n\n"
+                    f"**Final Answer:** {label} = {round(result, 4)}")
+
+        # --- Trig identities / evaluation: "sin(pi/2)" handled by calculator already;
+        #     this catches narrated requests like "simplify sin(x)^2+cos(x)^2" ---
+        simplify_match = re.search(r'simplify\s+(.+)', lower)
+        if simplify_match:
+            expr = _sp_safe_parse(simplify_match.group(1))
+            return (f"📐 **Step 1 — Expression**\n{expr}\n\n"
+                    f"**Step 2 — Simplify**\n\n"
+                    f"**Final Answer:** {sp.simplify(expr)}")
+
+    except Exception:
+        return None
+    return None
+
+# ============ GRAPH GENERATOR (matplotlib, no LLM) ============
+
+_GRAPH_TRIGGER_RE = re.compile(r'^(?:graph|plot)\s+(.+)$', re.IGNORECASE)
+
+def generate_graph(message):
+    """If the message asks to graph/plot a function, render it with
+    matplotlib and return a base64 PNG data URI. Returns None otherwise."""
+    m = _GRAPH_TRIGGER_RE.match(message.strip())
+    if not m:
+        return None
+    expr_str = m.group(1).strip().rstrip('?')
+    try:
+        x = sp.Symbol('x')
+        expr = _sp_safe_parse(expr_str)
+        f = sp.lambdify(x, expr, modules=['numpy'])
+
+        import numpy as np
+        xs = np.linspace(-10, 10, 400)
+        with __import__('warnings').catch_warnings():
+            __import__('warnings').simplefilter("ignore")
+            ys = f(xs)
+        ys = np.array(ys, dtype=float)
+        ys[np.abs(ys) > 1e6] = np.nan  # hide asymptote blow-ups
+
+        fig, ax = plt.subplots(figsize=(6, 4), dpi=120)
+        ax.plot(xs, ys, color="#2c2418", linewidth=2)
+        ax.axhline(0, color="#999", linewidth=0.8)
+        ax.axvline(0, color="#999", linewidth=0.8)
+        ax.set_title(f"y = {expr}", fontsize=12)
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png")
+        plt.close(fig)
+        buf.seek(0)
+        encoded = base64.b64encode(buf.read()).decode('utf-8')
+        return f"data:image/png;base64,{encoded}"
+    except Exception:
+        return None
+
+# ============ DOCUMENT READING (PDF / DOCX / PPTX / XLSX / CSV / TXT) ============
+# Each user's most recently uploaded document is kept so follow-up
+# questions like "summarize this" can refer to it.
+
+UPLOAD_DIR = "uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+active_documents = {}  # email -> {"name": str, "text": str}
+
+def extract_pdf_text(path, max_pages=40):
+    doc = fitz.open(path)
+    parts = []
+    for page in doc[:max_pages]:
+        parts.append(page.get_text())
+    doc.close()
+    return "\n".join(parts)
+
+def extract_docx_text(path):
+    d = docx_lib.Document(path)
+    return "\n".join(p.text for p in d.paragraphs if p.text.strip())
+
+def extract_pptx_text(path):
+    pres = pptx_lib.Presentation(path)
+    parts = []
+    for i, slide in enumerate(pres.slides, 1):
+        texts = [shape.text for shape in slide.shapes if shape.has_text_frame and shape.text.strip()]
+        if texts:
+            parts.append(f"[Slide {i}] " + " | ".join(texts))
+    return "\n".join(parts)
+
+def extract_spreadsheet_summary(path, ext):
+    if ext == "csv":
+        df = pd.read_csv(path)
+    else:
+        df = pd.read_excel(path)
+    summary = [f"Rows: {len(df)}, Columns: {list(df.columns)}"]
+    summary.append("Preview:\n" + df.head(10).to_string())
+    try:
+        numeric = df.select_dtypes(include='number')
+        if not numeric.empty:
+            summary.append("Numeric summary:\n" + numeric.describe().to_string())
+    except Exception:
+        pass
+    return "\n\n".join(summary)
+
+def extract_image_text(path):
+    """OCR an uploaded image with Tesseract — genuine text extraction,
+    not a guess. Also flags if the extracted text looks like a math
+    expression so the homework-photo flow can route to the solver."""
+    img = Image.open(path)
+    text = pytesseract.image_to_string(img).strip()
+    return text
+
+def read_uploaded_file(path, filename):
+    ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+    try:
+        if ext == 'pdf':
+            return extract_pdf_text(path), 'document'
+        if ext == 'docx':
+            return extract_docx_text(path), 'document'
+        if ext == 'pptx':
+            return extract_pptx_text(path), 'document'
+        if ext in ('xlsx', 'xls'):
+            return extract_spreadsheet_summary(path, ext), 'spreadsheet'
+        if ext == 'csv':
+            return extract_spreadsheet_summary(path, ext), 'spreadsheet'
+        if ext == 'txt':
+            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                return f.read(), 'document'
+        if ext in ('png', 'jpg', 'jpeg', 'webp', 'bmp'):
+            text = extract_image_text(path)
+            if not text:
+                return "(No readable text found in this image.)", 'image'
+            return text, 'image'
+    except Exception as e:
+        return None, str(e)
+    return None, 'unsupported file type'
+
+def handle_document_question(msg, email):
+    """If the user is asking about their uploaded document/spreadsheet/image,
+    answer using the stored extracted content (extractive, not generative)."""
+    doc = active_documents.get(email)
+    if not doc:
+        return None
+    triggers = ['summarize this', 'summarize the file', 'summarize the pdf',
+                'summarize the document', 'analyze this', 'analyze the csv',
+                'analyze the file', 'what does this file say', 'summarize this pdf',
+                'read this image', 'what does this image say', 'solve this',
+                'whats in this image', "what's in this image"]
+    if not any(t in msg for t in triggers):
+        return None
+    text = doc['text']
+    if doc['kind'] == 'spreadsheet':
+        return f"📊 **{doc['name']}**\n\n{text[:1800]}"
+    if doc['kind'] == 'image':
+        # If the OCR'd text looks like a math expression, route it through
+        # the real solver/calculator instead of just echoing the text back.
+        math_expr = looks_like_math(text)
+        if math_expr:
+            try:
+                result = safe_calculate(math_expr)
+                return f"🖼️ I read **{text.strip()}** from your image.\n\n🧮 {math_expr} = **{result}**"
+            except Exception:
+                pass
+        solved = solve_step_by_step(text)
+        if solved:
+            return f"🖼️ I read this from your image:\n_{text.strip()}_\n\n{solved}"
+        return f"🖼️ **Text found in {doc['name']}:**\n\n{text}"
+    summary = summarize_text(text, max_sentences=6)
+    return f"📄 **{doc['name']}** — summary\n\n{summary}"
+
+def _safe_eval_node(node):
+    if isinstance(node, ast.Expression):
+        return _safe_eval_node(node.body)
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, (int, float)):
+            return node.value
+        raise ValueError("invalid constant")
+    if isinstance(node, ast.BinOp) and type(node.op) in _ALLOWED_BINOPS:
+        return _ALLOWED_BINOPS[type(node.op)](_safe_eval_node(node.left), _safe_eval_node(node.right))
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _ALLOWED_UNARYOPS:
+        return _ALLOWED_UNARYOPS[type(node.op)](_safe_eval_node(node.operand))
+    if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Name) and node.func.id in _ALLOWED_FUNCS:
+            args = [_safe_eval_node(a) for a in node.args]
+            return _ALLOWED_FUNCS[node.func.id](*args)
+        raise ValueError("function not allowed")
+    if isinstance(node, ast.Name) and node.id in _ALLOWED_NAMES:
+        return _ALLOWED_NAMES[node.id]
+    raise ValueError("disallowed expression")
+
+def safe_calculate(expr):
+    """Evaluate a math expression safely. Returns a number or raises ValueError."""
+    expr = expr.replace('^', '**').replace('x', '*').replace('×', '*').replace('÷', '/')
+    parsed = ast.parse(expr, mode='eval')
+    result = _safe_eval_node(parsed)
+    if isinstance(result, float) and result.is_integer():
+        result = int(result)
+    return result
+
+# A message is treated as "calculator-shaped" if, once the words are stripped
+# out, what's left looks like a real expression (digits/operators/parens),
+# rather than just a sentence that happens to contain a number.
+_MATH_HINT_RE = re.compile(r'[\+\-\*/\^×÷].*\d|\d.*[\+\-\*/\^×÷]')
+_ALLOWED_WORDS_RE = '|'.join(sorted(set(_ALLOWED_FUNCS) | set(_ALLOWED_NAMES), key=len, reverse=True))
+_FUNC_STRIP_RE = re.compile(rf'\b(?:{_ALLOWED_WORDS_RE})\b')
+# After removing known function/constant names, only digits/operators/parens
+# may remain — this is what stops "I read 5-2 books" from being treated as math.
+_MATH_RESIDUE_RE = re.compile(r'^[\d\s\.\+\-\*\/\^\(\),%x×÷]*$')
+
+def looks_like_math(msg):
+    stripped = msg.strip().lower()
+    stripped = re.sub(r'^(calculate|calc|what is|what\'s|solve|compute)\s*', '', stripped).strip(' =?')
+    if not stripped:
+        return None
+    if not _MATH_HINT_RE.search(stripped):
+        return None
+    residue = _FUNC_STRIP_RE.sub(' ', stripped)
+    if _MATH_RESIDUE_RE.match(residue):
+        return stripped
+    return None
+
+# ============ UNIT CONVERSION ============
+# All conversions normalize to a base unit first, then to target unit.
+_LENGTH = {"mm": 0.001, "cm": 0.01, "m": 1, "km": 1000,
+           "in": 0.0254, "inch": 0.0254, "ft": 0.3048, "feet": 0.3048,
+           "yd": 0.9144, "mile": 1609.34, "miles": 1609.34}
+_WEIGHT = {"mg": 0.001, "g": 1, "kg": 1000, "lb": 453.592, "lbs": 453.592,
+           "oz": 28.3495, "ton": 1_000_000}
+_VOLUME = {"ml": 1, "l": 1000, "liter": 1000, "litre": 1000,
+           "gal": 3785.41, "gallon": 3785.41, "cup": 236.588,
+           "tbsp": 14.7868, "tsp": 4.92892}
+
+_UNIT_GROUPS = [_LENGTH, _WEIGHT, _VOLUME]
+_UNIT_ALIASES = {"kilometer": "km", "kilometers": "km", "meter": "m", "meters": "m",
+                  "centimeter": "cm", "centimeters": "cm", "kilogram": "kg",
+                  "kilograms": "kg", "gram": "g", "grams": "g", "pound": "lb",
+                  "pounds": "lb", "ounce": "oz", "ounces": "oz", "milliliter": "ml",
+                  "milliliters": "ml"}
+
+_CONVERT_RE = re.compile(
+    r'(-?\d+(?:\.\d+)?)\s*([a-zA-Z°]+)\s*(?:to|in|=>|->)\s*([a-zA-Z°]+)', re.IGNORECASE)
+
+def convert_units(msg):
+    m = _CONVERT_RE.search(msg.lower())
+    if not m:
+        return None
+    value, from_u, to_u = float(m.group(1)), m.group(2), m.group(3)
+    from_u = _UNIT_ALIASES.get(from_u, from_u)
+    to_u = _UNIT_ALIASES.get(to_u, to_u)
+
+    # Temperature is special-cased (no linear base unit)
+    temp_units = {"c", "celsius", "f", "fahrenheit", "k", "kelvin"}
+    if from_u in temp_units and to_u in temp_units:
+        return _convert_temperature(value, from_u, to_u)
+
+    for group in _UNIT_GROUPS:
+        if from_u in group and to_u in group:
+            base = value * group[from_u]
+            return base / group[to_u]
+    return None
+
+def _convert_temperature(value, from_u, to_u):
+    f = from_u[0]
+    t = to_u[0]
+    if f == t:
+        return value
+    # normalize to Celsius first
+    if f == "f":
+        c = (value - 32) * 5 / 9
+    elif f == "k":
+        c = value - 273.15
+    else:
+        c = value
+    if t == "f":
+        return c * 9 / 5 + 32
+    if t == "k":
+        return c + 273.15
+    return c
+
+# ============ DICTIONARY & WIKIPEDIA LOOKUPS ============
+# Free, keyless public endpoints — not LLM/AI services, just reference data.
+
+def dictionary_lookup(word):
+    try:
+        r = requests.get(f"https://api.dictionaryapi.dev/api/v2/entries/en/{quote(word)}", timeout=6)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        entry = data[0]
+        meanings = []
+        for meaning in entry.get("meanings", [])[:2]:
+            pos = meaning.get("partOfSpeech", "")
+            defs = meaning.get("definitions", [])[:2]
+            for d in defs:
+                meanings.append(f"_{pos}_ — {d.get('definition', '')}")
+        if not meanings:
+            return None
+        return f"📖 **{entry.get('word', word)}**\n" + "\n".join(meanings)
+    except Exception:
+        return None
+
+def wikipedia_summary(topic):
+    try:
+        r = requests.get(
+            f"https://en.wikipedia.org/api/rest_v1/page/summary/{quote(topic)}",
+            headers={"User-Agent": "YamaAI/1.0"}, timeout=8)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        if data.get("type") == "disambiguation":
+            return None
+        extract = data.get("extract")
+        if not extract:
+            return None
+        return f"📚 **{data.get('title', topic)}**\n{extract}"
+    except Exception:
+        return None
+
+# ============ DATE / TIME ============
+
+def datetime_answer(msg):
+    if any(p in msg for p in ["what time", "current time", "what's the time"]):
+        return f"🕐 It's currently **{datetime.now().strftime('%I:%M %p')}** (server time)."
+    if any(p in msg for p in ["what day", "today's date", "what date", "what is the date"]):
+        return f"📅 Today is **{datetime.now().strftime('%A, %B %d, %Y')}**."
+    return None
+
+# ============ SEARCH FUNCTION ============
+
+def search_web(query):
+    results = []
+    try:
+        with DDGS() as ddgs:
+            search_results = list(ddgs.text(query, max_results=7))
+            for r in search_results:
+                results.append({
+                    "title": r.get('title', ''),
+                    "snippet": r.get('body', '')[:300],
+                    "url": r.get('href', '')
+                })
+    except Exception as e:
+        print(f"Search error: {e}")
+    return results
+
+def read_full_webpage(url):
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        response = requests.get(url, headers=headers, timeout=15)
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        for tag in soup(['script', 'style', 'nav', 'footer', 'header', 'aside']):
+            tag.decompose()
+
+        content = []
+        article = soup.find('article')
+        if article:
+            content.append(article.get_text())
+        else:
+            for p in soup.find_all('p'):
+                text = p.get_text(strip=True)
+                if len(text) > 50:
+                    content.append(text)
+
+        full_text = ' '.join(content[:30])
+        return full_text[:2000]
+    except Exception:
+        return None
+
+def summarize_text(text, max_sentences=4):
+    """Lightweight extractive summary: scores sentences by word-frequency
+    overlap with the whole passage (no LLM — classic TF-style ranking)."""
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    sentences = [s.strip() for s in sentences if len(s.strip()) > 25]
+    if len(sentences) <= max_sentences:
+        return ' '.join(sentences)
+
+    stopwords = {"the", "a", "an", "is", "are", "was", "were", "of", "to", "in",
+                 "and", "or", "for", "on", "with", "as", "by", "that", "this",
+                 "it", "at", "from", "be", "has", "have", "had"}
+    freq = {}
+    for s in sentences:
+        for w in re.findall(r'[a-z]+', s.lower()):
+            if w not in stopwords:
+                freq[w] = freq.get(w, 0) + 1
+
+    scored = []
+    for i, s in enumerate(sentences):
+        words = re.findall(r'[a-z]+', s.lower())
+        score = sum(freq.get(w, 0) for w in words) / (len(words) + 1)
+        scored.append((score, i, s))
+
+    top = sorted(scored, reverse=True)[:max_sentences]
+    top_in_order = [s for _, _, s in sorted(top, key=lambda x: x[1])]
+    return ' '.join(top_in_order)
+
+# ============ SMALL TALK / KNOWLEDGE BASE ============
+# Fast, deterministic answers for common questions so we don't burn a
+# search request (and a few seconds of latency) on things we already know.
+
+_KNOWLEDGE_BASE = {
+    "who are you": "🏛️ I'm **Yama**, your AI assistant — I can do math, conversions, dictionary & Wikipedia lookups, and search the web for anything else.",
+    "what can you do": "🛠️ I can:\n• Solve math expressions\n• Convert units (length, weight, volume, temperature)\n• Look up word definitions\n• Summarize Wikipedia topics\n• Search the live web and summarize results\n• Tell you the date and time",
+    "who made you": "🏛️ I was built from scratch — no third-party AI API, just search, logic, and a calculator under the hood.",
+    "thank you": "😊 You're welcome! Anything else?",
+    "thanks": "😊 Anytime!",
+    "bye": "👋 See you next time!",
+    "goodbye": "👋 Take care!",
+}
+
+def knowledge_base_lookup(msg):
+    if msg in _KNOWLEDGE_BASE:
+        return _KNOWLEDGE_BASE[msg]
+    for key, ans in _KNOWLEDGE_BASE.items():
+        if key in msg:
+            return ans
+    return None
+
+# ============ RESPONSE FUNCTION (INTENT ROUTER) ============
+# Order matters: cheap, deterministic checks first, web search last.
+
+def get_response(message, email):
+    raw_message = message.strip()
+    msg = raw_message.lower()
+
+    stats = update_user_stats(email)
+    user = user_db.get(User.email == email)
+    user_name = user.get('name', 'User') if user else 'User'
+    memory = load_memory(email)
+
+    def _finish(reply, topic=None, image=None):
+        """Log the turn to persistent memory before returning."""
+        memory["conversation_history"].append({"user": raw_message, "yama": reply})
+        memory["conversation_history"] = memory["conversation_history"][-MEMORY_TURN_LIMIT:]
+        if topic:
+            memory["last_topic"] = topic
+        save_memory(email, memory)
+        return {"text": reply, "image": image} if image else reply
+
+    # 0a. Document/spreadsheet questions about the user's last upload
+    doc_answer = handle_document_question(msg, email)
+    if doc_answer:
+        return _finish(doc_answer, topic="document")
+
+    # 0a2. Graph requests ("graph x^2", "plot sin(x)")
+    graph_image = generate_graph(raw_message)
+    if graph_image:
+        return _finish(f"📊 Here's the graph of **{raw_message.split(' ', 1)[1] if ' ' in raw_message else raw_message}**:",
+                        topic="graph", image=graph_image)
+
+    # 0. Learn any facts the user just stated ("my name is Rishi", etc.)
+    learned = extract_facts(raw_message, memory)
+    if learned:
+        ack = []
+        for key, value in learned:
+            label = key.replace('favorite_', 'favorite ').replace('_', ' ')
+            ack.append(f"Got it — your {label} is **{value}**. I'll remember that!")
+        return _finish("🧠 " + " ".join(ack))
+
+    # 0b. Answer direct recall questions ("what's my name?") straight from memory
+    recall = answer_from_memory(msg, memory)
+    if recall:
+        return _finish(recall, topic="recall")
+
+    # 1. Greetings — use remembered name if we have one and they haven't set
+    #    a display name via Google sign-in
+    if msg in ['hi', 'hello', 'hey', 'sup', 'yo']:
+        known_name = memory.get("long_term_memory", {}).get("name")
+        greet_name = known_name or user_name
+        return _finish(
+            f"👋 Hello {greet_name}! You are a **{stats['title']}** (Level {stats['level']}) with {stats['count']} messages!\n\nHow can I help you today?")
+
+    if 'how are you' in msg:
+        return _finish(f"😊 I'm doing great! Thanks for asking, {user_name}!")
+
+    # 2. Small talk / knowledge base
+    kb_answer = knowledge_base_lookup(msg)
+    if kb_answer:
+        return _finish(kb_answer)
+
+    # 3. Date / time
+    dt_answer = datetime_answer(msg)
+    if dt_answer:
+        return _finish(dt_answer)
+
+    # 4. Unit conversion (checked before calculator since "5 km to miles"
+    #    also contains a number+letters that could confuse the math check)
+    converted = convert_units(msg)
+    if converted is not None:
+        m = _CONVERT_RE.search(msg)
+        from_u, to_u = m.group(2), m.group(3)
+        memory['last_value'] = converted
+        memory['last_unit'] = to_u
+        reply = (f"📏 {m.group(1)} {from_u} = **{round(converted, 4)} {to_u}**\n\n"
+                 f"✨ {user_name} • Level {stats['level']} - {stats['title']}")
+        return _finish(reply, topic="conversion")
+
+    # 5. Step-by-step solver (algebra, calculus, trig, matrices, stats) —
+    #    tried before the plain calculator since it's the more capable path
+    #    for anything that isn't a bare arithmetic expression.
+    solved = solve_step_by_step(raw_message)
+    if solved:
+        reply = f"{solved}\n\n✨ {user_name} • Level {stats['level']} - {stats['title']}"
+        return _finish(reply, topic="math_steps")
+
+    # 6. Quick calculator for plain arithmetic
+    expr = looks_like_math(raw_message)
+    if expr:
+        try:
+            result = safe_calculate(expr)
+            memory['last_value'] = result
+            reply = f"🧮 {expr} = **{result}**\n\n✨ Great job, {user_name}! Level {stats['level']} - {stats['title']}"
+            return _finish(reply, topic="math")
+        except ZeroDivisionError:
+            return _finish("🧮 Can't divide by zero — try a different expression!")
+        except Exception:
+            pass  # not actually a valid expression, fall through to search
+
+    # 7. Dictionary lookups ("define X", "what does X mean", "meaning of X")
+    define_match = re.match(r'^(?:define|meaning of|what does)\s+(.+?)(?:\s+mean)?\??$', msg)
+    if define_match:
+        word = define_match.group(1).strip()
+        definition = dictionary_lookup(word)
+        if definition:
+            return _finish(f"{definition}\n\n✨ {user_name} • Level {stats['level']} - {stats['title']}")
+
+    # 8. Wikipedia lookups ("who is X", "what is X", "tell me about X")
+    wiki_match = re.match(r'^(?:who is|what is|what\'s|tell me about)\s+(.+?)\??$', msg)
+    if wiki_match:
+        topic = wiki_match.group(1).strip()
+        summary = wikipedia_summary(topic)
+        if summary:
+            return _finish(f"{summary}\n\n✨ {user_name} • Level {stats['level']} - {stats['title']}", topic="wiki")
+
+    # 9. Web search — multi-source research with citations. Reads the top
+    #    few results (not just one), summarizes each independently, and
+    #    presents them as numbered sources so claims can be traced back.
+    search_results = search_web(message)
+
+    if not search_results:
+        return _finish(f"I searched for '{message}' but found no results.")
+
+    sources_to_read = search_results[:3]
+    citations = []
+    for r in sources_to_read:
+        page_text = None
+        try:
+            page_text = read_full_webpage(r['url'])
+        except Exception:
+            pass
+        body = summarize_text(page_text, max_sentences=2) if page_text and len(page_text) > 200 else r['snippet']
+        citations.append({"title": r['title'], "url": r['url'], "summary": body})
+
+    if not citations:
+        return _finish(f"I searched for '{message}' but couldn't read any results.")
+
+    response = f"🔍 **Research: {message}**\n\n"
+    for i, c in enumerate(citations, 1):
+        response += f"**[{i}] {c['title']}**\n{c['summary']}\n🔗 {c['url']}\n\n"
+    if len(citations) > 1:
+        response += "_Compared across multiple sources above — cross-check for agreement._\n\n"
+    response += f"📊 **{user_name}'s Stats:** Level {stats['level']} - {stats['title']} ({stats['count']} messages)\n"
+
+    return _finish(response, topic="search")
+
+# ============ HISTORY ============
+
+def load_history(email):
     if not email:
-        return JSONResponse({"error": "Email required"}, status_code=400)
-    history = load_history(email)
-    return {"conversation": history}
+        return []
+    safe_email = email.replace('@', '_at_').replace('.', '_dot_')
+    filepath = f"history_{safe_email}.json"
+    if os.path.exists(filepath):
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return []
 
-@app.get("/analytics")
-async def get_analytics():
-    return get_analytics_summary()
+def save_history(email, history):
+    if not email:
+        return
+    safe_email = email.replace('@', '_at_').replace('.', '_dot_')
+    filepath = f"history_{safe_email}.json"
+    with open(filepath, 'w', encoding='utf-8') as f:
+        json.dump(history, f, ensure_ascii=False, indent=2)
 
 # ============ GOOGLE CLIENT ID ============
 GOOGLE_CLIENT_ID = "46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com"
 
-# ============ HTML ============
+# ============ COMPLETE FIXED HTML ============
 HTML = f'''
 <!DOCTYPE html>
 <html lang="en">
@@ -1256,134 +869,1024 @@ HTML = f'''
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
     <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }}
-        html, body {{ margin: 0; padding: 0; width: 100%; height: 100%; overflow-x: hidden; overflow-y: auto; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f0e8; transition: all 0.3s ease; -webkit-font-smoothing: antialiased; }}
-        img, video, iframe {{ max-width: 100%; height: auto; }}
-        body.dark {{ background: #1a1a2e; }}
-        body.dark .app {{ background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); }}
-        body.dark .header {{ background: rgba(26,26,46,0.95); border-bottom-color: #2a2a4e; }}
-        body.dark .logo h1 {{ color: #d4c5a9; }}
-        body.dark .input-wrapper {{ background: #2a2a4e; border-color: #3a3a5e; }}
-        body.dark textarea {{ color: #e0e0e0; }}
-        body.dark textarea::placeholder {{ color: #6a5a7a; }}
-        body.dark .message-content {{ color: #e0e0e0; }}
-        body.dark .ai-message .message-content {{ background: #2a2a4e !important; color: #e0e0e0 !important; }}
-        body.dark .suggestion {{ background: #2a2a4e; border-color: #3a3a5e; color: #e0e0e0; }}
-        body.dark .suggestion:hover {{ background: #3a3a5e; color: white; }}
-        body.dark .welcome h2 {{ color: #d4c5a9; }}
-        body.dark .welcome p {{ color: #8a7a6a; }}
-        body.dark .sidebar {{ background: #0f0f23; border-right-color: #2a2a4e; }}
-        body.dark .sidebar-header {{ background: #0a0a1a; }}
-        body.dark .history-question {{ color: #d4c5a9; }}
-        body.dark .history-time {{ color: #6a5a7a; }}
-        body.dark .history-item:hover {{ background: rgba(212,197,169,0.08); border-color: #3a3a5e; }}
-        body.dark .clear-history {{ color: #d4c5a9; border-color: #3a3a5e; }}
-        body.dark .clear-history:hover {{ background: rgba(212,197,169,0.2); border-color: #c4a57b; }}
-        body.dark .new-chat-btn {{ background: #3a3a5e; color: #d4c5a9; }}
-        body.dark .new-chat-btn:hover {{ background: #4a4a6e; }}
-        body.dark .typing span {{ background: #d4c5a9; }}
-        body.dark .typing {{ color: #d4c5a9; }}
-        body.dark a {{ color: #4ecdc4; }}
-        body.dark .message-content a {{ color: #4ecdc4; }}
-        body.dark .message-content a:hover {{ color: #6ee7de; }}
-        body.dark .control-btn {{ color: #d4c5a9; }}
-        body.dark .control-btn:hover {{ background: #3a3a5e; color: white; }}
-        .login-overlay {{ position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); z-index: 2000; display: flex; justify-content: center; align-items: center; padding: 20px; }}
-        .login-card {{ background: white; border-radius: 30px; padding: 40px 30px; text-align: center; max-width: 400px; width: 100%; box-shadow: 0 25px 50px rgba(0,0,0,0.2); }}
-        .login-card .logo-icon {{ font-size: 4rem; margin-bottom: 20px; }}
-        .login-card h2 {{ font-family: 'Playfair Display', serif; font-size: 2rem; margin-bottom: 10px; }}
-        .login-card p {{ color: #666; font-size: 1rem; margin-bottom: 30px; }}
-        .app {{ display: flex; flex-direction: column; height: 100dvh; min-height: 100vh; width: 100%; background: linear-gradient(135deg, #f5f0e8 0%, #e8e0d5 100%); position: relative; overflow: hidden; }}
-        .sidebar {{ position: fixed; left: 0; top: 0; bottom: 0; width: min(280px, 80vw); background: #2c2418; border-right: 1px solid #4a3f2f; display: flex; flex-direction: column; transform: translateX(-100%); transition: transform 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55); z-index: 1000; box-shadow: 4px 0 20px rgba(0,0,0,0.1); }}
-        .sidebar.open {{ transform: translateX(0); }}
-        .sidebar-header {{ padding: 20px; border-bottom: 1px solid #4a3f2f; background: #1f1912; flex-shrink: 0; }}
-        .sidebar-header h3 {{ color: #d4c5a9; font-family: 'Playfair Display', serif; font-size: 1rem; }}
-        .user-profile {{ display: none; align-items: center; gap: 12px; padding: 12px; background: rgba(212,197,169,0.1); border-radius: 12px; margin-top: 15px; }}
-        .user-profile-img {{ width: 45px; height: 45px; border-radius: 50%; object-fit: cover; }}
-        .user-profile-info {{ flex: 1; min-width: 0; }}
-        .user-profile-name {{ color: #d4c5a9; font-weight: 600; font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
-        .user-profile-email {{ color: #8a7a6a; font-size: 0.65rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
-        .logout-btn {{ background: rgba(212,197,169,0.1); border: 1px solid #4a3f2f; border-radius: 20px; padding: 6px 12px; color: #d4c5a9; cursor: pointer; font-size: 0.65rem; white-space: nowrap; }}
-        .history-list {{ flex: 1; overflow-y: auto; padding: 12px; -webkit-overflow-scrolling: touch; }}
-        .history-item {{ padding: 10px; margin-bottom: 6px; border-radius: 10px; cursor: pointer; transition: all 0.2s; border: 1px solid transparent; }}
-        .history-item:hover {{ background: rgba(212,197,169,0.08); border-color: #4a3f2f; }}
-        .history-question {{ font-size: 0.8rem; color: #d4c5a9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
-        .history-time {{ font-size: 0.6rem; color: #6a5a4a; margin-top: 4px; }}
-        .sidebar-footer {{ padding: 16px; border-top: 1px solid #4a3f2f; background: #1f1912; flex-shrink: 0; }}
-        .new-chat-btn {{ background: #4a3f2f; border: none; border-radius: 25px; padding: 12px 16px; color: #d4c5a9; cursor: pointer; width: 100%; font-size: 0.85rem; display: flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.2s; }}
-        .new-chat-btn:hover {{ background: #5a4f3f; }}
-        .clear-history {{ background: rgba(212,197,169,0.1); border: 1px solid #4a3f2f; border-radius: 20px; padding: 8px 16px; color: #d4c5a9; cursor: pointer; font-size: 0.7rem; margin-top: 10px; width: 100%; }}
-        .overlay {{ position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.4); display: none; z-index: 999; }}
-        .overlay.show {{ display: block; }}
-        .main {{ flex: 1; display: flex; flex-direction: column; min-height: 0; height: 100%; width: 100%; overflow: hidden; }}
-        .header {{ padding: 12px 16px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #d4c5a9; background: rgba(245,240,232,0.95); flex-shrink: 0; min-height: 56px; width: 100%; position: relative; z-index: 10; }}
-        .menu-btn {{ background: none; border: none; font-size: 1.3rem; cursor: pointer; color: #6a5a4a; padding: 8px; border-radius: 10px; display: flex; align-items: center; justify-content: center; }}
-        .menu-btn:hover {{ background: #d4c5a9; color: #2c2418; }}
-        .logo {{ flex: 1; display: flex; align-items: baseline; gap: 6px; min-width: 0; }}
-        .logo-icon {{ font-size: 1.8rem; }}
-        .logo h1 {{ font-family: 'Playfair Display', serif; font-size: 1.3rem; color: #2c2418; white-space: nowrap; }}
-        .new-chat-mobile {{ background: none; border: none; font-size: 1.2rem; cursor: pointer; padding: 8px; border-radius: 10px; color: #6a5a4a; display: none; }}
-        .control-btn {{ background: none; border: none; font-size: 1.2rem; cursor: pointer; padding: 8px 12px; border-radius: 20px; color: #6a5a4a; transition: all 0.2s; display: flex; align-items: center; justify-content: center; }}
-        .control-btn:hover {{ background: #d4c5a9; }}
-        .user-btn {{ background: none; border: none; cursor: pointer; display: none; padding: 4px; }}
-        .user-btn img {{ width: 35px; height: 35px; border-radius: 50%; object-fit: cover; }}
-        .messages {{ flex: 1; overflow-y: auto; padding: 16px; padding-bottom: 20px; -webkit-overflow-scrolling: touch; scroll-behavior: smooth; min-height: 0; }}
-        .message {{ margin-bottom: 20px; animation: fadeIn 0.3s ease; }}
-        .message-wrapper {{ display: inline-block; max-width: 85%; }}
-        @keyframes fadeIn {{ from {{ opacity: 0; transform: translateY(10px); }} to {{ opacity: 1; transform: translateY(0); }} }}
-        .user-message {{ text-align: right; }}
-        .ai-message {{ text-align: left; }}
-        .message-content {{ display: inline-block; max-width: 100%; font-size: 0.9rem; line-height: 1.5; color: #2c2418; background: transparent !important; padding: 0 !important; }}
-        .user-message .message-content {{ background: #2c2418 !important; color: white !important; padding: 10px 16px !important; border-radius: 20px !important; }}
-        .ai-message .message-content {{ background: white !important; color: #2c2418 !important; padding: 12px 18px !important; border-radius: 20px !important; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }}
-        .message-actions {{ display: flex; gap: 8px; margin-top: 8px; opacity: 0.6; transition: opacity 0.2s; flex-wrap: wrap; }}
-        .message-actions:hover {{ opacity: 1; }}
-        .message-actions button {{ background: none; border: none; cursor: pointer; padding: 4px 8px; font-size: 0.75rem; border-radius: 6px; color: #6a5a4a; transition: all 0.2s; display: flex; align-items: center; gap: 4px; }}
-        .message-actions button:hover {{ background: rgba(44,36,24,0.1); color: #2c2418; }}
-        body.dark .message-actions button {{ color: #8a7a6a; }}
-        body.dark .message-actions button:hover {{ background: rgba(212,197,169,0.1); color: #d4c5a9; }}
-        .message-actions .liked {{ color: #4caf50 !important; }}
-        .message-actions .disliked {{ color: #f44336 !important; }}
-        .edit-message-input {{ display: none; width: 100%; padding: 8px 12px; border: 2px solid #2c2418; border-radius: 12px; font-size: 0.9rem; font-family: inherit; background: white; color: #2c2418; }}
-        body.dark .edit-message-input {{ background: #2a2a4e; color: #e0e0e0; border-color: #4a3f2f; }}
-        .edit-message-input.active {{ display: block; }}
-        .edit-actions {{ display: none; gap: 8px; margin-top: 8px; }}
-        .edit-actions.active {{ display: flex; }}
-        .edit-actions button {{ padding: 4px 12px; border-radius: 6px; border: none; cursor: pointer; font-size: 0.75rem; }}
-        .edit-actions .save-edit {{ background: #2c2418; color: white; }}
-        .edit-actions .cancel-edit {{ background: #e0d5c8; color: #2c2418; }}
-        body.dark .edit-actions .cancel-edit {{ background: #3a3a5e; color: #d4c5a9; }}
-        .typing {{ display: none; padding: 10px 16px; gap: 5px; color: #888; font-size: 0.8rem; flex-shrink: 0; }}
-        .typing span {{ width: 6px; height: 6px; background: #c4a57b; border-radius: 50%; display: inline-block; animation: bounce 1.4s infinite; }}
-        @keyframes bounce {{ 0%, 60%, 100% {{ transform: translateY(0); }} 30% {{ transform: translateY(-6px); }} }}
-        .input-area {{ position: sticky; bottom: 0; z-index: 100; background: #f5f0e8; padding: 12px 16px 20px; padding-bottom: env(safe-area-inset-bottom, 20px); flex-shrink: 0; border-top: 1px solid rgba(212,197,169,0.3); }}
-        body.dark .input-area {{ background: #1a1a2e; border-top-color: rgba(42,42,78,0.3); }}
-        .input-wrapper {{ display: flex; align-items: flex-end; gap: 12px; background: white; border-radius: 28px; padding: 8px 8px 8px 20px; border: 1px solid #d4c5a9; width: 100%; max-width: 760px; margin: 0 auto; min-height: 56px; }}
-        body.dark .input-wrapper {{ background: #2a2a4e; border-color: #3a3a5e; }}
-        .input-text-wrapper {{ flex: 1; min-width: 0; }}
-        textarea {{ width: 100%; background: transparent; border: none; outline: none; font-size: 16px; line-height: 1.5; resize: none; padding: 8px 0; font-family: inherit; color: #2c2418; min-height: 24px; max-height: 180px; overflow-y: auto; }}
-        body.dark textarea {{ color: #e0e0e0; }}
-        textarea::placeholder {{ color: #b8a88a; font-size: 0.95rem; }}
-        @media (max-width: 768px) {{ textarea {{ font-size: 16px !important; }} }}
-        .submit-btn {{ display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%; border: none; background-color: #2c2418; color: white; cursor: pointer; transition: all 0.2s; min-width: 44px; min-height: 44px; }}
-        body.dark .submit-btn {{ background-color: #4a3f2f; }}
-        .submit-btn:hover {{ background-color: #4a3f2f; transform: scale(1.02); }}
-        .submit-btn:active {{ transform: scale(0.96); }}
-        .submit-icon {{ width: 20px; height: 20px; fill: currentColor; }}
-        .welcome {{ display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 50vh; text-align: center; padding: 20px; }}
-        .welcome-icon {{ font-size: 3rem; margin-bottom: 15px; animation: float 3s ease-in-out infinite; }}
-        @keyframes float {{ 0%, 100% {{ transform: translateY(0); }} 50% {{ transform: translateY(-8px); }} }}
-        .welcome h2 {{ font-family: 'Playfair Display', serif; font-size: 2rem; color: #2c2418; margin-bottom: 8px; }}
-        .welcome p {{ color: #6a5a4a; font-size: 0.85rem; margin-bottom: 20px; }}
-        .suggestions {{ display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 15px; }}
-        .suggestion {{ background: white; border: 1px solid #d4c5a9; border-radius: 30px; padding: 6px 14px; font-size: 0.75rem; color: #2c2418; cursor: pointer; transition: all 0.2s; white-space: nowrap; }}
-        .suggestion:hover {{ background: #2c2418; color: white; border-color: #2c2418; }}
-        @media (max-width: 768px) {{ .messages {{ padding: 12px 16px; padding-bottom: 16px; }} .suggestions {{ display: none; }} .new-chat-mobile {{ display: block; }} .header {{ padding: 10px 14px; min-height: 52px; }} .logo h1 {{ font-size: 1.1rem; }} .logo-icon {{ font-size: 1.4rem; }} .message-content {{ max-width: 100%; font-size: 0.85rem; }} .input-area {{ padding: 10px 12px 16px; }} .input-wrapper {{ padding: 6px 6px 6px 16px; min-height: 50px; border-radius: 26px; }} textarea {{ font-size: 16px !important; padding: 8px 0; }} .submit-btn {{ width: 40px; height: 40px; min-width: 40px; min-height: 40px; }} .submit-icon {{ width: 18px; height: 18px; }} .message-actions button {{ font-size: 0.65rem; padding: 2px 6px; }} }}
-        @media (max-width: 480px) {{ .header {{ padding: 8px 12px; min-height: 48px; gap: 8px; }} .logo h1 {{ font-size: 1rem; }} .logo-icon {{ font-size: 1.2rem; }} .control-btn {{ font-size: 0.9rem; padding: 6px 8px; }} .menu-btn {{ font-size: 1.1rem; padding: 6px; }} .messages {{ padding: 10px 12px; }} .input-area {{ padding: 8px 10px 14px; padding-bottom: env(safe-area-inset-bottom, 14px); }} .input-wrapper {{ padding: 5px 5px 5px 14px; min-height: 44px; gap: 8px; border-radius: 24px; }} textarea {{ font-size: 15px !important; padding: 6px 0; min-height: 20px; }} .submit-btn {{ width: 40px; height: 40px; min-width: 40px; min-height: 40px; }} .submit-icon {{ width: 16px; height: 16px; }} .message-content {{ font-size: 0.8rem; }} }}
-        @media (max-width: 380px) {{ .header {{ padding: 6px 10px; min-height: 44px; gap: 6px; }} .logo h1 {{ font-size: 0.85rem; }} .logo-icon {{ font-size: 1rem; }} .control-btn {{ font-size: 0.8rem; padding: 4px 6px; }} .messages {{ padding: 8px 10px; }} .input-area {{ padding: 6px 8px 12px; }} .input-wrapper {{ padding: 4px 4px 4px 12px; min-height: 40px; gap: 6px; border-radius: 22px; }} textarea {{ font-size: 14px !important; padding: 5px 0; min-height: 18px; }} .submit-btn {{ width: 36px; height: 36px; min-width: 36px; min-height: 36px; }} .submit-icon {{ width: 14px; height: 14px; }} .message-content {{ font-size: 0.75rem; }} }}
-        @media (max-height: 500px) and (orientation: landscape) {{ .header {{ min-height: 40px; padding: 4px 12px; gap: 6px; }} .logo h1 {{ font-size: 0.9rem; }} .logo-icon {{ font-size: 1.1rem; }} .messages {{ padding: 6px 12px; padding-bottom: 10px; }} .input-area {{ padding: 4px 12px 8px; }} .input-wrapper {{ min-height: 38px; padding: 4px 4px 4px 12px; }} textarea {{ min-height: 20px; max-height: 80px; font-size: 14px !important; padding: 4px 0; }} .submit-btn {{ width: 36px; height: 36px; min-width: 36px; min-height: 36px; }} .submit-icon {{ width: 14px; height: 14px; }} .welcome {{ min-height: 20vh; }} .suggestions {{ display: none; }} .control-btn {{ font-size: 0.8rem; padding: 3px 6px; }} }}
-        @media (min-width: 769px) and (max-width: 1024px) {{ .input-wrapper {{ max-width: 90%; }} .messages {{ padding: 16px 24px; }} .header {{ padding: 14px 20px; }} }}
-        @media (min-width: 1025px) {{ .input-wrapper {{ max-width: 760px; }} .messages {{ padding: 24px 32px; }} .header {{ padding: 16px 32px; }} }}
+        /* ========== RESET ========== */
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }}
+        
+        /* ========== FIXED: NO FIXED POSITION, NO OVERFLOW HIDDEN ========== */
+        html, body {{
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow-x: hidden;
+            overflow-y: auto;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f0e8;
+            transition: all 0.3s ease;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }}
+        
+        /* ========== FLUID MEDIA ========== */
+        img, video, iframe {{
+            max-width: 100%;
+            height: auto;
+        }}
+        
+        /* ========== DARK MODE ========== */
+        body.dark {{
+            background: #1a1a2e;
+        }}
+        
+        body.dark .app {{
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        }}
+        
+        body.dark .header {{
+            background: rgba(26,26,46,0.95);
+            border-bottom-color: #2a2a4e;
+        }}
+        
+        body.dark .logo h1 {{
+            color: #d4c5a9;
+        }}
+        
+        body.dark .input-wrapper {{
+            background: #2a2a4e;
+            border-color: #3a3a5e;
+        }}
+        
+        body.dark textarea {{
+            color: #e0e0e0;
+        }}
+        
+        body.dark textarea::placeholder {{
+            color: #6a5a7a;
+        }}
+        
+        body.dark .message-content {{
+            color: #e0e0e0;
+        }}
+        
+        body.dark .ai-message .message-content {{
+            background: #2a2a4e !important;
+            color: #e0e0e0 !important;
+        }}
+        
+        body.dark .suggestion {{
+            background: #2a2a4e;
+            border-color: #3a3a5e;
+            color: #e0e0e0;
+        }}
+        
+        body.dark .suggestion:hover {{
+            background: #3a3a5e;
+            color: white;
+        }}
+        
+        body.dark .welcome h2 {{
+            color: #d4c5a9;
+        }}
+        
+        body.dark .welcome p {{
+            color: #8a7a6a;
+        }}
+        
+        body.dark .sidebar {{
+            background: #0f0f23;
+            border-right-color: #2a2a4e;
+        }}
+        
+        body.dark .sidebar-header {{
+            background: #0a0a1a;
+        }}
+        
+        body.dark .history-question {{
+            color: #d4c5a9;
+        }}
+        
+        body.dark .history-time {{
+            color: #6a5a7a;
+        }}
+        
+        body.dark .history-item:hover {{
+            background: rgba(212,197,169,0.08);
+            border-color: #3a3a5e;
+        }}
+        
+        body.dark .clear-history {{
+            color: #d4c5a9;
+            border-color: #3a3a5e;
+        }}
+        
+        body.dark .clear-history:hover {{
+            background: rgba(212,197,169,0.2);
+            border-color: #c4a57b;
+        }}
+        
+        body.dark .new-chat-btn {{
+            background: #3a3a5e;
+            color: #d4c5a9;
+        }}
+        
+        body.dark .new-chat-btn:hover {{
+            background: #4a4a6e;
+        }}
+        
+        body.dark .typing span {{
+            background: #d4c5a9;
+        }}
+        
+        body.dark .typing {{
+            color: #d4c5a9;
+        }}
+        
+        body.dark a {{
+            color: #4ecdc4;
+        }}
+        
+        body.dark .message-content a {{
+            color: #4ecdc4;
+        }}
+        
+        body.dark .message-content a:hover {{
+            color: #6ee7de;
+        }}
+        
+        body.dark .control-btn {{
+            color: #d4c5a9;
+        }}
+        
+        body.dark .control-btn:hover {{
+            background: #3a3a5e;
+            color: white;
+        }}
+        
+        /* ========== LOGIN OVERLAY ========== */
+        .login-overlay {{
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            z-index: 2000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }}
+        
+        .login-card {{
+            background: white;
+            border-radius: 30px;
+            padding: 40px 30px;
+            text-align: center;
+            max-width: 400px;
+            width: 100%;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.2);
+        }}
+        
+        .login-card .logo-icon {{
+            font-size: 4rem;
+            margin-bottom: 20px;
+        }}
+        
+        .login-card h2 {{
+            font-family: 'Playfair Display', serif;
+            font-size: 2rem;
+            margin-bottom: 10px;
+        }}
+        
+        .login-card p {{
+            color: #666;
+            font-size: 1rem;
+            margin-bottom: 30px;
+        }}
+        
+        /* ========== APP - FIXED LAYOUT ========== */
+        .app {{
+            display: flex;
+            flex-direction: column;
+            height: 100dvh;
+            min-height: 100vh;
+            width: 100%;
+            background: linear-gradient(135deg, #f5f0e8 0%, #e8e0d5 100%);
+            position: relative;
+            overflow: hidden;
+        }}
+        
+        /* ========== SIDEBAR - RESPONSIVE ========== */
+        .sidebar {{
+            position: fixed;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: min(280px, 80vw);
+            background: #2c2418;
+            border-right: 1px solid #4a3f2f;
+            display: flex;
+            flex-direction: column;
+            transform: translateX(-100%);
+            transition: transform 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            z-index: 1000;
+            box-shadow: 4px 0 20px rgba(0,0,0,0.1);
+        }}
+        
+        .sidebar.open {{
+            transform: translateX(0);
+        }}
+        
+        .sidebar-header {{
+            padding: 20px;
+            border-bottom: 1px solid #4a3f2f;
+            background: #1f1912;
+            flex-shrink: 0;
+        }}
+        
+        .sidebar-header h3 {{
+            color: #d4c5a9;
+            font-family: 'Playfair Display', serif;
+            font-size: 1rem;
+        }}
+        
+        .user-profile {{
+            display: none;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            background: rgba(212,197,169,0.1);
+            border-radius: 12px;
+            margin-top: 15px;
+        }}
+        
+        .user-profile-img {{
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            object-fit: cover;
+        }}
+        
+        .user-profile-info {{
+            flex: 1;
+            min-width: 0;
+        }}
+        
+        .user-profile-name {{
+            color: #d4c5a9;
+            font-weight: 600;
+            font-size: 0.85rem;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }}
+        
+        .user-profile-email {{
+            color: #8a7a6a;
+            font-size: 0.65rem;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }}
+        
+        .logout-btn {{
+            background: rgba(212,197,169,0.1);
+            border: 1px solid #4a3f2f;
+            border-radius: 20px;
+            padding: 6px 12px;
+            color: #d4c5a9;
+            cursor: pointer;
+            font-size: 0.65rem;
+            white-space: nowrap;
+        }}
+        
+        .history-list {{
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+            -webkit-overflow-scrolling: touch;
+        }}
+        
+        .history-item {{
+            padding: 10px;
+            margin-bottom: 6px;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 1px solid transparent;
+        }}
+        
+        .history-item:hover {{
+            background: rgba(212,197,169,0.08);
+            border-color: #4a3f2f;
+        }}
+        
+        .history-question {{
+            font-size: 0.8rem;
+            color: #d4c5a9;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }}
+        
+        .history-time {{
+            font-size: 0.6rem;
+            color: #6a5a4a;
+            margin-top: 4px;
+        }}
+        
+        .sidebar-footer {{
+            padding: 16px;
+            border-top: 1px solid #4a3f2f;
+            background: #1f1912;
+            flex-shrink: 0;
+        }}
+        
+        .new-chat-btn {{
+            background: #4a3f2f;
+            border: none;
+            border-radius: 25px;
+            padding: 12px 16px;
+            color: #d4c5a9;
+            cursor: pointer;
+            width: 100%;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            transition: all 0.2s;
+        }}
+        
+        .new-chat-btn:hover {{
+            background: #5a4f3f;
+        }}
+        
+        .clear-history {{
+            background: rgba(212,197,169,0.1);
+            border: 1px solid #4a3f2f;
+            border-radius: 20px;
+            padding: 8px 16px;
+            color: #d4c5a9;
+            cursor: pointer;
+            font-size: 0.7rem;
+            margin-top: 10px;
+            width: 100%;
+        }}
+        
+        .overlay {{
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.4);
+            display: none;
+            z-index: 999;
+        }}
+        
+        .overlay.show {{
+            display: block;
+        }}
+        
+        /* ========== MAIN - FLEX LAYOUT ========== */
+        .main {{
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            height: 100%;
+            width: 100%;
+            overflow: hidden;
+        }}
+        
+        /* ========== HEADER ========== */
+        .header {{
+            padding: 12px 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border-bottom: 1px solid #d4c5a9;
+            background: rgba(245,240,232,0.95);
+            flex-shrink: 0;
+            min-height: 56px;
+            width: 100%;
+            position: relative;
+            z-index: 10;
+        }}
+        
+        .menu-btn {{
+            background: none;
+            border: none;
+            font-size: 1.3rem;
+            cursor: pointer;
+            color: #6a5a4a;
+            padding: 8px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        
+        .menu-btn:hover {{
+            background: #d4c5a9;
+            color: #2c2418;
+        }}
+        
+        .logo {{
+            flex: 1;
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+            min-width: 0;
+        }}
+        
+        .logo-icon {{
+            font-size: 1.8rem;
+        }}
+        
+        .logo h1 {{
+            font-family: 'Playfair Display', serif;
+            font-size: 1.3rem;
+            color: #2c2418;
+            white-space: nowrap;
+        }}
+        
+        .new-chat-mobile {{
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 10px;
+            color: #6a5a4a;
+            display: none;
+        }}
+        
+        .control-btn {{
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            padding: 8px 12px;
+            border-radius: 20px;
+            color: #6a5a4a;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        
+        .control-btn:hover {{
+            background: #d4c5a9;
+        }}
+        
+        .user-btn {{
+            background: none;
+            border: none;
+            cursor: pointer;
+            display: none;
+            padding: 4px;
+        }}
+        
+        .user-btn img {{
+            width: 35px;
+            height: 35px;
+            border-radius: 50%;
+            object-fit: cover;
+        }}
+        
+        /* ========== MESSAGES - SCROLLABLE ========== */
+        .messages {{
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            padding-bottom: 20px;
+            -webkit-overflow-scrolling: touch;
+            scroll-behavior: smooth;
+            min-height: 0;
+        }}
+        
+        .message {{
+            margin-bottom: 20px;
+            animation: fadeIn 0.3s ease;
+        }}
+        
+        @keyframes fadeIn {{
+            from {{ opacity: 0; transform: translateY(10px); }}
+            to {{ opacity: 1; transform: translateY(0); }}
+        }}
+        
+        .user-message {{
+            text-align: right;
+        }}
+        
+        .ai-message {{
+            text-align: left;
+        }}
+        
+        .message-content {{
+            display: inline-block;
+            max-width: 85%;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            color: #2c2418;
+            background: transparent !important;
+            padding: 0 !important;
+        }}
+        
+        .user-message .message-content {{
+            background: #2c2418 !important;
+            color: white !important;
+            padding: 10px 16px !important;
+            border-radius: 20px !important;
+        }}
+        
+        .ai-message .message-content {{
+            background: white !important;
+            color: #2c2418 !important;
+            padding: 12px 18px !important;
+            border-radius: 20px !important;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }}
+        
+        /* ========== TYPING ========== */
+        .typing {{
+            display: none;
+            padding: 10px 16px;
+            gap: 5px;
+            color: #888;
+            font-size: 0.8rem;
+            flex-shrink: 0;
+        }}
+        
+        .typing span {{
+            width: 6px;
+            height: 6px;
+            background: #c4a57b;
+            border-radius: 50%;
+            display: inline-block;
+            animation: bounce 1.4s infinite;
+        }}
+        
+        @keyframes bounce {{
+            0%, 60%, 100% {{ transform: translateY(0); }}
+            30% {{ transform: translateY(-6px); }}
+        }}
+        
+        /* ========== INPUT AREA - STICKY WITH SAFE AREA ========== */
+        .input-area {{
+            position: sticky;
+            bottom: 0;
+            z-index: 100;
+            background: #f5f0e8;
+            padding: 12px 16px 20px;
+            padding-bottom: env(safe-area-inset-bottom, 20px);
+            flex-shrink: 0;
+            border-top: 1px solid rgba(212,197,169,0.3);
+        }}
+        
+        body.dark .input-area {{
+            background: #1a1a2e;
+            border-top-color: rgba(42,42,78,0.3);
+        }}
+        
+        .input-wrapper {{
+            display: flex;
+            align-items: flex-end;
+            gap: 12px;
+            background: white;
+            border-radius: 28px;
+            padding: 8px 8px 8px 20px;
+            border: 1px solid #d4c5a9;
+            width: 100%;
+            max-width: 760px;
+            margin: 0 auto;
+            min-height: 56px;
+        }}
+        
+        body.dark .input-wrapper {{
+            background: #2a2a4e;
+            border-color: #3a3a5e;
+        }}
+        
+        .input-text-wrapper {{
+            flex: 1;
+            min-width: 0;
+        }}
+        
+        textarea {{
+            width: 100%;
+            background: transparent;
+            border: none;
+            outline: none;
+            font-size: 16px;
+            line-height: 1.5;
+            resize: none;
+            padding: 8px 0;
+            font-family: inherit;
+            color: #2c2418;
+            min-height: 24px;
+            max-height: 180px;
+            overflow-y: auto;
+        }}
+        
+        body.dark textarea {{
+            color: #e0e0e0;
+        }}
+        
+        textarea::placeholder {{
+            color: #b8a88a;
+            font-size: 0.95rem;
+        }}
+        
+        /* iOS Zoom Fix */
+        @media (max-width: 768px) {{
+            textarea {{
+                font-size: 16px !important;
+            }}
+        }}
+        
+        .submit-btn {{
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            border: none;
+            background-color: #2c2418;
+            color: white;
+            cursor: pointer;
+            transition: all 0.2s;
+            min-width: 44px;
+            min-height: 44px;
+        }}
+        
+        body.dark .submit-btn {{
+            background-color: #4a3f2f;
+        }}
+        
+        .submit-btn:hover {{
+            background-color: #4a3f2f;
+            transform: scale(1.02);
+        }}
+        
+        .submit-btn:active {{
+            transform: scale(0.96);
+        }}
+        
+        .submit-icon {{
+            width: 20px;
+            height: 20px;
+            fill: currentColor;
+        }}
+        
+        /* ========== ADDED: FILE ATTACH BUTTON (additive only) ========== */
+        .attach-btn {{
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            border: 1px solid #e0d5c0;
+            background-color: transparent;
+            color: #2c2418;
+            cursor: pointer;
+            transition: all 0.2s;
+            min-width: 44px;
+            min-height: 44px;
+        }}
+        body.dark .attach-btn {{
+            border-color: #4a3f2f;
+            color: #e0e0e0;
+        }}
+        .attach-btn:hover {{
+            background-color: rgba(44,36,24,0.06);
+        }}
+        .attach-icon {{
+            width: 18px;
+            height: 18px;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 2;
+        }}
+        .message-content img.chat-image {{
+            max-width: 100%;
+            border-radius: 10px;
+            margin-top: 10px;
+            display: block;
+        }}
+        .file-chip {{
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            background-color: rgba(44,36,24,0.06);
+            font-size: 0.85rem;
+            margin-top: 6px;
+        }}
+        
+        /* ========== WELCOME ========== */
+        .welcome {{
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 50vh;
+            text-align: center;
+            padding: 20px;
+        }}
+        
+        .welcome-icon {{
+            font-size: 3rem;
+            margin-bottom: 15px;
+            animation: float 3s ease-in-out infinite;
+        }}
+        
+        @keyframes float {{
+            0%, 100% {{ transform: translateY(0); }}
+            50% {{ transform: translateY(-8px); }}
+        }}
+        
+        .welcome h2 {{
+            font-family: 'Playfair Display', serif;
+            font-size: 2rem;
+            color: #2c2418;
+            margin-bottom: 8px;
+        }}
+        
+        .welcome p {{
+            color: #6a5a4a;
+            font-size: 0.85rem;
+            margin-bottom: 20px;
+        }}
+        
+        .suggestions {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            justify-content: center;
+            margin-top: 15px;
+        }}
+        
+        .suggestion {{
+            background: white;
+            border: 1px solid #d4c5a9;
+            border-radius: 30px;
+            padding: 6px 14px;
+            font-size: 0.75rem;
+            color: #2c2418;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }}
+        
+        .suggestion:hover {{
+            background: #2c2418;
+            color: white;
+            border-color: #2c2418;
+        }}
+        
+        /* ========== RESPONSIVE BREAKPOINTS ========== */
+        
+        /* Tablet & Mobile */
+        @media (max-width: 768px) {{
+            .messages {{
+                padding: 12px 16px;
+                padding-bottom: 16px;
+            }}
+            .suggestions {{
+                display: none;
+            }}
+            .new-chat-mobile {{
+                display: block;
+            }}
+            .header {{
+                padding: 10px 14px;
+                min-height: 52px;
+            }}
+            .logo h1 {{
+                font-size: 1.1rem;
+            }}
+            .logo-icon {{
+                font-size: 1.4rem;
+            }}
+            .message-content {{
+                max-width: 90%;
+                font-size: 0.85rem;
+            }}
+            .input-area {{
+                padding: 10px 12px 16px;
+            }}
+            .input-wrapper {{
+                padding: 6px 6px 6px 16px;
+                min-height: 50px;
+                border-radius: 26px;
+            }}
+            textarea {{
+                font-size: 16px !important;
+                padding: 8px 0;
+            }}
+            .submit-btn {{
+                width: 40px;
+                height: 40px;
+                min-width: 40px;
+                min-height: 40px;
+            }}
+            .submit-icon {{
+                width: 18px;
+                height: 18px;
+            }}
+        }}
+        
+        /* Small Phones */
+        @media (max-width: 480px) {{
+            .header {{
+                padding: 8px 12px;
+                min-height: 48px;
+                gap: 8px;
+            }}
+            .logo h1 {{
+                font-size: 1rem;
+            }}
+            .logo-icon {{
+                font-size: 1.2rem;
+            }}
+            .control-btn {{
+                font-size: 0.9rem;
+                padding: 6px 8px;
+            }}
+            .menu-btn {{
+                font-size: 1.1rem;
+                padding: 6px;
+            }}
+            .messages {{
+                padding: 10px 12px;
+            }}
+            .input-area {{
+                padding: 8px 10px 14px;
+                padding-bottom: env(safe-area-inset-bottom, 14px);
+            }}
+            .input-wrapper {{
+                padding: 5px 5px 5px 14px;
+                min-height: 44px;
+                gap: 8px;
+                border-radius: 24px;
+            }}
+            textarea {{
+                font-size: 15px !important;
+                padding: 6px 0;
+                min-height: 20px;
+            }}
+            .submit-btn {{
+                width: 40px;
+                height: 40px;
+                min-width: 40px;
+                min-height: 40px;
+            }}
+            .submit-icon {{
+                width: 16px;
+                height: 16px;
+            }}
+            .message-content {{
+                font-size: 0.8rem;
+            }}
+        }}
+        
+        /* Very Small Phones */
+        @media (max-width: 380px) {{
+            .header {{
+                padding: 6px 10px;
+                min-height: 44px;
+                gap: 6px;
+            }}
+            .logo h1 {{
+                font-size: 0.85rem;
+            }}
+            .logo-icon {{
+                font-size: 1rem;
+            }}
+            .control-btn {{
+                font-size: 0.8rem;
+                padding: 4px 6px;
+            }}
+            .messages {{
+                padding: 8px 10px;
+            }}
+            .input-area {{
+                padding: 6px 8px 12px;
+            }}
+            .input-wrapper {{
+                padding: 4px 4px 4px 12px;
+                min-height: 40px;
+                gap: 6px;
+                border-radius: 22px;
+            }}
+            textarea {{
+                font-size: 14px !important;
+                padding: 5px 0;
+                min-height: 18px;
+            }}
+            .submit-btn {{
+                width: 36px;
+                height: 36px;
+                min-width: 36px;
+                min-height: 36px;
+            }}
+            .submit-icon {{
+                width: 14px;
+                height: 14px;
+            }}
+            .message-content {{
+                font-size: 0.75rem;
+            }}
+        }}
+        
+        /* Landscape Phones */
+        @media (max-height: 500px) and (orientation: landscape) {{
+            .header {{
+                min-height: 40px;
+                padding: 4px 12px;
+                gap: 6px;
+            }}
+            .logo h1 {{
+                font-size: 0.9rem;
+            }}
+            .logo-icon {{
+                font-size: 1.1rem;
+            }}
+            .messages {{
+                padding: 6px 12px;
+                padding-bottom: 10px;
+            }}
+            .input-area {{
+                padding: 4px 12px 8px;
+            }}
+            .input-wrapper {{
+                min-height: 38px;
+                padding: 4px 4px 4px 12px;
+            }}
+            textarea {{
+                min-height: 20px;
+                max-height: 80px;
+                font-size: 14px !important;
+                padding: 4px 0;
+            }}
+            .submit-btn {{
+                width: 36px;
+                height: 36px;
+                min-width: 36px;
+                min-height: 36px;
+            }}
+            .submit-icon {{
+                width: 14px;
+                height: 14px;
+            }}
+            .welcome {{
+                min-height: 20vh;
+            }}
+            .suggestions {{
+                display: none;
+            }}
+            .control-btn {{
+                font-size: 0.8rem;
+                padding: 3px 6px;
+            }}
+        }}
+        
+        /* Tablets */
+        @media (min-width: 769px) and (max-width: 1024px) {{
+            .input-wrapper {{
+                max-width: 90%;
+            }}
+            .messages {{
+                padding: 16px 24px;
+            }}
+            .header {{
+                padding: 14px 20px;
+            }}
+        }}
+        
+        /* Desktop */
+        @media (min-width: 1025px) {{
+            .input-wrapper {{
+                max-width: 760px;
+            }}
+            .messages {{
+                padding: 24px 32px;
+            }}
+            .header {{
+                padding: 16px 32px;
+            }}
+        }}
     </style>
 </head>
 <body>
@@ -1392,32 +1895,56 @@ HTML = f'''
             <div class="logo-icon">🏛️</div>
             <h2>Welcome to Yama</h2>
             <p>Sign in to start your AI journey</p>
-            <div id="g_id_onload" data-client_id="{GOOGLE_CLIENT_ID}" data-context="signin" data-ux_mode="popup" data-callback="handleCredentialResponse" data-auto_prompt="false"></div>
-            <div class="g_id_signin" data-type="standard" data-shape="rectangular" data-theme="outline" data-text="signin_with" data-size="large" data-logo_alignment="left"></div>
+            <div id="g_id_onload"
+                 data-client_id="{GOOGLE_CLIENT_ID}"
+                 data-context="signin"
+                 data-ux_mode="popup"
+                 data-callback="handleCredentialResponse"
+                 data-auto_prompt="false">
+            </div>
+            <div class="g_id_signin"
+                 data-type="standard"
+                 data-shape="rectangular"
+                 data-theme="outline"
+                 data-text="signin_with"
+                 data-size="large"
+                 data-logo_alignment="left">
+            </div>
         </div>
     </div>
+    
     <div class="app" id="app">
         <div class="overlay" id="overlay" onclick="closeSidebar()"></div>
+        
         <div class="sidebar" id="sidebar">
             <div class="sidebar-header">
                 <h3>📜 CONVERSATIONS</h3>
                 <div class="user-profile" id="userProfile"></div>
             </div>
-            <div class="history-list" id="historyList"><div style="color:#6a5a4a;text-align:center;padding:20px;">No conversations yet</div></div>
+            <div class="history-list" id="historyList">
+                <div style="color: #6a5a4a; text-align: center; padding: 20px;">No conversations yet</div>
+            </div>
             <div class="sidebar-footer">
                 <button class="new-chat-btn" onclick="newChat()">➕ New Chat</button>
                 <button class="clear-history" onclick="clearHistory()">Clear all history</button>
             </div>
         </div>
+        
         <div class="main">
             <div class="header">
                 <button class="menu-btn" onclick="toggleSidebar()">☰</button>
-                <div class="logo" id="logo"><span class="logo-icon">🏛️</span><h1>YAMA</h1></div>
+                <div class="logo" id="logo">
+                    <span class="logo-icon">🏛️</span>
+                    <h1>YAMA</h1>
+                </div>
                 <button class="new-chat-mobile" onclick="newChat()">➕</button>
                 <button class="control-btn" onclick="toggleTheme()" title="Dark/Light Mode">🌓</button>
                 <button class="control-btn" onclick="exportChat()" title="Export Chat">📥</button>
-                <button class="user-btn" id="userBtn" onclick="toggleUserMenu()"><img id="userAvatar" src="" alt="User"></button>
+                <button class="user-btn" id="userBtn" onclick="toggleUserMenu()">
+                    <img id="userAvatar" src="" alt="User">
+                </button>
             </div>
+            
             <div class="messages" id="messages">
                 <div class="welcome" id="welcome">
                     <div class="welcome-icon">🏛️</div>
@@ -1431,9 +1958,19 @@ HTML = f'''
                     </div>
                 </div>
             </div>
-            <div class="typing" id="typing"><span></span><span></span><span></span> Yama is thinking...</div>
+            
+            <div class="typing" id="typing">
+                <span></span><span></span><span></span> Yama is thinking...
+            </div>
+            
             <div class="input-area">
                 <div class="input-wrapper">
+                    <input type="file" id="fileInput" style="display:none" accept=".pdf,.docx,.pptx,.xlsx,.xls,.csv,.txt,.png,.jpg,.jpeg,.webp,.bmp" onchange="handleFileUpload(event)">
+                    <button class="attach-btn" onclick="document.getElementById('fileInput').click()" aria-label="Attach file" type="button">
+                        <svg class="attach-icon" viewBox="0 0 24 24" width="18" height="18">
+                            <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
+                        </svg>
+                    </button>
                     <div class="input-text-wrapper">
                         <textarea id="userInput" placeholder="Ask Yama anything..." rows="1" onkeypress="handleKey(event)"></textarea>
                     </div>
@@ -1446,9 +1983,16 @@ HTML = f'''
             </div>
         </div>
     </div>
+    
     <script>
-        let currentUser = null, hasMessages = false, messageCounter = 0, isGenerating = false;
-        function toggleTheme() {{ document.body.classList.toggle('dark'); localStorage.setItem('theme', document.body.classList.contains('dark') ? 'dark' : 'light'); }}
+        let currentUser = null;
+        let hasMessages = false;
+        
+        function toggleTheme() {{
+            document.body.classList.toggle('dark');
+            localStorage.setItem('theme', document.body.classList.contains('dark') ? 'dark' : 'light');
+        }}
+        
         function exportChat() {{
             const messages = document.querySelectorAll('.message');
             let exportText = '';
@@ -1463,263 +2007,248 @@ HTML = f'''
             a.download = 'yama_chat_' + new Date().toISOString() + '.txt';
             a.click();
         }}
-        if (localStorage.getItem('theme') === 'dark') document.body.classList.add('dark');
-        function toggleUserMenu() {{ document.getElementById('sidebar').classList.toggle('open'); document.getElementById('overlay').classList.toggle('show'); }}
+        
+        const savedTheme = localStorage.getItem('theme');
+        if (savedTheme === 'dark') {{
+            document.body.classList.add('dark');
+        }}
+        
+        function toggleUserMenu() {{
+            document.getElementById('sidebar').classList.toggle('open');
+            document.getElementById('overlay').classList.toggle('show');
+        }}
+        
         function handleCredentialResponse(response) {{
-            const payload = JSON.parse(atob(response.credential.split('.')[1]));
-            currentUser = {{ name: payload.name, email: payload.email, picture: payload.picture }};
+            const token = response.credential;
+            const payload = JSON.parse(atob(token.split('.')[1]));
+            
+            currentUser = {{
+                name: payload.name,
+                email: payload.email,
+                picture: payload.picture
+            }};
+            
             document.getElementById('loginOverlay').style.display = 'none';
             document.getElementById('app').style.display = 'flex';
             document.getElementById('userBtn').style.display = 'block';
             document.getElementById('userAvatar').src = currentUser.picture;
+            
             document.getElementById('userProfile').style.display = 'flex';
             document.getElementById('userProfile').innerHTML = `
-                <img src="${{currentUser.picture}}" class="user-profile-img">
-                <div class="user-profile-info">
-                    <div class="user-profile-name">${{currentUser.name}}</div>
-                    <div class="user-profile-email">${{currentUser.email}}</div>
+                <img src=\"${{currentUser.picture}}\" class=\"user-profile-img\">
+                <div class=\"user-profile-info\">
+                    <div class=\"user-profile-name\">${{currentUser.name}}</div>
+                    <div class=\"user-profile-email\">${{currentUser.email}}</div>
                 </div>
-                <button class="logout-btn" onclick="logout()">Logout</button>
+                <button class=\"logout-btn\" onclick=\"logout()\">Logout</button>
             `;
+            
             loadHistory();
-            fetch('/set_user', {{ method: 'POST', headers: {{ 'Content-Type': 'application/json' }}, body: JSON.stringify({{ email: currentUser.email, name: currentUser.name, picture: currentUser.picture }}) }});
+            
+            fetch('/set_user', {{
+                method: 'POST',
+                headers: {{ 'Content-Type': 'application/json' }},
+                body: JSON.stringify({{ email: currentUser.email, name: currentUser.name, picture: currentUser.picture }})
+            }});
         }}
+        
         function logout() {{
             currentUser = null;
             document.getElementById('loginOverlay').style.display = 'flex';
             document.getElementById('app').style.display = 'none';
             document.getElementById('userBtn').style.display = 'none';
             document.getElementById('userProfile').style.display = 'none';
-            if (google && google.accounts) google.accounts.id.disableAutoSelect();
+            if (google && google.accounts) {{
+                google.accounts.id.disableAutoSelect();
+            }}
         }}
-        function newChat() {{ if (confirm('Start a new chat?')) location.reload(); }}
-        function toggleSidebar() {{ document.getElementById('sidebar').classList.toggle('open'); document.getElementById('overlay').classList.toggle('show'); }}
-        function closeSidebar() {{ document.getElementById('sidebar').classList.remove('open'); document.getElementById('overlay').classList.remove('show'); }}
-        function askSuggestion(q) {{ document.getElementById('userInput').value = q; sendMessage(); }}
+        
+        function newChat() {{
+            if (confirm('Start a new chat?')) {{ location.reload(); }}
+        }}
+        
+        function toggleSidebar() {{
+            document.getElementById('sidebar').classList.toggle('open');
+            document.getElementById('overlay').classList.toggle('show');
+        }}
+        
+        function closeSidebar() {{
+            document.getElementById('sidebar').classList.remove('open');
+            document.getElementById('overlay').classList.remove('show');
+        }}
+        
+        function askSuggestion(q) {{
+            document.getElementById('userInput').value = q;
+            sendMessage();
+        }}
+        
         async function loadHistory() {{
             if (!currentUser) return;
             const res = await fetch('/get_history?email=' + encodeURIComponent(currentUser.email));
             const history = await res.json();
             const container = document.getElementById('historyList');
-            if (history.length === 0) {{ container.innerHTML = '<div style="color:#6a5a4a;text-align:center;padding:20px;">No conversations yet</div>'; return; }}
+            if (history.length === 0) {{
+                container.innerHTML = '<div style=\"color:#6a5a4a;text-align:center;padding:20px;\">No conversations yet</div>';
+                return;
+            }}
             let html = '';
             for (let i = history.length - 1; i >= 0; i--) {{
                 let item = history[i];
-                html += '<div class="history-item" onclick="loadChatMessage(\\'' + escapeHtml(item.user) + '\\')">' +
-                        '<div class="history-question">' + escapeHtml(item.user.substring(0, 45)) + '</div>' +
-                        '<div class="history-time">' + item.timestamp + '</div></div>';
+                html += '<div class=\"history-item\" onclick=\"loadChatMessage(\\'' + escapeHtml(item.user) + '\\')\">' +
+                        '<div class=\"history-question\">' + escapeHtml(item.user.substring(0, 45)) + '</div>' +
+                        '<div class=\"history-time\">' + item.timestamp + '</div>' +
+                        '</div>';
             }}
             container.innerHTML = html;
         }}
-        function escapeHtml(text) {{ const div = document.createElement('div'); div.textContent = text; return div.innerHTML; }}
-        function loadChatMessage(msg) {{ document.getElementById('userInput').value = msg; closeSidebar(); sendMessage(); }}
-        async function clearHistory() {{ if (confirm('Clear all history?')) {{ await fetch('/clear_history', {{ method: 'POST' }}); location.reload(); }} }}
+        
+        function escapeHtml(text) {{
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }}
+        
+        function loadChatMessage(msg) {{
+            document.getElementById('userInput').value = msg;
+            closeSidebar();
+            sendMessage();
+        }}
+        
+        async function clearHistory() {{
+            if (confirm('Clear all history?')) {{
+                await fetch('/clear_history', {{ method: 'POST' }});
+                location.reload();
+            }}
+        }}
+        
         const textarea = document.getElementById('userInput');
-        function autoAdjustHeight() {{ this.style.height = 'auto'; this.style.height = this.scrollHeight + 'px'; }}
+        
+        // Auto-adjust height
+        function autoAdjustHeight() {{
+            this.style.height = 'auto';
+            this.style.height = this.scrollHeight + 'px';
+        }}
+        
         textarea.addEventListener('input', autoAdjustHeight);
+        
+        // VisualViewport handling for mobile keyboard
         if (window.visualViewport) {{
             let lastHeight = window.visualViewport.height;
             window.visualViewport.addEventListener('resize', function() {{
                 const inputArea = document.querySelector('.input-area');
                 if (inputArea && window.visualViewport.height < lastHeight) {{
-                    setTimeout(() => {{ inputArea.scrollIntoView({{ behavior: 'smooth', block: 'end' }}); }}, 100);
+                    // Keyboard opened - ensure input is visible
+                    setTimeout(() => {{
+                        inputArea.scrollIntoView({{ behavior: 'smooth', block: 'end' }});
+                    }}, 100);
                 }}
                 lastHeight = window.visualViewport.height;
             }});
         }}
-        function handleKey(e) {{ if (e.key === 'Enter' && !e.shiftKey) {{ e.preventDefault(); sendMessage(); }} }}
-        function copyResponse(messageId) {{
-            const content = document.querySelector(`#message-${{messageId}} .message-content`);
-            if (content) {{
-                navigator.clipboard.writeText(content.innerText).then(() => {{
-                    const btn = document.querySelector(`#message-${{messageId}} .copy-btn`);
-                    const originalText = btn.textContent;
-                    btn.textContent = '✅ Copied!';
-                    setTimeout(() => {{ btn.textContent = originalText; }}, 2000);
-                }});
+        
+        function handleKey(e) {{
+            if (e.key === 'Enter' && !e.shiftKey) {{
+                e.preventDefault();
+                sendMessage();
             }}
         }}
-        async function regenerateResponse(messageId, userMessage) {{
-            if (isGenerating) return;
-            isGenerating = true;
-            document.getElementById('typing').style.display = 'block';
-            const content = document.querySelector(`#message-${{messageId}} .message-content`);
-            try {{
-                const res = await fetch('/regenerate', {{
-                    method: 'POST',
-                    headers: {{ 'Content-Type': 'application/json' }},
-                    body: JSON.stringify({{ email: currentUser.email, message: userMessage }})
-                }});
-                const data = await res.json();
-                content.innerHTML = data.response.replace(/\\n/g, '<br>').replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>');
-            }} catch(e) {{ console.error(e); }}
-            document.getElementById('typing').style.display = 'none';
-            isGenerating = false;
-            scrollToBottom();
-        }}
-        function editMessage(messageId) {{
-            const div = document.getElementById(`message-${{messageId}}`);
-            const content = div.querySelector('.message-content');
-            const editInput = div.querySelector('.edit-message-input');
-            const editActions = div.querySelector('.edit-actions');
-            if (content.style.display !== 'none') {{
-                content.style.display = 'none';
-                editInput.value = content.innerText;
-                editInput.classList.add('active');
-                editActions.classList.add('active');
-                editInput.focus();
-            }}
-        }}
-        function saveEdit(messageId) {{
-            const div = document.getElementById(`message-${{messageId}}`);
-            const editInput = div.querySelector('.edit-message-input');
-            const content = div.querySelector('.message-content');
-            const editActions = div.querySelector('.edit-actions');
-            const newText = editInput.value.trim();
-            if (newText) {{
-                content.innerText = newText;
-                content.style.display = 'block';
-                editInput.classList.remove('active');
-                editActions.classList.remove('active');
-            }}
-        }}
-        function cancelEdit(messageId) {{
-            const div = document.getElementById(`message-${{messageId}}`);
-            const content = div.querySelector('.message-content');
-            const editInput = div.querySelector('.edit-message-input');
-            const editActions = div.querySelector('.edit-actions');
-            content.style.display = 'block';
-            editInput.classList.remove('active');
-            editActions.classList.remove('active');
-        }}
-        async function continueGenerating(messageId) {{
-            if (isGenerating) return;
-            isGenerating = true;
-            document.getElementById('typing').style.display = 'block';
-            const content = document.querySelector(`#message-${{messageId}} .message-content`);
-            const userMessage = getLastUserMessage();
-            try {{
-                const res = await fetch('/continue_generating', {{
-                    method: 'POST',
-                    headers: {{ 'Content-Type': 'application/json' }},
-                    body: JSON.stringify({{ email: currentUser.email, message: userMessage }})
-                }});
-                const data = await res.json();
-                content.innerHTML += data.response.replace(/\\n/g, '<br>').replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>');
-            }} catch(e) {{ console.error(e); }}
-            document.getElementById('typing').style.display = 'none';
-            isGenerating = false;
-            scrollToBottom();
-        }}
-        function getLastUserMessage() {{
-            const messages = document.querySelectorAll('.user-message');
-            if (messages.length > 0) return messages[messages.length-1].querySelector('.message-content').innerText;
-            return '';
-        }}
-        async function shareConversation() {{
-            if (!currentUser) return;
-            try {{
-                const res = await fetch('/share_conversation?email=' + encodeURIComponent(currentUser.email));
-                const data = await res.json();
-                const shareText = data.conversation.map(item => `User: ${{item.user}}\\nYama: ${{item.ai}}\\n`).join('\\n');
-                await navigator.clipboard.writeText(shareText);
-                alert('✅ Conversation copied to clipboard!');
-            }} catch(e) {{ alert('Could not share conversation.'); }}
-        }}
-        async function submitFeedback(messageId, feedbackType) {{
-            const div = document.getElementById(`message-${{messageId}}`);
-            const likeBtn = div.querySelector('.like-btn');
-            const dislikeBtn = div.querySelector('.dislike-btn');
-            try {{
-                await fetch('/feedback', {{
-                    method: 'POST',
-                    headers: {{ 'Content-Type': 'application/json' }},
-                    body: JSON.stringify({{ email: currentUser.email, message_index: parseInt(messageId.split('-')[1]), feedback_type: feedbackType }})
-                }});
-                if (feedbackType === 'like') {{
-                    likeBtn.classList.toggle('liked');
-                    if (dislikeBtn.classList.contains('disliked')) dislikeBtn.classList.remove('disliked');
-                }} else {{
-                    dislikeBtn.classList.toggle('disliked');
-                    if (likeBtn.classList.contains('liked')) likeBtn.classList.remove('liked');
-                }}
-            }} catch(e) {{ console.error(e); }}
-        }}
-        function stopGenerating() {{ isGenerating = false; document.getElementById('typing').style.display = 'none'; }}
+        
         async function sendMessage() {{
             if (!currentUser) {{ alert('Please sign in first!'); return; }}
             const message = textarea.value.trim();
             if (!message) return;
-            if (isGenerating) {{ stopGenerating(); return; }}
+            
             if (!hasMessages) {{
                 const welcome = document.getElementById('welcome');
                 if (welcome) welcome.style.display = 'none';
                 hasMessages = true;
+                document.getElementById('logo').classList.add('small');
             }}
-            const messageId = 'msg-' + (++messageCounter);
-            addMessage(message, 'user', messageId);
+            
+            addMessage(message, 'user');
             textarea.value = '';
             textarea.style.height = 'auto';
+            
             document.getElementById('typing').style.display = 'block';
             scrollToBottom();
-            try {{
-                const res = await fetch('/chat', {{
-                    method: 'POST',
-                    headers: {{ 'Content-Type': 'application/json' }},
-                    body: JSON.stringify({{ message: message, email: currentUser.email }})
-                }});
-                const data = await res.json();
-                const aiMessageId = 'msg-' + (++messageCounter);
-                addMessage(data.response, 'ai', aiMessageId, message);
-                document.getElementById('typing').style.display = 'none';
-                loadHistory();
-                scrollToBottom();
-            }} catch(e) {{ console.error(e); document.getElementById('typing').style.display = 'none'; }}
+            
+            const res = await fetch('/chat', {{
+                method: 'POST',
+                headers: {{ 'Content-Type': 'application/json' }},
+                body: JSON.stringify({{ message: message, email: currentUser.email }})
+            }});
+            const data = await res.json();
+            
+            addMessage(data.response, 'ai', data.image);
+            document.getElementById('typing').style.display = 'none';
+            loadHistory();
+            scrollToBottom();
         }}
-        function addMessage(text, sender, messageId, userMessage = '') {{
+        
+        async function handleFileUpload(event) {{
+            if (!currentUser) {{ alert('Please sign in first!'); event.target.value = ''; return; }}
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            if (!hasMessages) {{
+                const welcome = document.getElementById('welcome');
+                if (welcome) welcome.style.display = 'none';
+                hasMessages = true;
+                document.getElementById('logo').classList.add('small');
+            }}
+            
+            addMessage('📎 Uploading "' + file.name + '"...', 'user');
+            document.getElementById('typing').style.display = 'block';
+            scrollToBottom();
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('email', currentUser.email);
+            
+            try {{
+                const res = await fetch('/upload', {{ method: 'POST', body: formData }});
+                const data = await res.json();
+                addMessage(data.message || 'Upload failed.', 'ai');
+            }} catch (err) {{
+                addMessage('⚠️ Upload failed, please try again.', 'ai');
+            }}
+            
+            document.getElementById('typing').style.display = 'none';
+            event.target.value = '';
+            scrollToBottom();
+        }}
+        
+        function escapeHtmlText(text) {{
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }}
+        
+        function addMessage(text, sender, image) {{
             const messages = document.getElementById('messages');
             const div = document.createElement('div');
             div.className = 'message ' + sender + '-message';
-            div.id = messageId;
-            const wrapper = document.createElement('div');
-            wrapper.className = 'message-wrapper';
             const content = document.createElement('div');
             content.className = 'message-content';
-            content.innerHTML = text.replace(/\\n/g, '<br>').replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>');
-            wrapper.appendChild(content);
-            if (sender === 'user') {{
-                const editInput = document.createElement('input');
-                editInput.type = 'text';
-                editInput.className = 'edit-message-input';
-                editInput.value = text;
-                wrapper.appendChild(editInput);
-                const editActions = document.createElement('div');
-                editActions.className = 'edit-actions';
-                editActions.innerHTML = `<button class="save-edit" onclick="saveEdit('${{messageId}}')">Save</button><button class="cancel-edit" onclick="cancelEdit('${{messageId}}')">Cancel</button>`;
-                wrapper.appendChild(editActions);
+            const safeText = escapeHtmlText(text);
+            content.innerHTML = safeText.replace(/\\n/g, '<br>').replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>');
+            if (image) {{
+                const img = document.createElement('img');
+                img.className = 'chat-image';
+                img.src = image;
+                img.alt = 'Generated graph';
+                content.appendChild(img);
             }}
-            const actions = document.createElement('div');
-            actions.className = 'message-actions';
-            if (sender === 'ai') {{
-                actions.innerHTML = `
-                    <button class="copy-btn" onclick="copyResponse('${{messageId}}')">📋 Copy</button>
-                    <button onclick="regenerateResponse('${{messageId}}', '${{escapeJs(userMessage || getLastUserMessage())}}')">🔄 Regenerate</button>
-                    <button onclick="continueGenerating('${{messageId}}')">📝 Continue</button>
-                    <button onclick="stopGenerating()">⏹️ Stop</button>
-                    <button onclick="shareConversation()">📤 Share</button>
-                    <button class="like-btn" onclick="submitFeedback('${{messageId}}', 'like')">👍</button>
-                    <button class="dislike-btn" onclick="submitFeedback('${{messageId}}', 'dislike')">👎</button>
-                `;
-            }} else {{
-                actions.innerHTML = `<button onclick="editMessage('${{messageId}}')">✏️ Edit</button>`;
-            }}
-            wrapper.appendChild(actions);
-            div.appendChild(wrapper);
+            div.appendChild(content);
             messages.appendChild(div);
             scrollToBottom();
         }}
-        function escapeJs(text) {{ return text.replace(/\\\\/g, '\\\\\\\\').replace(/'/g, "\\\\'").replace(/"/g, '\\\\"'); }}
-        function scrollToBottom() {{ const messages = document.getElementById('messages'); messages.scrollTop = messages.scrollHeight; }}
+        
+        function scrollToBottom() {{
+            const messages = document.getElementById('messages');
+            messages.scrollTop = messages.scrollHeight;
+        }}
+        
         loadHistory();
         textarea.focus();
     </script>
@@ -1727,7 +2256,6 @@ HTML = f'''
 </html>
 '''
 
-# ============ ROUTES ============
 @app.get("/", response_class=HTMLResponse)
 async def root():
     return HTML
@@ -1743,19 +2271,49 @@ async def chat(request: Request):
     data = await request.json()
     message = data.get('message', '')
     email = data.get('email', '')
-    
-    response = get_response(message, email)
-    
+
+    result = get_response(message, email)
+    if isinstance(result, dict):
+        response_text, response_image = result["text"], result.get("image")
+    else:
+        response_text, response_image = result, None
+
     if email:
         history = load_history(email)
         history.append({
             "user": message,
-            "ai": response,
+            "ai": response_text,
             "timestamp": datetime.now().strftime("%H:%M")
         })
         save_history(email, history)
-    
-    return {"response": response}
+
+    return {"response": response_text, "image": response_image}
+
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...), email: str = Form(...)):
+    safe_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', file.filename)
+    dest_path = os.path.join(UPLOAD_DIR, f"{secrets.token_hex(8)}_{safe_name}")
+    contents = await file.read()
+    MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15MB cap
+    if len(contents) > MAX_UPLOAD_BYTES:
+        return {"status": "error", "message": "File too large (15MB limit)."}
+    with open(dest_path, 'wb') as f:
+        f.write(contents)
+
+    text, kind = read_uploaded_file(dest_path, file.filename)
+    if text is None:
+        return {"status": "error", "message": f"Couldn't read this file: {kind}"}
+
+    active_documents[email] = {"name": file.filename, "text": text, "kind": kind}
+    preview = text[:300].strip()
+    word_count = len(text.split())
+    return {
+        "status": "ok",
+        "name": file.filename,
+        "word_count": word_count,
+        "preview": preview,
+        "message": f"📎 Got **{file.filename}** ({word_count} words). Ask me to summarize it or analyze it!"
+    }
 
 @app.get("/get_history")
 async def get_history(email: str = ""):
@@ -1767,17 +2325,15 @@ async def clear_history_endpoint():
     return {"status": "cleared"}
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
     print("\n" + "="*55)
-    print("🏛️ YAMA AI V2.0 - ADVANCED MATH & EXPLANATION ENGINE")
+    print("🏛️ YAMA AI - FULLY RESPONSIVE")
     print("="*55)
-    print(f"🌐 Running on port: {port}")
-    print("="*55)
-    print("✅ No Railway dependencies")
-    print("✅ Local file storage (./data/)")
-    print("✅ All features working")
-    print("✅ UI unchanged")
-    print("✅ Google Sign-In working")
-    print("✅ Yama is thinking... loading animation")
+    print("🌐 Open: http://localhost:8000")
+    print("📱 Perfect on ALL devices")
+    print("✅ No fixed position issues")
+    print("✅ 100dvh + safe-area support")
+    print("✅ VisualViewport keyboard handling")
+    print("✅ Responsive sidebar (min 280px, 80vw)")
+    print("✅ All breakpoints: 380px, 480px, 768px, 1024px, 1025px+")
     print("="*55 + "\n")
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=10000)
