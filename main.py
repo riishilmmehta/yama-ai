@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 import uvicorn
 import json
 import os
@@ -7,13 +7,20 @@ import re
 import ast
 import math
 import operator
-from datetime import datetime
+import hashlib
+import time
+import threading
+from datetime import datetime, timedelta
 from ddgs import DDGS
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import quote
 from tinydb import TinyDB, Query
 import secrets
+import feedparser
+import yfinance as yf
+import qrcode
+from rapidfuzz import fuzz
 
 app = FastAPI(title="Yama AI")
 
@@ -666,23 +673,458 @@ def summarize_text(text, max_sentences=4):
     top_in_order = [s for _, _, s in sorted(top, key=lambda x: x[1])]
     return ' '.join(top_in_order)
 
-# ============ SMALL TALK / KNOWLEDGE BASE ============
-# Fast, deterministic answers for common questions so we don't burn a
-# search request (and a few seconds of latency) on things we already know.
+# ============ RESPONSE CACHE (avoid re-searching same query) ============
+_response_cache = {}  # hash -> (timestamp, result)
+_CACHE_TTL = 300  # seconds
+
+def _cache_key(text):
+    return hashlib.md5(text.lower().strip().encode()).hexdigest()
+
+def cache_get(text):
+    key = _cache_key(text)
+    if key in _response_cache:
+        ts, result = _response_cache[key]
+        if time.time() - ts < _CACHE_TTL:
+            return result
+    return None
+
+def cache_set(text, result):
+    _response_cache[_cache_key(text)] = (time.time(), result)
+
+# ============ WEATHER (wttr.in — free, no API key) ============
+
+def get_weather(location):
+    try:
+        r = requests.get(
+            f"https://wttr.in/{quote(location)}?format=j1",
+            headers={"User-Agent": "YamaAI/1.0"}, timeout=8)
+        if r.status_code != 200:
+            return None
+        d = r.json()
+        cur = d["current_condition"][0]
+        area = d["nearest_area"][0]
+        city = area["areaName"][0]["value"]
+        country = area["country"][0]["value"]
+        temp_c = cur["temp_C"]
+        temp_f = cur["temp_F"]
+        feels_c = cur["FeelsLikeC"]
+        desc = cur["weatherDesc"][0]["value"]
+        humidity = cur["humidity"]
+        wind_kmph = cur["windspeedKmph"]
+        visibility = cur["visibility"]
+
+        today = d["weather"][0]
+        max_c = today["maxtempC"]
+        min_c = today["mintempC"]
+        hourly = today.get("hourly", [])
+        rain_chance = max(int(h.get("chanceofrain", 0)) for h in hourly) if hourly else 0
+
+        return (
+            f"🌤️ **Weather in {city}, {country}**\n\n"
+            f"**{desc}** • {temp_c}°C / {temp_f}°F\n"
+            f"🌡️ Feels like {feels_c}°C • 💧 Humidity {humidity}%\n"
+            f"💨 Wind {wind_kmph} km/h • 👁️ Visibility {visibility} km\n"
+            f"📊 Today: {min_c}°C – {max_c}°C • 🌧️ Rain chance {rain_chance}%"
+        )
+    except Exception:
+        return None
+
+_WEATHER_RE = re.compile(
+    r'(?:weather|temperature|temp|forecast|climate)\s+(?:in\s+)?(.+)|'
+    r'(?:what(?:\'?s| is) the weather|how(?:\'?s| is) the weather)\s+(?:in\s+)?(.+)',
+    re.IGNORECASE)
+
+def parse_weather_query(msg):
+    m = _WEATHER_RE.search(msg)
+    if not m:
+        return None
+    location = (m.group(1) or m.group(2) or "").strip().rstrip('?').strip()
+    return location if location else None
+
+# ============ LIVE CURRENCY (frankfurter.app — free, no key) ============
+
+def convert_currency(amount, from_cur, to_cur):
+    try:
+        from_cur = from_cur.upper()
+        to_cur = to_cur.upper()
+        r = requests.get(
+            f"https://api.frankfurter.app/latest?amount={amount}&from={from_cur}&to={to_cur}",
+            timeout=6)
+        if r.status_code != 200:
+            return None
+        d = r.json()
+        result = d["rates"].get(to_cur)
+        if result is None:
+            return None
+        return f"💱 **{amount} {from_cur} = {result} {to_cur}**\n_(Rate from frankfurter.app — updated daily)_"
+    except Exception:
+        return None
+
+_CURRENCY_CODES = {
+    "dollar": "USD", "dollars": "USD", "usd": "USD",
+    "euro": "EUR", "euros": "EUR", "eur": "EUR",
+    "pound": "GBP", "pounds": "GBP", "gbp": "GBP",
+    "rupee": "INR", "rupees": "INR", "inr": "INR",
+    "yen": "JPY", "jpy": "JPY",
+    "yuan": "CNY", "cny": "CNY",
+    "franc": "CHF", "chf": "CHF",
+    "won": "KRW", "krw": "KRW",
+    "ruble": "RUB", "rub": "RUB",
+    "real": "BRL", "brl": "BRL",
+    "dirham": "AED", "aed": "AED",
+}
+
+_CURRENCY_RE = re.compile(
+    r'(-?\d+(?:\.\d+)?)\s*([a-zA-Z]+)\s+(?:to|in|->|=>)\s+([a-zA-Z]+)',
+    re.IGNORECASE)
+
+def parse_currency_query(msg):
+    m = _CURRENCY_RE.search(msg.lower())
+    if not m:
+        return None
+    amount = float(m.group(1))
+    from_c = _CURRENCY_CODES.get(m.group(2).lower(), m.group(2).upper())
+    to_c = _CURRENCY_CODES.get(m.group(3).lower(), m.group(3).upper())
+    if len(from_c) != 3 or len(to_c) != 3:
+        return None
+    return amount, from_c, to_c
+
+# ============ STOCK PRICES (yfinance — scrapes Yahoo, free) ============
+
+def get_stock(ticker):
+    try:
+        t = yf.Ticker(ticker.upper())
+        info = t.fast_info
+        price = round(info.last_price, 2)
+        prev_close = round(info.previous_close, 2)
+        change = round(price - prev_close, 2)
+        pct = round((change / prev_close) * 100, 2)
+        direction = "📈" if change >= 0 else "📉"
+        sign = "+" if change >= 0 else ""
+        currency = getattr(info, "currency", "USD")
+        return (
+            f"{direction} **{ticker.upper()}** — {price} {currency}\n"
+            f"Change: {sign}{change} ({sign}{pct}%) vs yesterday\n"
+            f"_(via Yahoo Finance — delayed ~15 min)_"
+        )
+    except Exception:
+        return None
+
+_STOCK_RE = re.compile(
+    r'(?:stock|price|share|quote)\s+(?:of\s+|for\s+)?([A-Z]{1,5})\b|'
+    r'\b([A-Z]{1,5})\s+(?:stock|share|price|quote)\b',
+    re.IGNORECASE)
+
+def parse_stock_query(msg):
+    m = _STOCK_RE.search(msg)
+    if not m:
+        return None
+    return (m.group(1) or m.group(2) or "").upper().strip()
+
+# ============ NEWS VIA RSS (free, no key) ============
+
+_RSS_FEEDS = {
+    "general": "https://feeds.bbci.co.uk/news/rss.xml",
+    "tech": "https://feeds.feedburner.com/TechCrunch",
+    "science": "https://www.sciencenews.org/feed",
+    "world": "https://feeds.bbci.co.uk/news/world/rss.xml",
+    "business": "https://feeds.bbci.co.uk/news/business/rss.xml",
+    "sports": "https://feeds.bbci.co.uk/sport/rss.xml",
+    "health": "https://feeds.bbci.co.uk/news/health/rss.xml",
+    "india": "https://feeds.feedburner.com/ndtvnews-india-news",
+}
+
+_NEWS_RE = re.compile(
+    r'(?:latest|recent|today\'?s?|breaking|current)?\s*(?:news|headlines?)\s*(?:about|on|in)?\s*(tech(?:nology)?|science|world|business|sports?|health|india)?',
+    re.IGNORECASE)
+
+def get_news(category="general", max_items=5):
+    try:
+        url = _RSS_FEEDS.get(category.lower(), _RSS_FEEDS["general"])
+        feed = feedparser.parse(url)
+        if not feed.entries:
+            return None
+        items = feed.entries[:max_items]
+        lines = [f"📰 **Latest {category.title()} News**\n"]
+        for i, entry in enumerate(items, 1):
+            title = entry.get("title", "No title")
+            link = entry.get("link", "")
+            published = entry.get("published", "")
+            summary = entry.get("summary", "")
+            if summary:
+                summary = re.sub(r'<[^>]+>', '', summary)[:120].strip()
+            lines.append(f"**{i}. {title}**")
+            if summary:
+                lines.append(summary)
+            if link:
+                lines.append(f"🔗 {link}")
+            lines.append("")
+        return "\n".join(lines)
+    except Exception:
+        return None
+
+def parse_news_query(msg):
+    m = _NEWS_RE.search(msg)
+    if not m:
+        return None
+    cat = (m.group(1) or "general").lower()
+    cat_map = {"technology": "tech", "sport": "sports"}
+    return cat_map.get(cat, cat)
+
+# ============ COUNTRY FACTS (restcountries.com — free, no key) ============
+
+def get_country_info(country_name):
+    try:
+        r = requests.get(
+            f"https://restcountries.com/v3.1/name/{quote(country_name)}?fullText=false",
+            timeout=6)
+        if r.status_code != 200:
+            return None
+        data = r.json()[0]
+        name = data["name"]["common"]
+        capital = data.get("capital", ["Unknown"])[0]
+        population = data.get("population", 0)
+        region = data.get("region", "Unknown")
+        subregion = data.get("subregion", "")
+        area = data.get("area", 0)
+        currencies = ", ".join(
+            f"{v['name']} ({v.get('symbol','')})"
+            for v in data.get("currencies", {}).values()
+        ) or "Unknown"
+        languages = ", ".join(data.get("languages", {}).values()) or "Unknown"
+        flag = data.get("flag", "")
+        timezones = ", ".join(data.get("timezones", [])[:3])
+
+        pop_fmt = f"{population:,}"
+        area_fmt = f"{area:,.0f}"
+
+        return (
+            f"{flag} **{name}**\n\n"
+            f"🏙️ Capital: **{capital}**\n"
+            f"🌍 Region: {region}" + (f" — {subregion}" if subregion else "") + "\n"
+            f"👥 Population: {pop_fmt}\n"
+            f"📐 Area: {area_fmt} km²\n"
+            f"💰 Currency: {currencies}\n"
+            f"🗣️ Language(s): {languages}\n"
+            f"🕐 Timezone(s): {timezones}"
+        )
+    except Exception:
+        return None
+
+_COUNTRY_RE = re.compile(
+    r'(?:info(?:rmation)?|facts?|tell me about|about|details? (?:of|about)|about country|country info)\s+(.+?)(?:\s+country)?\??$|'
+    r'(?:capital|population|currency|language|flag)\s+(?:of\s+)?(.+)',
+    re.IGNORECASE)
+
+def parse_country_query(msg):
+    m = _COUNTRY_RE.search(msg)
+    if not m:
+        return None
+    return ((m.group(1) or m.group(2)) or "").strip().rstrip('?')
+
+# ============ QR CODE GENERATOR ============
+
+def generate_qr(text):
+    try:
+        qr = qrcode.QRCode(version=1, box_size=6, border=4)
+        qr.add_data(text)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+        encoded = base64.b64encode(buf.read()).decode('utf-8')
+        return f"data:image/png;base64,{encoded}"
+    except Exception:
+        return None
+
+_QR_RE = re.compile(r'(?:generate|create|make|qr)\s+(?:qr\s+)?(?:code\s+)?(?:for\s+)?(.+)', re.IGNORECASE)
+
+def parse_qr_query(msg):
+    m = _QR_RE.search(msg.lower())
+    if not m or 'qr' not in msg.lower():
+        return None
+    return m.group(1).strip()
+
+# ============ TEXT ANALYSIS TOOLS ============
+
+def analyze_text(text):
+    words = re.findall(r'\b\w+\b', text)
+    sentences = re.split(r'[.!?]+', text)
+    sentences = [s.strip() for s in sentences if s.strip()]
+    chars = len(text)
+    unique_words = len(set(w.lower() for w in words))
+    reading_time = max(1, round(len(words) / 200))
+    avg_word_len = round(sum(len(w) for w in words) / max(len(words), 1), 1)
+    avg_sentence_len = round(len(words) / max(len(sentences), 1), 1)
+    return (
+        f"📊 **Text Analysis**\n\n"
+        f"📝 Words: **{len(words)}** ({unique_words} unique)\n"
+        f"📄 Sentences: **{len(sentences)}**\n"
+        f"🔤 Characters: **{chars}**\n"
+        f"📏 Avg word length: **{avg_word_len}** chars\n"
+        f"📐 Avg sentence length: **{avg_sentence_len}** words\n"
+        f"⏱️ Reading time: **~{reading_time} min**"
+    )
+
+_TEXT_ANALYSIS_RE = re.compile(
+    r'(?:analyze|analyse|count words?|word count|reading time|text stats?)\s+(.+)',
+    re.IGNORECASE | re.DOTALL)
+
+# ============ PASSWORD STRENGTH CHECKER ============
+
+def check_password_strength(pwd):
+    score = 0
+    tips = []
+    if len(pwd) >= 8: score += 1
+    else: tips.append("Use at least 8 characters")
+    if len(pwd) >= 12: score += 1
+    if re.search(r'[A-Z]', pwd): score += 1
+    else: tips.append("Add uppercase letters")
+    if re.search(r'[a-z]', pwd): score += 1
+    else: tips.append("Add lowercase letters")
+    if re.search(r'\d', pwd): score += 1
+    else: tips.append("Add numbers")
+    if re.search(r'[^A-Za-z0-9]', pwd): score += 1
+    else: tips.append("Add special characters (!@#$...)")
+    levels = {0:"Very Weak 🔴", 1:"Weak 🔴", 2:"Fair 🟠", 3:"Moderate 🟡", 4:"Good 🟢", 5:"Strong 🟢", 6:"Very Strong 💪"}
+    strength = levels.get(score, "Very Strong 💪")
+    result = f"🔐 **Password Strength: {strength}**\n"
+    if tips:
+        result += "\n**Suggestions:**\n" + "\n".join(f"• {t}" for t in tips)
+    else:
+        result += "\n✅ Excellent password!"
+    return result
+
+_PWD_RE = re.compile(r'(?:check|analyze|how (?:strong|secure) is)\s+(?:(?:the|my|this)\s+)?password[:\s]+(.+)', re.IGNORECASE)
+
+# ============ RANDOM JOKES (icanhazdadjoke.com — free, no key) ============
+
+def get_joke():
+    try:
+        r = requests.get("https://icanhazdadjoke.com/", headers={"Accept": "application/json", "User-Agent": "YamaAI/1.0"}, timeout=5)
+        if r.status_code == 200:
+            return "😄 " + r.json().get("joke", "")
+    except Exception:
+        pass
+    return None
+
+# ============ RANDOM FACTS ============
+
+def get_random_fact():
+    try:
+        r = requests.get("https://uselessfacts.jsph.pl/api/v2/facts/random?language=en", timeout=5)
+        if r.status_code == 200:
+            return "🤓 **Random Fact:** " + r.json().get("text", "")
+    except Exception:
+        pass
+    return None
+
+# ============ MULTI-TURN CONTEXT RESOLUTION ============
+# Uses stored conversation history to resolve follow-up questions
+# like "who is he?" when the previous turn mentioned a person.
+
+def resolve_followup(msg, memory):
+    """If the message is very short or contains pronouns that reference
+    the previous turn, expand it with context from conversation history."""
+    history = memory.get("conversation_history", [])
+    if not history:
+        return msg
+    last_user = history[-1].get("user", "") if history else ""
+    last_yama = history[-1].get("yama", "") if history else ""
+
+    # If user says "tell me more", expand using the last topic
+    if re.match(r'^(tell me more|more|expand|explain more|continue|go on|elaborate)[\.\?!]?$', msg, re.IGNORECASE):
+        return f"{last_user} - tell me more details"
+
+    # Pronoun resolution for people: "who is he/she/they?"
+    if re.match(r'^(?:who|what) (?:is|are|was|were) (?:he|she|they|it)\??$', msg, re.IGNORECASE):
+        names = re.findall(r'\b[A-Z][a-z]+ [A-Z][a-z]+\b', last_yama)
+        if names:
+            return f"who is {names[0]}"
+
+    return msg
+
+# ============ FUZZY INTENT MATCHING ============
+# When no rule fires exactly, check if the message is a near-miss
+# of something we know how to answer, rather than going straight
+# to web search.
+
+_FUZZY_INTENTS = {
+    "what is the weather": ("weather", "weather in london"),
+    "tell me a joke": ("joke", None),
+    "random fact": ("fact", None),
+    "what time is it": ("time", None),
+    "what is today date": ("date", None),
+    "generate qr code": ("qr", None),
+    "latest news": ("news", None),
+    "check password": ("password", None),
+}
+
+def fuzzy_intent(msg):
+    best_score = 0
+    best_intent = None
+    for phrase, (intent, default) in _FUZZY_INTENTS.items():
+        score = fuzz.partial_ratio(msg.lower(), phrase)
+        if score > best_score:
+            best_score = score
+            best_intent = (intent, default)
+    if best_score >= 75:
+        return best_intent
+    return None
+
+# ============ SMALL TALK / KNOWLEDGE BASE (expanded) ============
 
 _KNOWLEDGE_BASE = {
-    "who are you": "🏛️ I'm **Yama**, your AI assistant — I can do math, conversions, dictionary & Wikipedia lookups, and search the web for anything else.",
-    "what can you do": "🛠️ I can:\n• Solve math expressions\n• Convert units (length, weight, volume, temperature)\n• Look up word definitions\n• Summarize Wikipedia topics\n• Search the live web and summarize results\n• Tell you the date and time",
-    "who made you": "🏛️ I was built from scratch — no third-party AI API, just search, logic, and a calculator under the hood.",
-    "thank you": "😊 You're welcome! Anything else?",
-    "thanks": "😊 Anytime!",
-    "bye": "👋 See you next time!",
-    "goodbye": "👋 Take care!",
+    "who are you": (
+        "🏛️ I'm **Yama**, your AI assistant!\n\n"
+        "I can:\n"
+        "🧮 Solve math (algebra, calculus, matrices)\n"
+        "📊 Generate graphs of any function\n"
+        "🌤️ Check live weather anywhere\n"
+        "💱 Convert currencies in real-time\n"
+        "📈 Look up stock prices\n"
+        "📰 Fetch latest news by topic\n"
+        "🌍 Get country facts\n"
+        "📄 Read PDFs, DOCX, XLSX, images (OCR)\n"
+        "📏 Convert units (length, weight, temp...)\n"
+        "📖 Define words & summarize Wikipedia\n"
+        "🔐 Check password strength\n"
+        "🔳 Generate QR codes\n"
+        "😄 Tell jokes & random facts\n"
+        "🔍 Research the web with citations"
+    ),
+    "what can you do": (
+        "🛠️ **Yama's Capabilities:**\n\n"
+        "**Math & Science:** Full expression calculator, algebra, calculus, integrals, matrices, stats, graphing\n"
+        "**Real-Time Data:** Weather, currency rates, stock prices, news headlines\n"
+        "**Knowledge:** Wikipedia, dictionary, country facts\n"
+        "**Files:** PDF, DOCX, PPTX, XLSX, CSV, TXT, images (OCR)\n"
+        "**Tools:** QR generator, password checker, text analyzer, unit converter\n"
+        "**Web:** Multi-source search with citations\n\n"
+        "All without any LLM or paid API!"
+    ),
+    "who made you": "🏛️ I was built from scratch — no third-party AI API, just search, logic, math, and engineering.",
+    "thank you": "😊 You're welcome! Anything else I can help with?",
+    "thanks": "😊 Anytime! What else can I do for you?",
+    "bye": "👋 See you next time! Take care!",
+    "goodbye": "👋 Goodbye! Have a great day!",
+    "good morning": "🌅 Good morning! Ready to help you today!",
+    "good night": "🌙 Good night! Sleep well!",
+    "good afternoon": "☀️ Good afternoon! How can I help?",
+    "good evening": "🌆 Good evening! What can I do for you?",
+    "what is life": "🤔 42 — according to The Hitchhiker's Guide to the Galaxy. But seriously, it's what you make of it!",
+    "are you human": "🤖 Nope! I'm Yama — a rule-based AI assistant. No LLM, no neural network — just clever engineering!",
+    "are you real": "💡 I'm as real as software gets! A rule-based AI with genuine capabilities.",
+    "i love you": "❤️ That's sweet! I'm here to help whenever you need me.",
+    "help": "💡 Type any question! Try: **weather in Mumbai**, **graph x^2**, **10 USD to INR**, **latest tech news**, or **define serendipity**.",
 }
 
 def knowledge_base_lookup(msg):
+    # exact match
     if msg in _KNOWLEDGE_BASE:
         return _KNOWLEDGE_BASE[msg]
+    # substring match
     for key, ans in _KNOWLEDGE_BASE.items():
         if key in msg:
             return ans
@@ -693,124 +1135,234 @@ def knowledge_base_lookup(msg):
 
 def get_response(message, email):
     raw_message = message.strip()
-    msg = raw_message.lower()
+    msg = raw_message.lower().strip()
 
     stats = update_user_stats(email)
     user = user_db.get(User.email == email)
     user_name = user.get('name', 'User') if user else 'User'
     memory = load_memory(email)
+    ltm = memory.get("long_term_memory", {})
+    known_name = ltm.get("name") or user_name
+
+    def _suffix():
+        return f"\n\n✨ **{known_name}** • Level {stats['level']} — {stats['title']}"
 
     def _finish(reply, topic=None, image=None):
-        """Log the turn to persistent memory before returning."""
-        memory["conversation_history"].append({"user": raw_message, "yama": reply})
-        memory["conversation_history"] = memory["conversation_history"][-MEMORY_TURN_LIMIT:]
+        if isinstance(reply, str):
+            memory["conversation_history"].append({"user": raw_message, "yama": reply})
+            memory["conversation_history"] = memory["conversation_history"][-MEMORY_TURN_LIMIT:]
         if topic:
             memory["last_topic"] = topic
         save_memory(email, memory)
         return {"text": reply, "image": image} if image else reply
 
-    # 0a. Document/spreadsheet questions about the user's last upload
+    # ── Multi-turn context: resolve follow-up references ──
+    resolved_msg = resolve_followup(msg, memory)
+    if resolved_msg != msg:
+        msg = resolved_msg
+
+    # ── 0. Uploaded document questions ──
     doc_answer = handle_document_question(msg, email)
     if doc_answer:
-        return _finish(doc_answer, topic="document")
+        return _finish(doc_answer + _suffix(), topic="document")
 
-    # 0a2. Graph requests ("graph x^2", "plot sin(x)")
+    # ── 1. Graph / plot ──
     graph_image = generate_graph(raw_message)
     if graph_image:
-        return _finish(f"📊 Here's the graph of **{raw_message.split(' ', 1)[1] if ' ' in raw_message else raw_message}**:",
-                        topic="graph", image=graph_image)
+        func_part = raw_message.split(' ', 1)[1] if ' ' in raw_message else raw_message
+        return _finish(f"📊 Here's the graph of **{func_part}**:" + _suffix(),
+                       topic="graph", image=graph_image)
 
-    # 0. Learn any facts the user just stated ("my name is Rishi", etc.)
+    # ── 2. Learn facts ("my name is Rishi") ──
     learned = extract_facts(raw_message, memory)
     if learned:
         ack = []
         for key, value in learned:
             label = key.replace('favorite_', 'favorite ').replace('_', ' ')
-            ack.append(f"Got it — your {label} is **{value}**. I'll remember that!")
-        return _finish("🧠 " + " ".join(ack))
+            ack.append(f"Got it — your {label} is **{value}**. I'll remember that! 🧠")
+        return _finish(" ".join(ack))
 
-    # 0b. Answer direct recall questions ("what's my name?") straight from memory
+    # ── 3. Memory recall ("what's my name?") ──
     recall = answer_from_memory(msg, memory)
     if recall:
         return _finish(recall, topic="recall")
 
-    # 1. Greetings — use remembered name if we have one and they haven't set
-    #    a display name via Google sign-in
-    if msg in ['hi', 'hello', 'hey', 'sup', 'yo']:
-        known_name = memory.get("long_term_memory", {}).get("name")
-        greet_name = known_name or user_name
+    # ── 4. Greetings ──
+    if re.match(r'^(hi|hello|hey|sup|yo|hiya|howdy)[\.\!]?$', msg):
         return _finish(
-            f"👋 Hello {greet_name}! You are a **{stats['title']}** (Level {stats['level']}) with {stats['count']} messages!\n\nHow can I help you today?")
+            f"👋 Hello **{known_name}**! You're a **{stats['title']}** (Level {stats['level']}, {stats['count']} messages).\n\n"
+            f"What can I help you with? Try: **weather in Mumbai**, **graph sin(x)**, **10 USD to INR**, **latest tech news**, **tell a joke**")
 
     if 'how are you' in msg:
-        return _finish(f"😊 I'm doing great! Thanks for asking, {user_name}!")
+        return _finish(f"😊 Doing great, {known_name}! Ready to help. What do you need?")
 
-    # 2. Small talk / knowledge base
+    # ── 5. Knowledge base (expanded small talk + capability overview) ──
     kb_answer = knowledge_base_lookup(msg)
     if kb_answer:
         return _finish(kb_answer)
 
-    # 3. Date / time
+    # ── 6. Jokes ──
+    if re.search(r'\b(joke|funny|make me laugh|tell me something funny)\b', msg):
+        joke = get_joke()
+        if joke:
+            return _finish(joke + _suffix())
+
+    # ── 7. Random facts ──
+    if re.search(r'\b(random fact|fun fact|interesting fact|tell me a fact)\b', msg):
+        fact = get_random_fact()
+        if fact:
+            return _finish(fact + _suffix())
+
+    # ── 8. Date / time ──
     dt_answer = datetime_answer(msg)
     if dt_answer:
         return _finish(dt_answer)
 
-    # 4. Unit conversion (checked before calculator since "5 km to miles"
-    #    also contains a number+letters that could confuse the math check)
+    # ── 9. Weather ──
+    weather_loc = parse_weather_query(msg)
+    if weather_loc:
+        cached = cache_get(f"weather:{weather_loc}")
+        if cached:
+            return _finish(cached + _suffix(), topic="weather")
+        result = get_weather(weather_loc)
+        if result:
+            cache_set(f"weather:{weather_loc}", result)
+            return _finish(result + _suffix(), topic="weather")
+
+    # ── 10. Currency conversion (live rates) ──
+    # Check currency before unit conversion since both match "X Y to Z"
+    cur_query = parse_currency_query(msg)
+    if cur_query:
+        amount, from_c, to_c = cur_query
+        # Only treat as currency if codes are known currency codes, not units
+        known_currencies = set(_CURRENCY_CODES.values()) | set(c.upper() for c in _CURRENCY_CODES)
+        if from_c in known_currencies or to_c in known_currencies:
+            result = convert_currency(amount, from_c, to_c)
+            if result:
+                return _finish(result + _suffix(), topic="currency")
+
+    # ── 11. Unit conversion (physical units) ──
     converted = convert_units(msg)
     if converted is not None:
         m = _CONVERT_RE.search(msg)
         from_u, to_u = m.group(2), m.group(3)
         memory['last_value'] = converted
         memory['last_unit'] = to_u
-        reply = (f"📏 {m.group(1)} {from_u} = **{round(converted, 4)} {to_u}**\n\n"
-                 f"✨ {user_name} • Level {stats['level']} - {stats['title']}")
+        result_str = f"{round(converted, 6):.6f}".rstrip('0').rstrip('.')
+        reply = f"📏 {m.group(1)} {from_u} = **{result_str} {to_u}**" + _suffix()
         return _finish(reply, topic="conversion")
 
-    # 5. Step-by-step solver (algebra, calculus, trig, matrices, stats) —
-    #    tried before the plain calculator since it's the more capable path
-    #    for anything that isn't a bare arithmetic expression.
+    # ── 12. Stock prices ──
+    if re.search(r'\b(stock|share|price|ticker|quote)\b', msg):
+        ticker = parse_stock_query(raw_message)
+        if ticker and len(ticker) <= 5:
+            cached = cache_get(f"stock:{ticker}")
+            if cached:
+                return _finish(cached + _suffix(), topic="stock")
+            result = get_stock(ticker)
+            if result:
+                cache_set(f"stock:{ticker}", result)
+                return _finish(result + _suffix(), topic="stock")
+
+    # ── 13. News ──
+    if re.search(r'\b(news|headlines?|latest|breaking)\b', msg):
+        cat = parse_news_query(msg) or "general"
+        cached = cache_get(f"news:{cat}")
+        if cached:
+            return _finish(cached + _suffix(), topic="news")
+        result = get_news(cat)
+        if result:
+            cache_set(f"news:{cat}", result)
+            return _finish(result + _suffix(), topic="news")
+
+    # ── 14. Country facts ──
+    if re.search(r'\b(country|capital|population|currency|language|flag)\b', msg):
+        country_q = parse_country_query(msg)
+        if country_q and len(country_q) > 2:
+            result = get_country_info(country_q)
+            if result:
+                return _finish(result + _suffix(), topic="country")
+
+    # ── 15. Step-by-step math solver (sympy) ──
     solved = solve_step_by_step(raw_message)
     if solved:
-        reply = f"{solved}\n\n✨ {user_name} • Level {stats['level']} - {stats['title']}"
-        return _finish(reply, topic="math_steps")
+        return _finish(solved + _suffix(), topic="math_steps")
 
-    # 6. Quick calculator for plain arithmetic
+    # ── 16. Quick calculator ──
     expr = looks_like_math(raw_message)
     if expr:
         try:
             result = safe_calculate(expr)
             memory['last_value'] = result
-            reply = f"🧮 {expr} = **{result}**\n\n✨ Great job, {user_name}! Level {stats['level']} - {stats['title']}"
+            reply = f"🧮 **{expr} = {result}**" + _suffix()
             return _finish(reply, topic="math")
         except ZeroDivisionError:
-            return _finish("🧮 Can't divide by zero — try a different expression!")
+            return _finish("🧮 Can't divide by zero!")
         except Exception:
-            pass  # not actually a valid expression, fall through to search
+            pass
 
-    # 7. Dictionary lookups ("define X", "what does X mean", "meaning of X")
-    define_match = re.match(r'^(?:define|meaning of|what does)\s+(.+?)(?:\s+mean)?\??$', msg)
+    # ── 17. QR code generator ──
+    if 'qr' in msg:
+        qr_text = parse_qr_query(msg)
+        if qr_text:
+            img = generate_qr(qr_text)
+            if img:
+                return _finish(f"🔳 QR code for: **{qr_text}**" + _suffix(), topic="qr", image=img)
+
+    # ── 18. Password strength ──
+    pwd_match = _PWD_RE.search(raw_message)
+    if pwd_match:
+        return _finish(check_password_strength(pwd_match.group(1).strip()) + _suffix())
+
+    # ── 19. Text analysis ──
+    txt_match = _TEXT_ANALYSIS_RE.search(raw_message)
+    if txt_match:
+        return _finish(analyze_text(txt_match.group(1).strip()) + _suffix())
+
+    # ── 20. Dictionary ──
+    define_match = re.match(r'^(?:define|meaning of|what does|what is the meaning of)\s+(.+?)(?:\s+mean)?\??$', msg)
     if define_match:
         word = define_match.group(1).strip()
         definition = dictionary_lookup(word)
         if definition:
-            return _finish(f"{definition}\n\n✨ {user_name} • Level {stats['level']} - {stats['title']}")
+            return _finish(definition + _suffix())
 
-    # 8. Wikipedia lookups ("who is X", "what is X", "tell me about X")
-    wiki_match = re.match(r'^(?:who is|what is|what\'s|tell me about)\s+(.+?)\??$', msg)
+    # ── 21. Wikipedia ──
+    wiki_match = re.match(r'^(?:who is|what is|what\'s|tell me about|explain|describe)\s+(.+?)\??$', msg)
     if wiki_match:
         topic = wiki_match.group(1).strip()
-        summary = wikipedia_summary(topic)
-        if summary:
-            return _finish(f"{summary}\n\n✨ {user_name} • Level {stats['level']} - {stats['title']}", topic="wiki")
+        # Skip Wikipedia for things we handle specifically
+        skip_wiki = re.search(r'\b(weather|stock|news|currency|convert)\b', topic)
+        if not skip_wiki:
+            summary = wikipedia_summary(topic)
+            if summary:
+                return _finish(summary + _suffix(), topic="wiki")
 
-    # 9. Web search — multi-source research with citations. Reads the top
-    #    few results (not just one), summarizes each independently, and
-    #    presents them as numbered sources so claims can be traced back.
+    # ── 22. Fuzzy intent fallback (near-miss matching) ──
+    fi = fuzzy_intent(msg)
+    if fi:
+        intent, default = fi
+        if intent == "joke":
+            joke = get_joke()
+            if joke: return _finish(joke + _suffix())
+        elif intent == "fact":
+            fact = get_random_fact()
+            if fact: return _finish(fact + _suffix())
+        elif intent == "news":
+            result = get_news("general")
+            if result: return _finish(result + _suffix(), topic="news")
+        elif intent == "weather" and default:
+            result = get_weather(default)
+            if result: return _finish(result + _suffix(), topic="weather")
+
+    # ── 23. Web search — multi-source with citations (final fallback) ──
+    cached_search = cache_get(f"search:{message}")
+    if cached_search:
+        return _finish(cached_search, topic="search")
+
     search_results = search_web(message)
-
     if not search_results:
-        return _finish(f"I searched for '{message}' but found no results.")
+        return _finish(f"🔍 I searched for **{message}** but found no results. Try rephrasing?")
 
     sources_to_read = search_results[:3]
     citations = []
@@ -824,15 +1376,16 @@ def get_response(message, email):
         citations.append({"title": r['title'], "url": r['url'], "summary": body})
 
     if not citations:
-        return _finish(f"I searched for '{message}' but couldn't read any results.")
+        return _finish(f"🔍 I searched for **{message}** but couldn't read the results. Try a more specific query.")
 
     response = f"🔍 **Research: {message}**\n\n"
     for i, c in enumerate(citations, 1):
         response += f"**[{i}] {c['title']}**\n{c['summary']}\n🔗 {c['url']}\n\n"
     if len(citations) > 1:
-        response += "_Compared across multiple sources above — cross-check for agreement._\n\n"
-    response += f"📊 **{user_name}'s Stats:** Level {stats['level']} - {stats['title']} ({stats['count']} messages)\n"
+        response += "_Cross-checked across multiple sources._\n"
+    response += _suffix()
 
+    cache_set(f"search:{message}", response)
     return _finish(response, topic="search")
 
 # ============ HISTORY ============
@@ -1951,10 +2504,14 @@ HTML = f'''
                     <h2>Yama</h2>
                     <p>Your AI companion. Ask me anything - I'll search the web!</p>
                     <div class="suggestions">
-                        <div class="suggestion" onclick="askSuggestion('What is the capital of France?')">🗼 Capital of France</div>
-                        <div class="suggestion" onclick="askSuggestion('Who is Elon Musk?')">🚀 Who is Elon Musk?</div>
-                        <div class="suggestion" onclick="askSuggestion('10000/8')">📐 10000/8</div>
-                        <div class="suggestion" onclick="askSuggestion('Latest news today')">📰 Latest news</div>
+                        <div class="suggestion" onclick="askSuggestion('weather in Mumbai')">🌤️ Weather</div>
+                        <div class="suggestion" onclick="askSuggestion('graph sin(x)')">📊 Graph sin(x)</div>
+                        <div class="suggestion" onclick="askSuggestion('100 USD to INR')">💱 Currency</div>
+                        <div class="suggestion" onclick="askSuggestion('latest tech news')">📰 Tech News</div>
+                        <div class="suggestion" onclick="askSuggestion('solve x^2 - 4 = 0')">📐 Solve Equation</div>
+                        <div class="suggestion" onclick="askSuggestion('tell me a joke')">😄 Joke</div>
+                        <div class="suggestion" onclick="askSuggestion('AAPL stock price')">📈 Stocks</div>
+                        <div class="suggestion" onclick="askSuggestion('info about Japan')">🌍 Country Facts</div>
                     </div>
                 </div>
             </div>
