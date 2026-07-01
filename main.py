@@ -11,7 +11,6 @@ import operator
 import hashlib
 import time
 from datetime import datetime, timedelta
-from googlesearch import search
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import quote, urlparse
@@ -20,6 +19,15 @@ import secrets
 import io
 import base64
 from typing import List, Dict, Any, Optional, Tuple
+
+# ============ GOOGLE SEARCH ============
+try:
+    from googlesearch import search
+    GOOGLE_SEARCH_AVAILABLE = True
+except ImportError:
+    GOOGLE_SEARCH_AVAILABLE = False
+    print("⚠️ googlesearch-python not installed. Using DDGS fallback.")
+    from ddgs import DDGS
 
 # ============ MATHEMATICS ============
 import sympy as sp
@@ -232,7 +240,6 @@ def solve_step_by_step(message):
     lower = msg.lower()
     
     try:
-        # ===== EQUATION SOLVING =====
         eq_match = re.search(r'solve\s+(.+)', lower) or (re.search(r'^([^=]+=[^=]+)$', msg) if '=' in msg else None)
         if eq_match and '=' in (eq_match.group(1) if eq_match else ''):
             lhs_str, rhs_str = eq_match.group(1).split('=', 1)
@@ -253,7 +260,6 @@ def solve_step_by_step(message):
             ]
             return "\n".join(steps)
         
-        # ===== DIFFERENTIATION =====
         deriv_keywords = ['derivative of', 'differentiate', 'diff', 'd/dx']
         deriv_match = None
         for kw in deriv_keywords:
@@ -297,7 +303,6 @@ def solve_step_by_step(message):
             
             return "\n".join(steps)
         
-        # ===== INTEGRATION =====
         int_keywords = ['integrate', 'integral of', '∫']
         int_match = None
         for kw in int_keywords:
@@ -341,7 +346,6 @@ def solve_step_by_step(message):
             
             return "\n".join(steps)
         
-        # ===== MATRICES =====
         mat_match = re.search(r'\[\[.*?\]\]', msg, re.DOTALL)
         if mat_match and ('matrix' in lower or 'determinant' in lower or 'det' in lower or 'inverse' in lower):
             try:
@@ -378,7 +382,6 @@ def solve_step_by_step(message):
             except Exception:
                 pass
         
-        # ===== STATISTICS =====
         stat_match = re.search(r'(mean|average|median|stdev|std|variance) of ([\d.,\s]+)', lower)
         if stat_match:
             kind = stat_match.group(1)
@@ -408,7 +411,6 @@ def solve_step_by_step(message):
             ]
             return "\n".join(steps)
         
-        # ===== SIMPLIFY =====
         simplify_match = re.search(r'simplify\s+(.+)', lower)
         if simplify_match:
             expr_str = simplify_match.group(1).strip()
@@ -422,7 +424,6 @@ def solve_step_by_step(message):
 
 # ============ MATH INTENT DETECTION ============
 def is_math_query(query: str) -> bool:
-    """Detect if query is mathematical and should bypass web search"""
     query_lower = query.lower()
     
     calculus_keywords = ['differentiate', 'derivative of', 'diff', 'd/dx', 'integrate', 'integral of', '∫', 'limit']
@@ -692,37 +693,54 @@ def cache_get(text):
 def cache_set(text, result):
     _response_cache[_cache_key(text)] = (time.time(), result)
 
-# ============ SEARCH FUNCTION (Using Google) ============
+# ============ SEARCH FUNCTION ============
 def search_web(query):
-    """Search using Google Search"""
     results = []
+    
+    # Try Google Search first
+    if GOOGLE_SEARCH_AVAILABLE:
+        try:
+            search_results = list(search(query, num_results=7))
+            for url in search_results:
+                try:
+                    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+                    response = requests.get(url, headers=headers, timeout=5)
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    title = soup.find('title')
+                    title_text = title.get_text().strip() if title else url
+                    
+                    meta = soup.find('meta', attrs={'name': 'description'})
+                    snippet = meta.get('content', '')[:300] if meta else ''
+                    
+                    results.append({
+                        "title": title_text,
+                        "snippet": snippet,
+                        "url": url
+                    })
+                except:
+                    results.append({
+                        "title": url,
+                        "snippet": "",
+                        "url": url
+                    })
+            return results
+        except Exception as e:
+            print(f"Google search error: {e}")
+    
+    # Fallback to DDGS
     try:
-        search_results = list(search(query, num_results=7))
-        for url in search_results:
-            try:
-                headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-                response = requests.get(url, headers=headers, timeout=5)
-                soup = BeautifulSoup(response.text, 'html.parser')
-                title = soup.find('title')
-                title_text = title.get_text().strip() if title else url
-                
-                meta = soup.find('meta', attrs={'name': 'description'})
-                snippet = meta.get('content', '')[:300] if meta else ''
-                
+        from ddgs import DDGS
+        with DDGS() as ddgs:
+            search_results = list(ddgs.text(query, max_results=7))
+            for r in search_results:
                 results.append({
-                    "title": title_text,
-                    "snippet": snippet,
-                    "url": url
-                })
-            except:
-                results.append({
-                    "title": url,
-                    "snippet": "",
-                    "url": url
+                    "title": r.get('title', ''),
+                    "snippet": r.get('body', '')[:300],
+                    "url": r.get('href', '')
                 })
         return results
     except Exception as e:
-        print(f"Google search error: {e}")
+        print(f"DDGS search error: {e}")
     
     return results
 
@@ -1781,15 +1799,15 @@ if __name__ == "__main__":
     print("="*55)
     print(f"🌐 Running on port: {port}")
     print("="*55)
-    print("✅ Google Search Integrated (googlesearch-python)")
-    print("✅ Calculus Routing Fixed (differentiate, integrate)")
-    print("✅ Expression Corruption Fixed (removed .replace('x', '*'))")
-    print("✅ Mobile Keyboard Fix (No fixed values)")
+    print("✅ Google Search with DDGS Fallback")
+    print("✅ Calculus Routing Fixed")
+    print("✅ Expression Corruption Fixed")
+    print("✅ Mobile Keyboard Fix")
     print("✅ Fully Responsive Design")
     print("✅ Clickable Source URLs")
     print("✅ Step-by-Step Math Explanations")
-    print("✅ Context Understanding (Follow-ups)")
-    print("✅ Matrix Parsing (Nested matrices supported)")
+    print("✅ Context Understanding")
+    print("✅ Matrix Parsing")
     print("✅ Unit Conversion, Weather, News, Country Facts")
     print("✅ Graph Generation")
     print("✅ User Memory")
