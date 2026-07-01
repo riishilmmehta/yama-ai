@@ -186,7 +186,7 @@ def _safe_eval_node(node):
         raise ValueError("invalid constant")
     if isinstance(node, ast.BinOp) and type(node.op) in _ALLOWED_BINOPS:
         return _ALLOWED_BINOPS[type(node.op)](_safe_eval_node(node.left), _safe_eval_node(node.right))
-    if isinstance(node, ast.UnaryOp) and type(node.op) in _ALLOWED_UNARYOPS):
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _ALLOWED_UNARYOPS:
         return _ALLOWED_UNARYOPS[type(node.op)](_safe_eval_node(node.operand))
     if isinstance(node, ast.Call):
         if isinstance(node.func, ast.Name) and node.func.id in _ALLOWED_FUNCS):
