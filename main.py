@@ -189,7 +189,7 @@ def _safe_eval_node(node):
     if isinstance(node, ast.UnaryOp) and type(node.op) in _ALLOWED_UNARYOPS:
         return _ALLOWED_UNARYOPS[type(node.op)](_safe_eval_node(node.operand))
     if isinstance(node, ast.Call):
-        if isinstance(node.func, ast.Name) and node.func.id in _ALLOWED_FUNCS):
+        if isinstance(node.func, ast.Name) and node.func.id in _ALLOWED_FUNCS:
             args = [_safe_eval_node(a) for a in node.args]
             return _ALLOWED_FUNCS[node.func.id](*args)
         raise ValueError("function not allowed")
