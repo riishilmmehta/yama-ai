@@ -1,18 +1,34 @@
-# Yama AI Chat Bot
+# 🏛️ Yama AI Chat Bot
 
-A Python-based AI chatbot.
+A powerful AI assistant built with FastAPI that can search the web, solve mathematics, remember conversations, and more.
 
 ## Features
-- [List what your bot can do]
 
-## Setup
-1. Clone repo
-2. Install dependencies: `pip install -r requirements.txt`
-3. Run: `python main.py`
+- 🔍 **Web Search** - Search the web and get summarized results with clickable sources
+- 🧮 **Mathematics Engine** - Solve equations, differentiate, integrate, matrices, statistics with step-by-step explanations
+- 📊 **Graph Generation** - Visualize mathematical functions
+- 🌤️ **Weather** - Get live weather for any location
+- 📰 **News** - Latest headlines from RSS feeds
+- 🌍 **Country Facts** - Information about any country
+- 📏 **Unit Conversion** - Length, weight, volume, temperature
+- 🧠 **Conversation Memory** - Remembers context and follows up
+- 🔐 **Google Sign-In** - Secure authentication
+- 🌓 **Dark/Light Mode** - Theme toggle
+- 📱 **Fully Responsive** - Works on all devices
 
-## Docker
-Build: `docker build -t yama-ai .`
-Run: `docker run yama-ai`
+## Technology Stack
 
-## Environment Variables
-- [List any API keys or config needed]
+- **Backend**: FastAPI, Python 3.13
+- **Mathematics**: SymPy, NumPy, Matplotlib
+- **Search**: DuckDuckGo API (DDGS)
+- **Database**: TinyDB (JSON-based)
+- **Authentication**: Google OAuth 2.0
+- **Deployment**: Docker, Render
+
+## Setup Instructions
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/riishilmehta/yama-ai.git
+cd yama-ai
