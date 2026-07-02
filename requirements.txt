@@ -6,7 +6,7 @@ beautifulsoup4
 tinydb
 ddgs
 googlesearch-python
-
+python-multipart
 # ============ MATHEMATICS ENGINE ============
 sympy
 mpmath
