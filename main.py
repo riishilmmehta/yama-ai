@@ -31,6 +31,9 @@ import numpy as np
 
 app = FastAPI(title="Yama AI")
 
+# ============ GOOGLE CLIENT ID ============
+GOOGLE_CLIENT_ID = "46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com"
+
 # ============ DATA DIRECTORY ============
 DATA_DIR = os.environ.get("DATA_DIR", "./data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -41,42 +44,8 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 user_db = TinyDB(os.path.join(DATA_DIR, 'users.json'))
 User = Query()
 
-# ============ CONTEXT MEMORY (Enhanced) ============
+# ============ CONTEXT MEMORY ============
 MEMORY_TURN_LIMIT = 15
-_context_memory = {}
-
-class ConversationContext:
-    """Stores and manages conversation context for follow-up questions."""
-    
-    def __init__(self):
-        self.topic = None
-        self.entity = None
-        self.intent = None
-        self.category = None
-        self.last_question = None
-        self.last_answer = None
-    
-    def update(self, topic=None, entity=None, intent=None, category=None, question=None, answer=None):
-        if topic is not None:
-            self.topic = topic
-        if entity is not None:
-            self.entity = entity
-        if intent is not None:
-            self.intent = intent
-        if category is not None:
-            self.category = category
-        if question is not None:
-            self.last_question = question
-        if answer is not None:
-            self.last_answer = answer
-    
-    def get_context(self):
-        return {
-            "topic": self.topic,
-            "entity": self.entity,
-            "intent": self.intent,
-            "category": self.category
-        }
 
 def _memory_path(email):
     safe_email = (email or "anon").replace('@', '_at_').replace('.', '_dot_')
@@ -195,6 +164,118 @@ def answer_from_memory(msg, memory):
         return f"🤔 You haven't told me your favorite {fav_match.group(1)} yet!"
     return None
 
+# ============ CONTEXT RESOLUTION ============
+def resolve_followup(msg, memory):
+    """Enhanced context resolution for follow-up questions."""
+    history = memory.get("conversation_history", [])
+    if not history:
+        return msg
+    
+    last_turn = history[-1] if history else {}
+    last_user = last_turn.get("user", "")
+    last_yama = last_turn.get("yama", "")
+    context = memory.get("context", {})
+    
+    msg_lower = msg.lower()
+    
+    # If user says "tell me more", expand using last topic
+    if re.match(r'^(tell me more|more|expand|explain more|continue|go on|elaborate|what about it)[\.\?!]?$', msg_lower, re.IGNORECASE):
+        topic = context.get("topic") or context.get("entity")
+        if topic:
+            return f"tell me more about {topic}"
+        return f"{last_user} - tell me more details"
+    
+    # Pronoun resolution: "who is he/she/they/it?"
+    if re.match(r'^(?:who|what) (?:is|are|was|were) (?:he|she|they|it|him|her|them)\??$', msg_lower, re.IGNORECASE):
+        names = re.findall(r'\b[A-Z][a-z]+ [A-Z][a-z]+\b', last_yama)
+        if names:
+            return f"who is {names[0]}"
+        entity = context.get("entity")
+        if entity:
+            return f"tell me about {entity}"
+    
+    # "What about [X]" pattern - FIXED: Better context understanding
+    what_about_match = re.match(r'^what about (.+)$', msg_lower)
+    if what_about_match:
+        new_topic = what_about_match.group(1).strip()
+        old_topic = context.get("topic") or context.get("entity")
+        old_category = context.get("category")
+        
+        if old_topic and new_topic in ['it', 'that', 'this', 'him', 'her', 'them']:
+            return f"tell me more about {old_topic}"
+        
+        # Transform based on previous category
+        if old_category == "person" or old_category == "head_of_state":
+            return f"current {old_category} of {new_topic}"
+        elif old_category == "definition":
+            return f"what is {new_topic}"
+        elif old_category == "explanation":
+            return f"explain {new_topic}"
+        elif old_category == "country":
+            return f"information about {new_topic}"
+        
+        return f"tell me about {new_topic}"
+    
+    # "What about Italy?" pattern - FIXED
+    country_match = re.match(r'^what about ([A-Z][a-z]+)$', msg_lower)
+    if country_match:
+        new_topic = country_match.group(1)
+        if context.get("category") == "head_of_state" or context.get("category") == "person":
+            return f"current head of state of {new_topic}"
+        return f"information about {new_topic}"
+    
+    return msg
+
+def detect_intent_and_context(msg):
+    """Detect intent and extract context information."""
+    msg_lower = msg.lower().strip()
+    context = {"topic": None, "entity": None, "intent": "general", "category": None}
+    
+    entities = re.findall(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b', msg)
+    if entities:
+        context["entity"] = entities[0]
+    
+    # Detect intent
+    if any(word in msg_lower for word in ["who", "person", "president", "prime minister", "ceo", "founder"]):
+        context["intent"] = "person"
+        context["category"] = "person"
+    elif any(word in msg_lower for word in ["what", "define", "meaning", "what is"]):
+        context["intent"] = "definition"
+        context["category"] = "definition"
+    elif any(word in msg_lower for word in ["explain", "how", "why", "does"]):
+        context["intent"] = "explanation"
+        context["category"] = "explanation"
+    elif any(word in msg_lower for word in ["weather", "temperature", "forecast"]):
+        context["intent"] = "weather"
+        context["category"] = "weather"
+    elif any(word in msg_lower for word in ["news", "headlines", "latest"]):
+        context["intent"] = "news"
+        context["category"] = "news"
+    elif any(word in msg_lower for word in ["math", "solve", "calculate", "integrate", "differentiate"]):
+        context["intent"] = "math"
+        context["category"] = "math"
+    elif any(word in msg_lower for word in ["convert", "km", "miles", "kg", "lbs"]):
+        context["intent"] = "conversion"
+        context["category"] = "conversion"
+    elif any(word in msg_lower for word in ["country", "capital", "population"]):
+        context["intent"] = "country"
+        context["category"] = "country"
+    elif any(word in msg_lower for word in ["news", "headlines", "breaking"]):
+        context["intent"] = "news"
+        context["category"] = "news"
+    
+    for word in ["about", "on", "regarding"]:
+        if word in msg_lower:
+            parts = msg_lower.split(word, 1)
+            if len(parts) > 1:
+                context["topic"] = parts[1].strip().strip('?')
+                break
+    
+    if not context["topic"] and entities:
+        context["topic"] = entities[0]
+    
+    return context
+
 # ============ SAFE CALCULATOR ============
 _ALLOWED_BINOPS = {
     ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
@@ -220,10 +301,10 @@ def _safe_eval_node(node):
         raise ValueError("invalid constant")
     if isinstance(node, ast.BinOp) and type(node.op) in _ALLOWED_BINOPS:
         return _ALLOWED_BINOPS[type(node.op)](_safe_eval_node(node.left), _safe_eval_node(node.right))
-    if isinstance(node, ast.UnaryOp) and type(node.op) in _ALLOWED_UNARYOPS):
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _ALLOWED_UNARYOPS:
         return _ALLOWED_UNARYOPS[type(node.op)](_safe_eval_node(node.operand))
     if isinstance(node, ast.Call):
-        if isinstance(node.func, ast.Name) and node.func.id in _ALLOWED_FUNCS):
+        if isinstance(node.func, ast.Name) and node.func.id in _ALLOWED_FUNCS:
             args = [_safe_eval_node(a) for a in node.args]
             return _ALLOWED_FUNCS[node.func.id](*args)
         raise ValueError("function not allowed")
@@ -231,13 +312,26 @@ def _safe_eval_node(node):
         return _ALLOWED_NAMES[node.id]
     raise ValueError("disallowed expression")
 
+# ===== FIXED: Removed .replace('x', '*') bug =====
 def safe_calculate(expr):
-    expr = expr.replace('^', '**').replace('x', '*').replace('×', '*').replace('÷', '/')
+    expr = expr.replace('^', '**').replace('×', '*').replace('÷', '/')
     parsed = ast.parse(expr, mode='eval')
     result = _safe_eval_node(parsed)
     if isinstance(result, float) and result.is_integer():
         result = int(result)
     return result
+
+# ============ MAKE URLS CLICKABLE ============
+def make_urls_clickable(text: str) -> str:
+    """Convert URLs in text to clickable HTML links"""
+    url_pattern = r'(https?://[^\s]+)'
+    
+    def replace_url(match):
+        url = match.group(1)
+        url_clean = url.rstrip('.,;:!?')
+        return f'<a href="{url_clean}" target="_blank" rel="noopener noreferrer" style="color:#4ecdc4;text-decoration:underline;">{url_clean}</a>'
+    
+    return re.sub(url_pattern, replace_url, text)
 
 # ============ MATH PREPROCESSOR ============
 _SP_TRANSFORMS = standard_transformations + (implicit_multiplication_application,)
@@ -248,85 +342,201 @@ def _sp_safe_parse(text):
     local_dict = {s: sp.Symbol(s) for s in _SP_SYMBOLS}
     return parse_expr(text, local_dict=local_dict, transformations=_SP_TRANSFORMS)
 
-def solve_step_by_step(message):
-    """Returns a formatted, narrated solution or None if not math."""
+# ============ COMPREHENSIVE MATH SOLVER ============
+def is_math_query(query: str) -> bool:
+    """Detect if query is mathematical and should bypass web search"""
+    query_lower = query.lower()
+    
+    # Calculus keywords
+    calculus_keywords = ['differentiate', 'derivative of', 'diff', 'd/dx', 'integrate', 'integral of', '∫', 'limit']
+    for kw in calculus_keywords:
+        if kw in query_lower:
+            return True
+    
+    # Equation detection
+    if '=' in query and re.search(r'[a-zA-Z0-9]', query):
+        return True
+    
+    # Matrix detection
+    if re.search(r'\[\[.*?\]\]', query):
+        return True
+    
+    # Statistics detection
+    if re.search(r'(mean|median|stdev|variance|average) of [\d.,\s]+', query_lower):
+        return True
+    
+    # Trigonometry
+    if re.search(r'\b(sin|cos|tan|cot|sec|csc|asin|acos|atan)\s*[\(]', query_lower):
+        return True
+    
+    # Algebra with variables
+    if re.search(r'[a-zA-Z]\s*[\+\-\*\/]\s*[a-zA-Z]', query):
+        return True
+    
+    # Power notation
+    if re.search(r'[\^]', query) and re.search(r'[a-zA-Z0-9]', query):
+        return True
+    
+    # Basic arithmetic with multiple numbers
+    if re.search(r'[\d]+\s*[\+\-\*\/]\s*[\d]+', query):
+        return True
+    
+    return False
+
+def solve_math_comprehensive(message: str) -> Optional[str]:
+    """Solve ANY math problem with step-by-step explanation"""
     msg = message.strip()
     lower = msg.lower()
     
     try:
-        # Equation solving
+        # ===== EQUATION SOLVING =====
         eq_match = re.search(r'solve\s+(.+)', lower) or (re.search(r'^([^=]+=[^=]+)$', msg) if '=' in msg else None)
         if eq_match and '=' in (eq_match.group(1) if eq_match else ''):
             lhs_str, rhs_str = eq_match.group(1).split('=', 1)
-            lhs, rhs = _sp_safe_parse(lhs_str), _sp_safe_parse(rhs_str)
+            lhs = _sp_safe_parse(lhs_str)
+            rhs = _sp_safe_parse(rhs_str)
             x = sp.Symbol('x') if 'x' in lower else list((lhs - rhs).free_symbols)[0]
             equation = sp.Eq(lhs, rhs)
             solutions = sp.solve(equation, x)
             
-            # Build step-by-step explanation
+            # Try to factor if quadratic
+            factor_form = ""
+            if len(solutions) == 2 and 'x' in lower:
+                try:
+                    factor_form = sp.factor(lhs - rhs)
+                    factor_form = f" → {factor_form} = 0"
+                except:
+                    pass
+            
             steps = [
                 f"📐 **Equation:** {equation}",
                 "",
-                "**Step 1:** Move everything to one side",
+                "**Method:** Solve for variable",
+                "",
+                "**Step 1:** Move all terms to one side",
                 f"{sp.pretty(sp.Eq(lhs - rhs, 0))}",
                 "",
                 "**Step 2:** Solve for the variable",
-                f"**Solution:** {x} = {', '.join(str(s) for s in solutions)}"
+                f"**Final Answer:** {x} = {', '.join(str(s) for s in solutions)}"
             ]
+            if factor_form:
+                steps.insert(2, f"**Factored Form:** {factor_form}")
             return "\n".join(steps)
         
-        # Derivatives - Enhanced
-        deriv_match = re.search(r'(?:derivative of|differentiate)\s+(.+)', lower)
+        # ===== DIFFERENTIATION - FIXED =====
+        deriv_keywords = ['derivative of', 'differentiate', 'diff', 'd/dx']
+        deriv_match = None
+        for kw in deriv_keywords:
+            if kw in lower:
+                idx = lower.find(kw) + len(kw)
+                remaining = msg[idx:].strip()
+                if remaining:
+                    deriv_match = remaining
+                    break
+        
         if deriv_match:
-            expr = _sp_safe_parse(deriv_match.group(1))
+            expr_str = deriv_match.strip()
+            expr_str = expr_str.replace('^', '**')
+            expr = _sp_safe_parse(expr_str)
             x = sp.Symbol('x')
+            
             result = sp.diff(expr, x)
             
+            # Show individual term differentiation if expression has multiple terms
+            term_steps = []
+            if expr.is_Add:
+                terms = expr.as_ordered_terms()
+                for term in terms:
+                    diff_term = sp.diff(term, x)
+                    term_steps.append(f"d/dx({term}) = {diff_term}")
+            else:
+                term_steps.append(f"d/dx({expr}) = {result}")
+            
             steps = [
-                f"📐 **Derivative:** d/dx({expr})",
+                f"📐 **Derivative:** d/dx({expr_str})",
                 "",
                 "**Method:** Power Rule",
                 "",
-                "**Step 1:** Identify each term",
-                f"Original: {expr}",
-                "",
-                "**Step 2:** Apply power rule (d/dx(xⁿ) = n·xⁿ⁻¹)",
-                "",
-                f"**Final Answer:** f'(x) = {sp.simplify(result)}"
+                "**Step 1:** Apply power rule (d/dx(xⁿ) = n·xⁿ⁻¹) to each term"
             ]
+            
+            for step in term_steps:
+                steps.append(f"  {step}")
+            
+            steps.append("")
+            steps.append(f"**Final Answer:** f'(x) = {sp.simplify(result)}")
+            
             return "\n".join(steps)
         
-        # Integrals - Enhanced
-        int_match = re.search(r'(?:integrate|integral of)\s+(.+)', lower)
+        # ===== INTEGRATION - FIXED =====
+        int_keywords = ['integrate', 'integral of', '∫']
+        int_match = None
+        for kw in int_keywords:
+            if kw in lower:
+                idx = lower.find(kw) + len(kw)
+                remaining = msg[idx:].strip()
+                if remaining:
+                    int_match = remaining
+                    break
+        
         if int_match:
-            expr = _sp_safe_parse(int_match.group(1))
+            expr_str = int_match.strip()
+            expr_str = expr_str.replace('^', '**')
+            expr = _sp_safe_parse(expr_str)
             x = sp.Symbol('x')
+            
             result = sp.integrate(expr, x)
             
             steps = [
-                f"📐 **Integral:** ∫{expr} dx",
+                f"📐 **Integral:** ∫{expr_str} dx",
                 "",
                 "**Method:** Power Rule (∫xⁿ dx = xⁿ⁺¹/(n+1))",
                 "",
-                "**Step 1:** Identify each term",
-                f"Original: {expr}",
+                "**Step 1:** Apply integration rules to each term",
+                f"∫{expr_str} dx = {result} + C",
                 "",
-                "**Step 2:** Apply integration rules",
-                "",
-                f"**Final Answer:** ∫{expr} dx = {result} + C"
+                f"**Final Answer:** ∫{expr_str} dx = {result} + C"
             ]
             return "\n".join(steps)
         
-        # Matrices
-        mat_match = re.search(r'\[\[.+\]\]', msg)
-        if mat_match and ('matrix' in lower or 'determinant' in lower or 'inverse' in lower):
-            M = sp.Matrix(ast.literal_eval(mat_match.group(0)))
-            if 'determinant' in lower or 'det' in lower:
-                return f"📐 **Matrix:**\n{sp.pretty(M)}\n\n**Determinant:** {M.det()}"
-            if 'inverse' in lower:
-                return f"📐 **Matrix:**\n{sp.pretty(M)}\n\n**Inverse:**\n{sp.pretty(M.inv())}"
+        # ===== MATRICES =====
+        mat_match = re.search(r'\[\[.*?\]\]', msg, re.DOTALL)
+        if mat_match and ('matrix' in lower or 'determinant' in lower or 'det' in lower or 'inverse' in lower):
+            try:
+                mat_str = mat_match.group(0)
+                rows = []
+                for row_str in re.findall(r'\[([^\[\]]+)\]', mat_str):
+                    values = [float(x.strip()) for x in row_str.split(',')]
+                    rows.append(values)
+                M = sp.Matrix(rows)
+                
+                if 'determinant' in lower or 'det' in lower:
+                    result = M.det()
+                    steps = [
+                        f"📐 **Matrix:**\n{sp.pretty(M)}",
+                        "",
+                        "**Step 1:** Apply determinant formula",
+                        f"det = {result}",
+                        "",
+                        f"**Final Answer:** {result}"
+                    ]
+                    return "\n".join(steps)
+                    
+                if 'inverse' in lower:
+                    result = M.inv()
+                    steps = [
+                        f"📐 **Matrix:**\n{sp.pretty(M)}",
+                        "",
+                        "**Step 1:** Calculate inverse matrix",
+                        "",
+                        f"**Final Answer:**\n{sp.pretty(result)}"
+                    ]
+                    return "\n".join(steps)
+                    
+            except Exception:
+                pass
         
-        # Statistics
+        # ===== STATISTICS =====
         stat_match = re.search(r'(mean|average|median|stdev|std|variance) of ([\d.,\s]+)', lower)
         if stat_match:
             kind = stat_match.group(1)
@@ -346,7 +556,6 @@ def solve_step_by_step(message):
                 var = sum((n - mean) ** 2 for n in nums) / len(nums)
                 result = var if kind == 'variance' else math.sqrt(var)
                 label = "Variance" if kind == 'variance' else "Standard deviation"
-            
             steps = [
                 f"📐 **Data:** {nums}",
                 "",
@@ -357,13 +566,60 @@ def solve_step_by_step(message):
             ]
             return "\n".join(steps)
         
-        # Simplify
+        # ===== TRIGONOMETRY =====
+        trig_match = re.search(r'(sin|cos|tan|cot|sec|csc|asin|acos|atan)\s*\(([^)]+)\)', lower)
+        if trig_match:
+            func = trig_match.group(1)
+            angle = trig_match.group(2)
+            try:
+                expr_str = f"{func}({angle})"
+                expr = _sp_safe_parse(expr_str)
+                result = expr.evalf()
+                steps = [
+                    f"📐 **Trigonometric Evaluation:** {expr_str}",
+                    "",
+                    f"**Result:** {result}",
+                    "",
+                    f"**Final Answer:** {result}"
+                ]
+                return "\n".join(steps)
+            except:
+                pass
+        
+        # ===== SIMPLIFY =====
         simplify_match = re.search(r'simplify\s+(.+)', lower)
         if simplify_match:
-            expr = _sp_safe_parse(simplify_match.group(1))
-            return f"📐 **Simplify:** {expr}\n\n**Result:** {sp.simplify(expr)}"
+            expr_str = simplify_match.group(1).strip()
+            expr_str = expr_str.replace('^', '**')
+            expr = _sp_safe_parse(expr_str)
+            steps = [
+                f"📐 **Simplify:** {expr_str}",
+                "",
+                f"**Result:** {sp.simplify(expr)}"
+            ]
+            return "\n".join(steps)
         
-    except Exception:
+        # ===== BASIC ARITHMETIC =====
+        if re.search(r'[\d]+\s*[\+\-\*\/]\s*[\d]+', msg):
+            try:
+                clean = re.sub(r'[^0-9+\-*/%.()\s]', '', msg)
+                if clean:
+                    expr = parse_expr(clean)
+                    if expr.is_number:
+                        result = float(expr)
+                        steps = [
+                            f"🧮 **Calculation:** {clean}",
+                            "",
+                            f"**Result:** {result}",
+                            "",
+                            f"**Final Answer:** {result}"
+                        ]
+                        return "\n".join(steps)
+            except:
+                pass
+        
+    except Exception as e:
+        print(f"Math solver error: {e}")
         return None
     return None
 
@@ -376,8 +632,9 @@ def generate_graph(message):
         return None
     expr_str = m.group(1).strip().rstrip('?')
     try:
-        x = sp.Symbol('x')
+        expr_str = expr_str.replace('^', '**')
         expr = _sp_safe_parse(expr_str)
+        x = sp.Symbol('x')
         f = sp.lambdify(x, expr, modules=['numpy'])
         
         xs = np.linspace(-10, 10, 400)
@@ -391,7 +648,7 @@ def generate_graph(message):
         ax.plot(xs, ys, color="#2c2418", linewidth=2)
         ax.axhline(0, color="#999", linewidth=0.8)
         ax.axvline(0, color="#999", linewidth=0.8)
-        ax.set_title(f"y = {expr}", fontsize=12)
+        ax.set_title(f"y = {expr_str}", fontsize=12)
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
         
@@ -479,35 +736,106 @@ def _convert_temperature(value, from_u, to_u):
 # ============ WEATHER ============
 def get_weather(location):
     try:
+        # Try wttr.in first
         r = requests.get(f"https://wttr.in/{quote(location)}?format=j1", headers={"User-Agent": "YamaAI/1.0"}, timeout=8)
-        if r.status_code != 200:
-            return None
-        d = r.json()
-        cur = d["current_condition"][0]
-        area = d["nearest_area"][0]
-        city = area["areaName"][0]["value"]
-        country = area["country"][0]["value"]
-        temp_c = cur["temp_C"]
-        temp_f = cur["temp_F"]
-        feels_c = cur["FeelsLikeC"]
-        desc = cur["weatherDesc"][0]["value"]
-        humidity = cur["humidity"]
-        wind_kmph = cur["windspeedKmph"]
-        visibility = cur["visibility"]
-        today = d["weather"][0]
-        max_c = today["maxtempC"]
-        min_c = today["mintempC"]
-        hourly = today.get("hourly", [])
-        rain_chance = max(int(h.get("chanceofrain", 0)) for h in hourly) if hourly else 0
-        return (
-            f"🌤️ **Weather in {city}, {country}**\n\n"
-            f"**{desc}** • {temp_c}°C / {temp_f}°F\n"
-            f"🌡️ Feels like {feels_c}°C • 💧 Humidity {humidity}%\n"
-            f"💨 Wind {wind_kmph} km/h • 👁️ Visibility {visibility} km\n"
-            f"📊 Today: {min_c}°C – {max_c}°C • 🌧️ Rain chance {rain_chance}%"
-        )
-    except Exception:
-        return None
+        if r.status_code == 200:
+            d = r.json()
+            cur = d["current_condition"][0]
+            area = d["nearest_area"][0]
+            city = area["areaName"][0]["value"]
+            country = area["country"][0]["value"]
+            temp_c = cur["temp_C"]
+            temp_f = cur["temp_F"]
+            feels_c = cur["FeelsLikeC"]
+            desc = cur["weatherDesc"][0]["value"]
+            humidity = cur["humidity"]
+            wind_kmph = cur["windspeedKmph"]
+            visibility = cur["visibility"]
+            today = d["weather"][0]
+            max_c = today["maxtempC"]
+            min_c = today["mintempC"]
+            hourly = today.get("hourly", [])
+            rain_chance = max(int(h.get("chanceofrain", 0)) for h in hourly) if hourly else 0
+            
+            return {
+                "success": True,
+                "city": city,
+                "country": country,
+                "temp_c": temp_c,
+                "temp_f": temp_f,
+                "feels_like": feels_c,
+                "description": desc,
+                "humidity": humidity,
+                "wind": wind_kmph,
+                "visibility": visibility,
+                "max_c": max_c,
+                "min_c": min_c,
+                "rain_chance": rain_chance,
+                "source": "wttr.in"
+            }
+    except Exception as e:
+        print(f"Weather API error: {e}")
+    
+    # Fallback: Use Open-Meteo API (free, no key)
+    try:
+        # First, get coordinates for location
+        geo_r = requests.get(f"https://geocoding-api.open-meteo.com/v1/search?name={quote(location)}&count=1", timeout=5)
+        if geo_r.status_code == 200:
+            geo_data = geo_r.json()
+            if geo_data.get("results"):
+                result = geo_data["results"][0]
+                lat = result["latitude"]
+                lon = result["longitude"]
+                city = result.get("name", location)
+                country = result.get("country", "")
+                
+                # Get weather data
+                weather_r = requests.get(
+                    f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true&daily=temperature_2m_max,temperature_2m_min&timezone=auto",
+                    timeout=5
+                )
+                if weather_r.status_code == 200:
+                    w_data = weather_r.json()
+                    current = w_data.get("current_weather", {})
+                    daily = w_data.get("daily", {})
+                    
+                    temp_c = current.get("temperature", 0)
+                    temp_f = round(temp_c * 9/5 + 32, 1)
+                    desc = "Clear" if current.get("weathercode", 0) == 0 else "Cloudy"
+                    
+                    return {
+                        "success": True,
+                        "city": city,
+                        "country": country,
+                        "temp_c": temp_c,
+                        "temp_f": temp_f,
+                        "feels_like": temp_c,
+                        "description": desc,
+                        "humidity": "N/A",
+                        "wind": current.get("windspeed", 0),
+                        "visibility": "N/A",
+                        "max_c": daily.get("temperature_2m_max", [temp_c])[0] if daily else temp_c,
+                        "min_c": daily.get("temperature_2m_min", [temp_c])[0] if daily else temp_c,
+                        "rain_chance": 0,
+                        "source": "open-meteo"
+                    }
+    except Exception as e:
+        print(f"Fallback weather error: {e}")
+    
+    return {"success": False, "error": "Could not fetch weather data"}
+
+def format_weather(weather_data):
+    if not weather_data.get("success"):
+        return f"🌤️ Could not fetch weather for that location. Please try again."
+    
+    return (
+        f"🌤️ **Weather in {weather_data['city']}, {weather_data['country']}**\n\n"
+        f"**{weather_data['description']}** • {weather_data['temp_c']}°C / {weather_data['temp_f']}°F\n"
+        f"🌡️ Feels like {weather_data['feels_like']}°C • 💧 Humidity {weather_data['humidity']}%\n"
+        f"💨 Wind {weather_data['wind']} km/h • 👁️ Visibility {weather_data['visibility']} km\n"
+        f"📊 Today: {weather_data['min_c']}°C – {weather_data['max_c']}°C • 🌧️ Rain chance {weather_data['rain_chance']}%\n"
+        f"📡 Source: {weather_data.get('source', 'wttr.in')}"
+    )
 
 _WEATHER_RE = re.compile(r'(?:weather|temperature|temp|forecast|climate)\s+(?:in\s+)?(.+)|'
                           r'(?:what(?:\'?s| is) the weather|how(?:\'?s| is) the weather)\s+(?:in\s+)?(.+)', re.IGNORECASE)
@@ -681,108 +1009,6 @@ def datetime_answer(msg):
         return f"📅 Today is **{datetime.now().strftime('%A, %B %d, %Y')}**."
     return None
 
-# ============ CONTEXT RESOLUTION (Enhanced) ============
-def resolve_followup(msg, memory):
-    """Enhanced context resolution for follow-up questions."""
-    history = memory.get("conversation_history", [])
-    if not history:
-        return msg
-    
-    last_turn = history[-1] if history else {}
-    last_user = last_turn.get("user", "")
-    last_yama = last_turn.get("yama", "")
-    context = memory.get("context", {})
-    
-    # Track intent and entities
-    msg_lower = msg.lower()
-    
-    # If user says "tell me more", expand using last topic
-    if re.match(r'^(tell me more|more|expand|explain more|continue|go on|elaborate|what about it)[\.\?!]?$', msg_lower, re.IGNORECASE):
-        topic = context.get("topic") or context.get("entity")
-        if topic:
-            return f"tell me more about {topic}"
-        return f"{last_user} - tell me more details"
-    
-    # Pronoun resolution: "who is he/she/they/it?"
-    if re.match(r'^(?:who|what) (?:is|are|was|were) (?:he|she|they|it|him|her|them)\??$', msg_lower, re.IGNORECASE):
-        # Try to find names in previous response
-        names = re.findall(r'\b[A-Z][a-z]+ [A-Z][a-z]+\b', last_yama)
-        if names:
-            return f"who is {names[0]}"
-        # Try to find entity from context
-        entity = context.get("entity")
-        if entity:
-            return f"tell me about {entity}"
-    
-    # "What about [X]" pattern
-    what_about_match = re.match(r'^what about (.+)$', msg_lower)
-    if what_about_match:
-        new_topic = what_about_match.group(1).strip()
-        old_topic = context.get("topic") or context.get("entity")
-        if old_topic and len(new_topic) < 3:
-            # If "what about it" or "what about that"
-            return f"tell me about {old_topic} {new_topic}"
-        elif old_topic:
-            # "what about Italy" after "President of USA"
-            if context.get("category") == "head_of_state":
-                return f"current head of state of {new_topic}"
-            return f"tell me about {new_topic}"
-    
-    # "What about Italy?" pattern
-    if re.match(r'^what about ([A-Z][a-z]+)$', msg_lower):
-        new_topic = re.search(r'what about ([A-Z][a-z]+)', msg_lower, re.IGNORECASE).group(1)
-        if context.get("category") == "person":
-            return f"current status of {new_topic}"
-        return f"information about {new_topic}"
-    
-    return msg
-
-def detect_intent_and_context(msg):
-    """Detect intent and extract context information."""
-    msg_lower = msg.lower().strip()
-    context = {"topic": None, "entity": None, "intent": "general", "category": None}
-    
-    # Extract entities (capitalized words or quoted phrases)
-    entities = re.findall(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b', msg)
-    if entities:
-        context["entity"] = entities[0]
-    
-    # Detect intent
-    if any(word in msg_lower for word in ["who", "person", "president", "prime minister", "ceo", "founder"]):
-        context["intent"] = "person"
-        context["category"] = "person"
-    elif any(word in msg_lower for word in ["what", "define", "meaning", "what is"]):
-        context["intent"] = "definition"
-        context["category"] = "definition"
-    elif any(word in msg_lower for word in ["explain", "how", "why", "does"]):
-        context["intent"] = "explanation"
-        context["category"] = "explanation"
-    elif any(word in msg_lower for word in ["weather", "temperature", "forecast"]):
-        context["intent"] = "weather"
-        context["category"] = "weather"
-    elif any(word in msg_lower for word in ["news", "headlines", "latest"]):
-        context["intent"] = "news"
-        context["category"] = "news"
-    elif any(word in msg_lower for word in ["math", "solve", "calculate", "integrate", "differentiate"]):
-        context["intent"] = "math"
-        context["category"] = "math"
-    elif any(word in msg_lower for word in ["convert", "km", "miles", "kg", "lbs"]):
-        context["intent"] = "conversion"
-        context["category"] = "conversion"
-    
-    # Extract topic (what the question is about)
-    for word in ["about", "on", "regarding"]:
-        if word in msg_lower:
-            parts = msg_lower.split(word, 1)
-            if len(parts) > 1:
-                context["topic"] = parts[1].strip().strip('?')
-                break
-    
-    if not context["topic"] and entities:
-        context["topic"] = entities[0]
-    
-    return context
-
 # ============ KNOWLEDGE BASE ============
 _KNOWLEDGE_BASE = {
     "who are you": (
@@ -794,11 +1020,7 @@ _KNOWLEDGE_BASE = {
         "🌤️ Check live weather anywhere\n"
         "📰 Fetch latest news by topic\n"
         "🌍 Get country facts\n"
-        "📄 Read PDFs, DOCX, images (OCR)\n"
         "📏 Convert units (length, weight, temp)\n"
-        "🔐 Check password strength\n"
-        "🔳 Generate QR codes\n"
-        "😄 Tell jokes & random facts\n"
         "🔍 Research the web with citations"
     ),
     "what can you do": (
@@ -806,8 +1028,7 @@ _KNOWLEDGE_BASE = {
         "**Math & Science:** Full expression calculator, algebra, calculus, integrals, matrices, stats, graphing\n"
         "**Real-Time Data:** Weather, news headlines\n"
         "**Knowledge:** Country facts\n"
-        "**Files:** PDF, DOCX, XLSX, TXT, images (OCR)\n"
-        "**Tools:** QR generator, password checker, text analyzer, unit converter\n"
+        "**Tools:** Unit converter\n"
         "**Web:** Multi-source search with citations\n\n"
         "All without any LLM or paid API!"
     ),
@@ -855,7 +1076,7 @@ def knowledge_base_lookup(msg):
             return ans
     return None
 
-# ============ HTML ============
+# ============ HTML (COMPLETE) ============
 HTML = f'''
 <!DOCTYPE html>
 <html lang="en">
@@ -867,14 +1088,7 @@ HTML = f'''
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }}
-        html, body {{
-            margin: 0; padding: 0; width: 100%; height: 100%; 
-            overflow-x: hidden; overflow-y: auto; 
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #f5f0e8; transition: all 0.3s ease;
-            -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
-            position: relative;
-        }}
+        html, body {{ margin: 0; padding: 0; width: 100%; height: 100%; overflow-x: hidden; overflow-y: auto; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f0e8; transition: all 0.3s ease; -webkit-font-smoothing: antialiased; position: relative; }}
         img, video, iframe {{ max-width: 100%; height: auto; }}
         
         body.dark {{ background: #1a1a2e; }}
@@ -913,13 +1127,7 @@ HTML = f'''
         .login-card h2 {{ font-family: 'Playfair Display', serif; font-size: 2rem; margin-bottom: 10px; }}
         .login-card p {{ color: #666; font-size: 1rem; margin-bottom: 30px; }}
         
-        .app {{
-            display: flex; flex-direction: column;
-            height: 100dvh; min-height: 100vh;
-            width: 100%;
-            background: linear-gradient(135deg, #f5f0e8 0%, #e8e0d5 100%);
-            position: relative; overflow: hidden;
-        }}
+        .app {{ display: flex; flex-direction: column; height: 100dvh; min-height: 100vh; width: 100%; background: linear-gradient(135deg, #f5f0e8 0%, #e8e0d5 100%); position: relative; overflow: hidden; }}
         
         .sidebar {{ position: fixed; left: 0; top: 0; bottom: 0; width: min(280px, 80vw); background: #2c2418; border-right: 1px solid #4a3f2f; display: flex; flex-direction: column; transform: translateX(-100%); transition: transform 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55); z-index: 1000; box-shadow: 4px 0 20px rgba(0,0,0,0.1); }}
         .sidebar.open {{ transform: translateX(0); }}
@@ -943,45 +1151,30 @@ HTML = f'''
         .overlay {{ position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.4); display: none; z-index: 999; }}
         .overlay.show {{ display: block; }}
         
-        .main {{
-            flex: 1; display: flex; flex-direction: column;
-            min-height: 0; height: 100%; width: 100%;
-            overflow: hidden;
-        }}
+        .main {{ flex: 1; display: flex; flex-direction: column; min-height: 0; height: 100%; width: 100%; overflow: hidden; }}
         
-        .header {{
-            padding: 12px 16px; display: flex; align-items: center; gap: 12px;
-            border-bottom: 1px solid #d4c5a9;
-            background: rgba(245,240,232,0.95);
-            flex-shrink: 0; min-height: 56px; width: 100%;
-            position: relative; z-index: 10;
-        }}
+        .header {{ padding: 12px 16px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #d4c5a9; background: rgba(245,240,232,0.95); flex-shrink: 0; min-height: 56px; width: 100%; position: relative; z-index: 10; }}
         .menu-btn {{ background: none; border: none; font-size: 1.3rem; cursor: pointer; color: #6a5a4a; padding: 8px; border-radius: 10px; display: flex; align-items: center; justify-content: center; }}
         .menu-btn:hover {{ background: #d4c5a9; color: #2c2418; }}
         .logo {{ flex: 1; display: flex; align-items: baseline; gap: 6px; min-width: 0; }}
         .logo-icon {{ font-size: 1.8rem; }}
-        .logo h1 {{ font-family: 'Playfair Display', serif; font-size: 1.3rem; color: #2c2418; white-space: nowrap; }}
+        .logo h1 {{ font-family: 'Playfair Display', serif; font-size: clamp(1rem, 2.5vw, 1.3rem); color: #2c2418; white-space: nowrap; }}
         .new-chat-mobile {{ background: none; border: none; font-size: 1.2rem; cursor: pointer; padding: 8px; border-radius: 10px; color: #6a5a4a; display: none; }}
         .control-btn {{ background: none; border: none; font-size: 1.2rem; cursor: pointer; padding: 8px 12px; border-radius: 20px; color: #6a5a4a; transition: all 0.2s; display: flex; align-items: center; justify-content: center; }}
         .control-btn:hover {{ background: #d4c5a9; }}
         .user-btn {{ background: none; border: none; cursor: pointer; display: none; padding: 4px; }}
         .user-btn img {{ width: 35px; height: 35px; border-radius: 50%; object-fit: cover; }}
         
-        .messages {{
-            flex: 1; overflow-y: auto;
-            padding: 16px; padding-bottom: 20px;
-            -webkit-overflow-scrolling: touch;
-            scroll-behavior: smooth;
-            min-height: 0;
-        }}
+        .messages {{ flex: 1; overflow-y: auto; padding: 16px; padding-bottom: 20px; -webkit-overflow-scrolling: touch; scroll-behavior: smooth; min-height: 0; }}
         .message {{ margin-bottom: 20px; animation: fadeIn 0.3s ease; }}
         .message-wrapper {{ display: inline-block; max-width: 85%; }}
         @keyframes fadeIn {{ from {{ opacity: 0; transform: translateY(10px); }} to {{ opacity: 1; transform: translateY(0); }} }}
         .user-message {{ text-align: right; }}
         .ai-message {{ text-align: left; }}
-        .message-content {{ display: inline-block; max-width: 100%; font-size: 0.9rem; line-height: 1.5; color: #2c2418; background: transparent !important; padding: 0 !important; }}
+        .message-content {{ display: inline-block; max-width: 100%; font-size: clamp(0.75rem, 1.2vw, 0.9rem); line-height: 1.5; color: #2c2418; background: transparent !important; padding: 0 !important; }}
         .user-message .message-content {{ background: #2c2418 !important; color: white !important; padding: 10px 16px !important; border-radius: 20px !important; }}
         .ai-message .message-content {{ background: white !important; color: #2c2418 !important; padding: 12px 18px !important; border-radius: 20px !important; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }}
+        .message-content a {{ color: #4ecdc4; text-decoration: underline; word-break: break-all; }}
         
         .message-actions {{ display: flex; gap: 8px; margin-top: 8px; opacity: 0.6; transition: opacity 0.2s; flex-wrap: wrap; }}
         .message-actions:hover {{ opacity: 1; }}
@@ -1006,144 +1199,44 @@ HTML = f'''
         .typing span {{ width: 6px; height: 6px; background: #c4a57b; border-radius: 50%; display: inline-block; animation: bounce 1.4s infinite; }}
         @keyframes bounce {{ 0%, 60%, 100% {{ transform: translateY(0); }} 30% {{ transform: translateY(-6px); }} }}
         
-        /* ===== MOBILE KEYBOARD FIX - DYNAMIC ===== */
-        .input-area {{
-            position: sticky;
-            bottom: 0;
-            z-index: 100;
-            background: #f5f0e8;
-            padding: 12px 16px env(safe-area-inset-bottom, 20px);
-            padding-bottom: max(12px, env(safe-area-inset-bottom, 20px));
-            flex-shrink: 0;
-            border-top: 1px solid rgba(212,197,169,0.3);
-            width: 100%;
-            transition: padding-bottom 0.15s ease;
-        }}
+        .input-area {{ position: sticky; bottom: 0; z-index: 100; background: #f5f0e8; padding: 12px 16px env(safe-area-inset-bottom, 20px); padding-bottom: max(12px, env(safe-area-inset-bottom, 20px)); flex-shrink: 0; border-top: 1px solid rgba(212,197,169,0.3); width: 100%; transition: padding-bottom 0.15s ease; margin-top: auto; }}
         body.dark .input-area {{ background: #1a1a2e; border-top-color: rgba(42,42,78,0.3); }}
         
-        .input-wrapper {{
-            display: flex; align-items: flex-end; gap: 12px;
-            background: white; border-radius: 28px;
-            padding: 8px 8px 8px 20px;
-            border: 1px solid #d4c5a9;
-            width: 100%; max-width: 760px;
-            margin: 0 auto;
-            min-height: 56px;
-        }}
+        .input-wrapper {{ display: flex; align-items: flex-end; gap: 12px; background: white; border-radius: 28px; padding: 8px 8px 8px 20px; border: 1px solid #d4c5a9; width: 100%; max-width: 760px; margin: 0 auto; min-height: 56px; }}
         body.dark .input-wrapper {{ background: #2a2a4e; border-color: #3a3a5e; }}
         
         .input-text-wrapper {{ flex: 1; min-width: 0; }}
-        textarea {{
-            width: 100%; background: transparent; border: none; outline: none;
-            font-size: 16px; line-height: 1.5; resize: none;
-            padding: 8px 0; font-family: inherit; color: #2c2418;
-            min-height: 24px; max-height: 180px; overflow-y: auto;
-        }}
+        textarea {{ width: 100%; background: transparent; border: none; outline: none; font-size: 16px; line-height: 1.5; resize: none; padding: 8px 0; font-family: inherit; color: #2c2418; min-height: 24px; max-height: 180px; overflow-y: auto; }}
         body.dark textarea {{ color: #e0e0e0; }}
         textarea::placeholder {{ color: #b8a88a; font-size: 0.95rem; }}
         @media (max-width: 768px) {{ textarea {{ font-size: 16px !important; }} }}
         
-        .submit-btn {{
-            display: flex; align-items: center; justify-content: center;
-            flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%;
-            border: none; background-color: #2c2418; color: white;
-            cursor: pointer; transition: all 0.2s;
-            min-width: 44px; min-height: 44px;
-        }}
+        .submit-btn {{ display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%; border: none; background-color: #2c2418; color: white; cursor: pointer; transition: all 0.2s; min-width: 44px; min-height: 44px; }}
         body.dark .submit-btn {{ background-color: #4a3f2f; }}
         .submit-btn:hover {{ background-color: #4a3f2f; transform: scale(1.02); }}
         .submit-btn:active {{ transform: scale(0.96); }}
         .submit-icon {{ width: 20px; height: 20px; fill: currentColor; }}
         
-        .attach-btn {{
-            display: flex; align-items: center; justify-content: center;
-            flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%;
-            border: 1px solid #e0d5c0; background-color: transparent;
-            color: #2c2418; cursor: pointer; transition: all 0.2s;
-            min-width: 44px; min-height: 44px;
-        }}
+        .attach-btn {{ display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%; border: 1px solid #e0d5c0; background-color: transparent; color: #2c2418; cursor: pointer; transition: all 0.2s; min-width: 44px; min-height: 44px; }}
         body.dark .attach-btn {{ border-color: #4a3f2f; color: #e0e0e0; }}
         .attach-btn:hover {{ background-color: rgba(44,36,24,0.06); }}
         .attach-icon {{ width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; }}
         .message-content img.chat-image {{ max-width: 100%; border-radius: 10px; margin-top: 10px; display: block; }}
         
-        /* ===== RESPONSIVE DESIGN - DYNAMIC ===== */
-        .welcome {{
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
-            min-height: 40vh; text-align: center; padding: 20px;
-        }}
+        .welcome {{ display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 40vh; text-align: center; padding: 20px; }}
         .welcome-icon {{ font-size: 3rem; margin-bottom: 15px; animation: float 3s ease-in-out infinite; }}
         @keyframes float {{ 0%, 100% {{ transform: translateY(0); }} 50% {{ transform: translateY(-8px); }} }}
         .welcome h2 {{ font-family: 'Playfair Display', serif; font-size: clamp(1.5rem, 4vw, 2.5rem); color: #2c2418; margin-bottom: 8px; }}
         .welcome p {{ color: #6a5a4a; font-size: clamp(0.75rem, 1.5vw, 0.95rem); margin-bottom: 20px; }}
-        .suggestions {{
-            display: flex; flex-wrap: wrap; gap: 8px;
-            justify-content: center; margin-top: 15px;
-            max-width: 100%;
-        }}
-        .suggestion {{
-            background: white; border: 1px solid #d4c5a9; border-radius: 30px;
-            padding: 6px 14px; font-size: clamp(0.6rem, 1.2vw, 0.75rem);
-            color: #2c2418; cursor: pointer; transition: all 0.2s;
-            white-space: nowrap;
-        }}
+        .suggestions {{ display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 15px; max-width: 100%; }}
+        .suggestion {{ background: white; border: 1px solid #d4c5a9; border-radius: 30px; padding: 6px 14px; font-size: clamp(0.6rem, 1.2vw, 0.75rem); color: #2c2418; cursor: pointer; transition: all 0.2s; white-space: nowrap; }}
         .suggestion:hover {{ background: #2c2418; color: white; border-color: #2c2418; }}
         
-        /* ===== BREAKPOINTS ===== */
-        @media (max-width: 480px) {{
-            .header {{ padding: 8px 12px; min-height: 48px; gap: 8px; }}
-            .logo h1 {{ font-size: 1rem; }}
-            .logo-icon {{ font-size: 1.2rem; }}
-            .messages {{ padding: 10px 12px; }}
-            .input-area {{ padding: 8px 10px 14px; padding-bottom: max(8px, env(safe-area-inset-bottom, 14px)); }}
-            .input-wrapper {{ padding: 5px 5px 5px 14px; min-height: 44px; gap: 8px; border-radius: 24px; }}
-            textarea {{ font-size: 15px !important; padding: 6px 0; min-height: 20px; }}
-            .submit-btn {{ width: 40px; height: 40px; min-width: 40px; min-height: 40px; }}
-            .submit-icon {{ width: 16px; height: 16px; }}
-            .message-content {{ font-size: 0.8rem; }}
-            .suggestions {{ display: none; }}
-            .new-chat-mobile {{ display: block; }}
-        }}
-        @media (max-width: 380px) {{
-            .header {{ padding: 6px 10px; min-height: 44px; gap: 6px; }}
-            .logo h1 {{ font-size: 0.85rem; }}
-            .logo-icon {{ font-size: 1rem; }}
-            .messages {{ padding: 8px 10px; }}
-            .input-area {{ padding: 6px 8px 12px; padding-bottom: max(6px, env(safe-area-inset-bottom, 12px)); }}
-            .input-wrapper {{ padding: 4px 4px 4px 12px; min-height: 40px; gap: 6px; border-radius: 22px; }}
-            textarea {{ font-size: 14px !important; padding: 5px 0; min-height: 18px; }}
-            .submit-btn {{ width: 36px; height: 36px; min-width: 36px; min-height: 36px; }}
-            .submit-icon {{ width: 14px; height: 14px; }}
-            .message-content {{ font-size: 0.75rem; }}
-        }}
-        @media (max-height: 500px) and (orientation: landscape) {{
-            .header {{ min-height: 40px; padding: 4px 12px; gap: 6px; }}
-            .logo h1 {{ font-size: 0.9rem; }}
-            .logo-icon {{ font-size: 1.1rem; }}
-            .messages {{ padding: 6px 12px; padding-bottom: 10px; }}
-            .input-area {{ padding: 4px 12px 8px; padding-bottom: max(4px, env(safe-area-inset-bottom, 8px)); }}
-            .input-wrapper {{ min-height: 38px; padding: 4px 4px 4px 12px; }}
-            textarea {{ min-height: 20px; max-height: 80px; font-size: 14px !important; padding: 4px 0; }}
-            .submit-btn {{ width: 36px; height: 36px; min-width: 36px; min-height: 36px; }}
-            .submit-icon {{ width: 14px; height: 14px; }}
-            .welcome {{ min-height: 20vh; }}
-            .suggestions {{ display: none; }}
-        }}
-        @media (min-width: 769px) and (max-width: 1024px) {{
-            .input-wrapper {{ max-width: 90%; }}
-            .messages {{ padding: 16px 24px; }}
-            .header {{ padding: 14px 20px; }}
-        }}
-        @media (min-width: 1025px) {{
-            .input-wrapper {{ max-width: 760px; }}
-            .messages {{ padding: 24px 32px; }}
-            .header {{ padding: 16px 32px; }}
-        }}
-        
-        /* ===== DYNAMIC KEYBOARD ADJUSTMENT ===== */
-        @supports (height: 100dvh) {{
-            .app {{ height: 100dvh; min-height: 100dvh; }}
-        }}
+        @media (max-width: 480px) {{ .header {{ padding: 8px 12px; min-height: 48px; gap: 8px; }} .logo h1 {{ font-size: 1rem; }} .logo-icon {{ font-size: 1.2rem; }} .messages {{ padding: 10px 12px; }} .input-area {{ padding: 8px 10px 14px; padding-bottom: max(8px, env(safe-area-inset-bottom, 14px)); }} .input-wrapper {{ padding: 5px 5px 5px 14px; min-height: 44px; gap: 8px; border-radius: 24px; }} textarea {{ font-size: 15px !important; padding: 6px 0; min-height: 20px; }} .submit-btn {{ width: 40px; height: 40px; min-width: 40px; min-height: 40px; }} .submit-icon {{ width: 16px; height: 16px; }} .message-content {{ font-size: 0.8rem; }} .suggestions {{ display: none; }} .new-chat-mobile {{ display: block; }} }}
+        @media (max-width: 380px) {{ .header {{ padding: 6px 10px; min-height: 44px; gap: 6px; }} .logo h1 {{ font-size: 0.85rem; }} .logo-icon {{ font-size: 1rem; }} .messages {{ padding: 8px 10px; }} .input-area {{ padding: 6px 8px 12px; padding-bottom: max(6px, env(safe-area-inset-bottom, 12px)); }} .input-wrapper {{ padding: 4px 4px 4px 12px; min-height: 40px; gap: 6px; border-radius: 22px; }} textarea {{ font-size: 14px !important; padding: 5px 0; min-height: 18px; }} .submit-btn {{ width: 36px; height: 36px; min-width: 36px; min-height: 36px; }} .submit-icon {{ width: 14px; height: 14px; }} .message-content {{ font-size: 0.75rem; }} }}
+        @media (max-height: 500px) and (orientation: landscape) {{ .header {{ min-height: 40px; padding: 4px 12px; gap: 6px; }} .logo h1 {{ font-size: 0.9rem; }} .logo-icon {{ font-size: 1.1rem; }} .messages {{ padding: 6px 12px; padding-bottom: 10px; }} .input-area {{ padding: 4px 12px 8px; padding-bottom: max(4px, env(safe-area-inset-bottom, 8px)); }} .input-wrapper {{ min-height: 38px; padding: 4px 4px 4px 12px; }} textarea {{ min-height: 20px; max-height: 80px; font-size: 14px !important; padding: 4px 0; }} .submit-btn {{ width: 36px; height: 36px; min-width: 36px; min-height: 36px; }} .submit-icon {{ width: 14px; height: 14px; }} .welcome {{ min-height: 20vh; }} .suggestions {{ display: none; }} }}
+        @media (min-width: 769px) and (max-width: 1024px) {{ .input-wrapper {{ max-width: 90%; }} .messages {{ padding: 16px 24px; }} .header {{ padding: 14px 20px; }} }}
+        @media (min-width: 1025px) {{ .input-wrapper {{ max-width: 760px; }} .messages {{ padding: 24px 32px; }} .header {{ padding: 16px 32px; }} }}
     </style>
 </head>
 <body>
@@ -1287,44 +1380,20 @@ HTML = f'''
         function autoAdjustHeight() {{ this.style.height = 'auto'; this.style.height = this.scrollHeight + 'px'; }}
         textarea.addEventListener('input', autoAdjustHeight);
         
-        // ===== DYNAMIC KEYBOARD HANDLING - NO FIXED VALUES =====
         if (window.visualViewport) {{
             let lastHeight = window.visualViewport.height;
-            let isKeyboardVisible = false;
-            
             window.visualViewport.addEventListener('resize', function() {{
                 const inputArea = document.querySelector('.input-area');
                 const currentHeight = window.visualViewport.height;
                 const heightDiff = lastHeight - currentHeight;
-                
-                // Detect keyboard open (viewport shrinks significantly)
                 if (heightDiff > 100) {{
-                    isKeyboardVisible = true;
-                    // The input area is sticky bottom, so it stays visible naturally
-                    // Just ensure we scroll to the input area
                     if (inputArea) {{
                         setTimeout(() => {{
                             inputArea.scrollIntoView({{ behavior: 'smooth', block: 'nearest' }});
                         }}, 50);
                     }}
-                }} else if (heightDiff < -50) {{
-                    isKeyboardVisible = false;
                 }}
-                
                 lastHeight = currentHeight;
-            }});
-        }}
-        
-        // Fallback for devices without visualViewport
-        if (window.visualViewport) {{
-            // Also handle resize events for safety
-            window.addEventListener('resize', function() {{
-                const inputArea = document.querySelector('.input-area');
-                if (inputArea && window.innerHeight < 500) {{
-                    setTimeout(() => {{
-                        inputArea.scrollIntoView({{ behavior: 'smooth', block: 'nearest' }});
-                    }}, 100);
-                }}
             }});
         }}
         
@@ -1570,6 +1639,234 @@ HTML = f'''
 </html>
 '''
 
+# ============ FORMAT FUNCTIONS ============
+def format_math_answer(result: Dict[str, Any]) -> str:
+    if not result.get('success'):
+        return f"❌ Could not solve: {result.get('error', 'Unknown error')}"
+    
+    steps = result.get('steps', [])
+    answer = result.get('answer', result.get('result_str', ''))
+    
+    response = "📐 **Mathematics Solution**\n\n"
+    
+    if steps:
+        response += "**Step-by-Step Solution:**\n\n"
+        for i, step in enumerate(steps, 1):
+            response += f"{i}. {step}\n"
+        response += "\n"
+    
+    response += f"**Final Answer:** {answer}\n"
+    
+    return make_urls_clickable(response)
+
+def format_answer(answer_data: Dict[str, Any], query: str, intent: str) -> str:
+    if not answer_data.get('success'):
+        return f"I couldn't find a clear answer to '{query}'. Please try rephrasing your question."
+    
+    answer = answer_data['answer']
+    sources = answer_data.get('sources', [])
+    
+    if intent == 'definition':
+        response = f"📖 **Definition**\n\n{answer}\n\n"
+    elif intent == 'explanation':
+        response = f"💡 **Explanation**\n\n{answer}\n\n"
+    elif intent == 'fact':
+        response = f"📌 **Fact**\n\n{answer}\n\n"
+    else:
+        response = f"💡 **Answer**\n\n{answer}\n\n"
+    
+    if sources:
+        response += "📚 **Sources**\n"
+        for i, source in enumerate(sources[:3], 1):
+            trust = source.get('trust_score', 0)
+            title = source.get('title', 'Untitled')
+            url = source.get('url', '')
+            relevance = source.get('relevance_score', 0)
+            
+            if trust >= 80:
+                icon = "⭐"
+            elif trust >= 60:
+                icon = "📘"
+            else:
+                icon = "📄"
+            
+            response += f"{i}. {icon} {title} (Trust: {trust}%, Relevance: {int(relevance * 100)}%)\n   {make_urls_clickable(url)}\n"
+    
+    return make_urls_clickable(response)
+
+# ============ RESPONSE FUNCTION ============
+def get_response(message, email):
+    raw_message = message.strip()
+    msg = raw_message.lower().strip()
+    
+    stats = update_user_stats(email)
+    user = user_db.get(User.email == email)
+    user_name = user.get('name', 'User') if user else 'User'
+    memory = load_memory(email)
+    ltm = memory.get("long_term_memory", {})
+    known_name = ltm.get("name") or user_name
+    
+    def _suffix():
+        return f"\n\n✨ **{known_name}** • Level {stats['level']} — {stats['title']} • {stats['count']} messages"
+    
+    def _finish(reply, topic=None, image=None):
+        if isinstance(reply, str):
+            memory["conversation_history"].append({"user": raw_message, "yama": reply})
+            memory["conversation_history"] = memory["conversation_history"][-MEMORY_TURN_LIMIT:]
+        if topic:
+            memory["last_topic"] = topic
+        context = detect_intent_and_context(msg)
+        memory["context"] = context
+        save_memory(email, memory)
+        return {"text": reply, "image": image} if image else reply
+    
+    # ===== FIXED: Math detection bypasses web search =====
+    if is_math_query(raw_message):
+        solved = solve_math_comprehensive(raw_message)
+        if solved:
+            return _finish(solved + _suffix(), topic="math_steps")
+        
+        expr = looks_like_math(raw_message)
+        if expr:
+            try:
+                result = safe_calculate(expr)
+                reply = f"🧮 **{expr} = {result}**" + _suffix()
+                return _finish(reply, topic="math")
+            except ZeroDivisionError:
+                return _finish("🧮 Can't divide by zero!")
+            except Exception:
+                pass
+    
+    resolved_msg = resolve_followup(msg, memory)
+    if resolved_msg != msg:
+        msg = resolved_msg
+    
+    graph_image = generate_graph(raw_message)
+    if graph_image:
+        func_part = raw_message.split(' ', 1)[1] if ' ' in raw_message else raw_message
+        return _finish(f"📊 Here's the graph of **{func_part}**:" + _suffix(), topic="graph", image=graph_image)
+    
+    learned = extract_facts(raw_message, memory)
+    if learned:
+        ack = []
+        for key, value in learned:
+            label = key.replace('favorite_', 'favorite ').replace('_', ' ')
+            ack.append(f"Got it — your {label} is **{value}**. I'll remember that! 🧠")
+        return _finish(" ".join(ack))
+    
+    recall = answer_from_memory(msg, memory)
+    if recall:
+        return _finish(recall, topic="recall")
+    
+    if re.match(r'^(hi|hello|hey|sup|yo|hiya|howdy)[\.\!]?$', msg):
+        return _finish(
+            f"👋 Hello **{known_name}**! You're a **{stats['title']}** (Level {stats['level']}, {stats['count']} messages).\n\n"
+            f"I'm **Yama AI**, developed by Riishil M Mehta.\n\n"
+            f"What can I help you with? Try:\n"
+            f"🌤️ **weather in Mumbai**\n"
+            f"📊 **graph sin(x)**\n"
+            f"📏 **5 km to miles**\n"
+            f"📰 **latest tech news**\n"
+            f"📐 **solve x^2 - 4 = 0**\n"
+            f"😄 **tell me a joke**")
+    
+    if 'how are you' in msg:
+        return _finish(f"😊 Doing great, {known_name}! Ready to help. What do you need?")
+    
+    kb_answer = knowledge_base_lookup(msg)
+    if kb_answer:
+        return _finish(kb_answer)
+    
+    if re.search(r'\b(joke|funny|make me laugh|tell me something funny)\b', msg):
+        try:
+            r = requests.get("https://icanhazdadjoke.com/", headers={"Accept": "application/json", "User-Agent": "YamaAI/1.0"}, timeout=5)
+            if r.status_code == 200:
+                joke = "😄 " + r.json().get("joke", "")
+                return _finish(joke + _suffix())
+        except:
+            pass
+    
+    if re.search(r'\b(random fact|fun fact|interesting fact|tell me a fact)\b', msg):
+        try:
+            r = requests.get("https://uselessfacts.jsph.pl/api/v2/facts/random?language=en", timeout=5)
+            if r.status_code == 200:
+                fact = "🤓 **Random Fact:** " + r.json().get("text", "")
+                return _finish(fact + _suffix())
+        except:
+            pass
+    
+    dt_answer = datetime_answer(msg)
+    if dt_answer:
+        return _finish(dt_answer)
+    
+    weather_loc = parse_weather_query(msg)
+    if weather_loc:
+        cached = cache_get(f"weather:{weather_loc}")
+        if cached:
+            return _finish(cached + _suffix(), topic="weather")
+        weather_data = get_weather(weather_loc)
+        if weather_data.get("success"):
+            result = format_weather(weather_data)
+            cache_set(f"weather:{weather_loc}", result)
+            return _finish(result + _suffix(), topic="weather")
+    
+    converted = convert_units(msg)
+    if converted is not None:
+        m = _CONVERT_RE.search(msg)
+        from_u, to_u = m.group(2), m.group(3)
+        result_str = f"{round(converted, 6):.6f}".rstrip('0').rstrip('.')
+        reply = f"📏 {m.group(1)} {from_u} = **{result_str} {to_u}**" + _suffix()
+        return _finish(reply, topic="conversion")
+    
+    if re.search(r'\b(news|headlines?|latest|breaking)\b', msg):
+        cat = parse_news_query(msg) or "general"
+        cached = cache_get(f"news:{cat}")
+        if cached:
+            return _finish(cached + _suffix(), topic="news")
+        result = get_news(cat)
+        if result:
+            cache_set(f"news:{cat}", result)
+            return _finish(result + _suffix(), topic="news")
+    
+    if re.search(r'\b(country|capital|population|currency|language|flag)\b', msg):
+        country_q = parse_country_query(msg)
+        if country_q and len(country_q) > 2:
+            result = get_country_info(country_q)
+            if result:
+                return _finish(result + _suffix(), topic="country")
+    
+    cached_search = cache_get(f"search:{message}")
+    if cached_search:
+        return _finish(cached_search, topic="search")
+    
+    search_results = search_web(message)
+    if not search_results:
+        return _finish(f"🔍 I searched for **{message}** but found no results. Try rephrasing?")
+    
+    sources_to_read = search_results[:3]
+    citations = []
+    for r in sources_to_read:
+        page_text = None
+        try:
+            page_text = read_full_webpage(r['url'])
+        except Exception:
+            pass
+        body = summarize_text(page_text, max_sentences=2) if page_text and len(page_text) > 200 else r['snippet']
+        citations.append({"title": r['title'], "url": r['url'], "summary": body})
+    
+    if not citations:
+        return _finish(f"🔍 I searched for **{message}** but couldn't read the results. Try a more specific query.")
+    
+    response = f"🔍 **Research: {message}**\n\n"
+    for i, c in enumerate(citations, 1):
+        response += f"**[{i}] {c['title']}**\n{c['summary']}\n🔗 {make_urls_clickable(c['url'])}\n\n"
+    if len(citations) > 1:
+        response += "_Cross-checked across multiple sources._\n"
+    response += _suffix()
+    
+    cache_set(f"search:{message}", response)
+    return _finish(response, topic="search")
+
 # ============ ENDPOINTS ============
 @app.get("/", response_class=HTMLResponse)
 async def root():
@@ -1613,200 +1910,15 @@ async def clear_history_endpoint():
     save_history("", [])
     return {"status": "cleared"}
 
+@app.post("/feedback")
+async def submit_feedback(request: Request):
+    data = await request.json()
+    return {"status": "success"}
+
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "service": "Yama AI", "timestamp": datetime.now().isoformat()}
 
-# ============ MISSING FUNCTIONS ============
-def get_response(message, email):
-    """Main response function."""
-    raw_message = message.strip()
-    msg = raw_message.lower().strip()
-    
-    stats = update_user_stats(email)
-    user = user_db.get(User.email == email)
-    user_name = user.get('name', 'User') if user else 'User'
-    memory = load_memory(email)
-    ltm = memory.get("long_term_memory", {})
-    known_name = ltm.get("name") or user_name
-    
-    def _suffix():
-        return f"\n\n✨ **{known_name}** • Level {stats['level']} — {stats['title']} • {stats['count']} messages"
-    
-    def _finish(reply, topic=None, image=None):
-        if isinstance(reply, str):
-            memory["conversation_history"].append({"user": raw_message, "yama": reply})
-            memory["conversation_history"] = memory["conversation_history"][-MEMORY_TURN_LIMIT:]
-        if topic:
-            memory["last_topic"] = topic
-        # Store context for follow-ups
-        context = detect_intent_and_context(msg)
-        memory["context"] = context
-        save_memory(email, memory)
-        return {"text": reply, "image": image} if image else reply
-    
-    # ── Resolve follow-up references ──
-    resolved_msg = resolve_followup(msg, memory)
-    if resolved_msg != msg:
-        msg = resolved_msg
-    
-    # ── Graph / plot ──
-    graph_image = generate_graph(raw_message)
-    if graph_image:
-        func_part = raw_message.split(' ', 1)[1] if ' ' in raw_message else raw_message
-        return _finish(f"📊 Here's the graph of **{func_part}**:" + _suffix(),
-                       topic="graph", image=graph_image)
-    
-    # ── Learn facts ──
-    learned = extract_facts(raw_message, memory)
-    if learned:
-        ack = []
-        for key, value in learned:
-            label = key.replace('favorite_', 'favorite ').replace('_', ' ')
-            ack.append(f"Got it — your {label} is **{value}**. I'll remember that! 🧠")
-        return _finish(" ".join(ack))
-    
-    # ── Memory recall ──
-    recall = answer_from_memory(msg, memory)
-    if recall:
-        return _finish(recall, topic="recall")
-    
-    # ── Greetings ──
-    if re.match(r'^(hi|hello|hey|sup|yo|hiya|howdy)[\.\!]?$', msg):
-        return _finish(
-            f"👋 Hello **{known_name}**! You're a **{stats['title']}** (Level {stats['level']}, {stats['count']} messages).\n\n"
-            f"I'm **Yama AI**, developed by Riishil M Mehta.\n\n"
-            f"What can I help you with? Try:\n"
-            f"🌤️ **weather in Mumbai**\n"
-            f"📊 **graph sin(x)**\n"
-            f"📏 **5 km to miles**\n"
-            f"📰 **latest tech news**\n"
-            f"📐 **solve x^2 - 4 = 0**\n"
-            f"😄 **tell me a joke**")
-    
-    if 'how are you' in msg:
-        return _finish(f"😊 Doing great, {known_name}! Ready to help. What do you need?")
-    
-    # ── Knowledge base ──
-    kb_answer = knowledge_base_lookup(msg)
-    if kb_answer:
-        return _finish(kb_answer)
-    
-    # ── Jokes ──
-    if re.search(r'\b(joke|funny|make me laugh|tell me something funny)\b', msg):
-        try:
-            r = requests.get("https://icanhazdadjoke.com/", headers={"Accept": "application/json", "User-Agent": "YamaAI/1.0"}, timeout=5)
-            if r.status_code == 200:
-                joke = "😄 " + r.json().get("joke", "")
-                return _finish(joke + _suffix())
-        except:
-            pass
-    
-    # ── Random facts ──
-    if re.search(r'\b(random fact|fun fact|interesting fact|tell me a fact)\b', msg):
-        try:
-            r = requests.get("https://uselessfacts.jsph.pl/api/v2/facts/random?language=en", timeout=5)
-            if r.status_code == 200:
-                fact = "🤓 **Random Fact:** " + r.json().get("text", "")
-                return _finish(fact + _suffix())
-        except:
-            pass
-    
-    # ── Date / time ──
-    dt_answer = datetime_answer(msg)
-    if dt_answer:
-        return _finish(dt_answer)
-    
-    # ── Weather ──
-    weather_loc = parse_weather_query(msg)
-    if weather_loc:
-        cached = cache_get(f"weather:{weather_loc}")
-        if cached:
-            return _finish(cached + _suffix(), topic="weather")
-        result = get_weather(weather_loc)
-        if result:
-            cache_set(f"weather:{weather_loc}", result)
-            return _finish(result + _suffix(), topic="weather")
-    
-    # ── Unit conversion ──
-    converted = convert_units(msg)
-    if converted is not None:
-        m = _CONVERT_RE.search(msg)
-        from_u, to_u = m.group(2), m.group(3)
-        result_str = f"{round(converted, 6):.6f}".rstrip('0').rstrip('.')
-        reply = f"📏 {m.group(1)} {from_u} = **{result_str} {to_u}**" + _suffix()
-        return _finish(reply, topic="conversion")
-    
-    # ── News ──
-    if re.search(r'\b(news|headlines?|latest|breaking)\b', msg):
-        cat = parse_news_query(msg) or "general"
-        cached = cache_get(f"news:{cat}")
-        if cached:
-            return _finish(cached + _suffix(), topic="news")
-        result = get_news(cat)
-        if result:
-            cache_set(f"news:{cat}", result)
-            return _finish(result + _suffix(), topic="news")
-    
-    # ── Country facts ──
-    if re.search(r'\b(country|capital|population|currency|language|flag)\b', msg):
-        country_q = parse_country_query(msg)
-        if country_q and len(country_q) > 2:
-            result = get_country_info(country_q)
-            if result:
-                return _finish(result + _suffix(), topic="country")
-    
-    # ── Step-by-step math solver ──
-    solved = solve_step_by_step(raw_message)
-    if solved:
-        return _finish(solved + _suffix(), topic="math_steps")
-    
-    # ── Quick calculator ──
-    expr = looks_like_math(raw_message)
-    if expr:
-        try:
-            result = safe_calculate(expr)
-            reply = f"🧮 **{expr} = {result}**" + _suffix()
-            return _finish(reply, topic="math")
-        except ZeroDivisionError:
-            return _finish("🧮 Can't divide by zero!")
-        except Exception:
-            pass
-    
-    # ── Web search ──
-    cached_search = cache_get(f"search:{message}")
-    if cached_search:
-        return _finish(cached_search, topic="search")
-    
-    search_results = search_web(message)
-    if not search_results:
-        return _finish(f"🔍 I searched for **{message}** but found no results. Try rephrasing?")
-    
-    sources_to_read = search_results[:3]
-    citations = []
-    for r in sources_to_read:
-        page_text = None
-        try:
-            page_text = read_full_webpage(r['url'])
-        except Exception:
-            pass
-        body = summarize_text(page_text, max_sentences=2) if page_text and len(page_text) > 200 else r['snippet']
-        citations.append({"title": r['title'], "url": r['url'], "summary": body})
-    
-    if not citations:
-        return _finish(f"🔍 I searched for **{message}** but couldn't read the results. Try a more specific query.")
-    
-    response = f"🔍 **Research: {message}**\n\n"
-    for i, c in enumerate(citations, 1):
-        response += f"**[{i}] {c['title']}**\n{c['summary']}\n🔗 {c['url']}\n\n"
-    if len(citations) > 1:
-        response += "_Cross-checked across multiple sources._\n"
-    response += _suffix()
-    
-    cache_set(f"search:{message}", response)
-    return _finish(response, topic="search")
-
-# ============ UPLOAD ENDPOINT ============
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...), email: str = Form(...)):
     return {"status": "ok", "message": "File upload is available but requires additional libraries installed."}
@@ -1814,20 +1926,25 @@ async def upload_file(file: UploadFile = File(...), email: str = Form(...)):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     print("\n" + "="*55)
-    print("🏛️ YAMA AI - FINAL UPGRADE")
+    print("🏛️ YAMA AI - COMPLETE FIXED VERSION")
     print("="*55)
     print(f"🌐 Running on port: {port}")
     print("="*55)
-    print("✅ Enhanced Context Understanding")
-    print("✅ Follow-up Question Resolution")
-    print("✅ Step-by-Step Math Explanations")
-    print("✅ Mobile Keyboard Fix (No Fixed Values)")
+    print("✅ ALL Math Problems → Math Engine (bypass search)")
+    print("✅ Calculus Routing Fixed (differentiate, integrate)")
+    print("✅ Expression Corruption Fixed (removed .replace('x', '*'))")
+    print("✅ Clickable Source URLs")
+    print("✅ Mobile Keyboard Fix (No fixed values)")
     print("✅ Fully Responsive Design")
-    print("✅ Unit Conversion")
-    print("✅ Weather & News")
-    print("✅ Country Facts")
+    print("✅ Step-by-Step Math Explanations")
+    print("✅ Context Understanding (Follow-ups)")
+    print("✅ Matrix Parsing (Nested matrices supported)")
+    print("✅ Weather with Fallback API")
+    print("✅ Unit Conversion, Weather, News, Country Facts")
     print("✅ Graph Generation")
     print("✅ User Memory")
+    print("✅ Google Sign-In")
+    print("✅ Dark/Light Mode")
     print("="*55)
     print("🏛️ Developed by: Riishil M Mehta")
     print("="*55 + "\n")
