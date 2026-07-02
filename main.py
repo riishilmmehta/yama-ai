@@ -295,24 +295,16 @@ def _safe_eval_node(node):
         raise ValueError("invalid constant")
     if isinstance(node, ast.BinOp) and type(node.op) in _ALLOWED_BINOPS:
         return _ALLOWED_BINOPS[type(node.op)](_safe_eval_node(node.left), _safe_eval_node(node.right))
-    if isinstance(node, ast.UnaryOp) and type(node.op) in _ALLOWED_UNARYOPS):
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _ALLOWED_UNARYOPS:
         return _ALLOWED_UNARYOPS[type(node.op)](_safe_eval_node(node.operand))
     if isinstance(node, ast.Call):
-        if isinstance(node.func, ast.Name) and node.func.id in _ALLOWED_FUNCS):
+        if isinstance(node.func, ast.Name) and node.func.id in _ALLOWED_FUNCS:
             args = [_safe_eval_node(a) for a in node.args]
             return _ALLOWED_FUNCS[node.func.id](*args)
         raise ValueError("function not allowed")
-    if isinstance(node, ast.Name) and node.id in _ALLOWED_NAMES):
+    if isinstance(node, ast.Name) and node.id in _ALLOWED_NAMES:
         return _ALLOWED_NAMES[node.id]
     raise ValueError("disallowed expression")
-
-def safe_calculate(expr):
-    expr = expr.replace('^', '**').replace('×', '*').replace('÷', '/')
-    parsed = ast.parse(expr, mode='eval')
-    result = _safe_eval_node(parsed)
-    if isinstance(result, float) and result.is_integer():
-        result = int(result)
-    return result
 
 # ============ MAKE URLS CLICKABLE ============
 def make_urls_clickable(text: str) -> str:
