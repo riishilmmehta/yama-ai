@@ -34,7 +34,7 @@ app = FastAPI(title="Yama AI")
 # ============ GOOGLE SIGN-IN CLIENT ID ============
 # FIX (fatal bug): this was referenced inside the HTML f-string but never defined,
 # causing a NameError at import time. Set it via environment variable.
-GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "46152262032-41laiprrsbes52knkch3hlji7reqc6eb.apps.googleusercontent.com")
 
 # ============ DATA DIRECTORY ============
 DATA_DIR = os.environ.get("DATA_DIR", "./data")
