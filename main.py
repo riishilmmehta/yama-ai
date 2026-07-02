@@ -178,14 +178,12 @@ def resolve_followup(msg, memory):
     
     msg_lower = msg.lower()
     
-    # If user says "tell me more", expand using last topic
     if re.match(r'^(tell me more|more|expand|explain more|continue|go on|elaborate|what about it)[\.\?!]?$', msg_lower, re.IGNORECASE):
         topic = context.get("topic") or context.get("entity")
         if topic:
             return f"tell me more about {topic}"
         return f"{last_user} - tell me more details"
     
-    # Pronoun resolution: "who is he/she/they/it?"
     if re.match(r'^(?:who|what) (?:is|are|was|were) (?:he|she|they|it|him|her|them)\??$', msg_lower, re.IGNORECASE):
         names = re.findall(r'\b[A-Z][a-z]+ [A-Z][a-z]+\b', last_yama)
         if names:
@@ -194,7 +192,6 @@ def resolve_followup(msg, memory):
         if entity:
             return f"tell me about {entity}"
     
-    # "What about [X]" pattern - FIXED: Better context understanding
     what_about_match = re.match(r'^what about (.+)$', msg_lower)
     if what_about_match:
         new_topic = what_about_match.group(1).strip()
@@ -204,7 +201,6 @@ def resolve_followup(msg, memory):
         if old_topic and new_topic in ['it', 'that', 'this', 'him', 'her', 'them']:
             return f"tell me more about {old_topic}"
         
-        # Transform based on previous category
         if old_category == "person" or old_category == "head_of_state":
             return f"current {old_category} of {new_topic}"
         elif old_category == "definition":
@@ -216,7 +212,6 @@ def resolve_followup(msg, memory):
         
         return f"tell me about {new_topic}"
     
-    # "What about Italy?" pattern - FIXED
     country_match = re.match(r'^what about ([A-Z][a-z]+)$', msg_lower)
     if country_match:
         new_topic = country_match.group(1)
@@ -235,7 +230,6 @@ def detect_intent_and_context(msg):
     if entities:
         context["entity"] = entities[0]
     
-    # Detect intent
     if any(word in msg_lower for word in ["who", "person", "president", "prime minister", "ceo", "founder"]):
         context["intent"] = "person"
         context["category"] = "person"
@@ -312,7 +306,6 @@ def _safe_eval_node(node):
         return _ALLOWED_NAMES[node.id]
     raise ValueError("disallowed expression")
 
-# ===== FIXED: Removed .replace('x', '*') bug =====
 def safe_calculate(expr):
     expr = expr.replace('^', '**').replace('×', '*').replace('÷', '/')
     parsed = ast.parse(expr, mode='eval')
@@ -347,37 +340,29 @@ def is_math_query(query: str) -> bool:
     """Detect if query is mathematical and should bypass web search"""
     query_lower = query.lower()
     
-    # Calculus keywords
     calculus_keywords = ['differentiate', 'derivative of', 'diff', 'd/dx', 'integrate', 'integral of', '∫', 'limit']
     for kw in calculus_keywords:
         if kw in query_lower:
             return True
     
-    # Equation detection
     if '=' in query and re.search(r'[a-zA-Z0-9]', query):
         return True
     
-    # Matrix detection
     if re.search(r'\[\[.*?\]\]', query):
         return True
     
-    # Statistics detection
     if re.search(r'(mean|median|stdev|variance|average) of [\d.,\s]+', query_lower):
         return True
     
-    # Trigonometry
     if re.search(r'\b(sin|cos|tan|cot|sec|csc|asin|acos|atan)\s*[\(]', query_lower):
         return True
     
-    # Algebra with variables
     if re.search(r'[a-zA-Z]\s*[\+\-\*\/]\s*[a-zA-Z]', query):
         return True
     
-    # Power notation
     if re.search(r'[\^]', query) and re.search(r'[a-zA-Z0-9]', query):
         return True
     
-    # Basic arithmetic with multiple numbers
     if re.search(r'[\d]+\s*[\+\-\*\/]\s*[\d]+', query):
         return True
     
@@ -399,7 +384,6 @@ def solve_math_comprehensive(message: str) -> Optional[str]:
             equation = sp.Eq(lhs, rhs)
             solutions = sp.solve(equation, x)
             
-            # Try to factor if quadratic
             factor_form = ""
             if len(solutions) == 2 and 'x' in lower:
                 try:
@@ -423,7 +407,7 @@ def solve_math_comprehensive(message: str) -> Optional[str]:
                 steps.insert(2, f"**Factored Form:** {factor_form}")
             return "\n".join(steps)
         
-        # ===== DIFFERENTIATION - FIXED =====
+        # ===== DIFFERENTIATION =====
         deriv_keywords = ['derivative of', 'differentiate', 'diff', 'd/dx']
         deriv_match = None
         for kw in deriv_keywords:
@@ -442,7 +426,6 @@ def solve_math_comprehensive(message: str) -> Optional[str]:
             
             result = sp.diff(expr, x)
             
-            # Show individual term differentiation if expression has multiple terms
             term_steps = []
             if expr.is_Add:
                 terms = expr.as_ordered_terms()
@@ -468,7 +451,7 @@ def solve_math_comprehensive(message: str) -> Optional[str]:
             
             return "\n".join(steps)
         
-        # ===== INTEGRATION - FIXED =====
+        # ===== INTEGRATION =====
         int_keywords = ['integrate', 'integral of', '∫']
         int_match = None
         for kw in int_keywords:
@@ -736,7 +719,6 @@ def _convert_temperature(value, from_u, to_u):
 # ============ WEATHER ============
 def get_weather(location):
     try:
-        # Try wttr.in first
         r = requests.get(f"https://wttr.in/{quote(location)}?format=j1", headers={"User-Agent": "YamaAI/1.0"}, timeout=8)
         if r.status_code == 200:
             d = r.json()
@@ -776,9 +758,7 @@ def get_weather(location):
     except Exception as e:
         print(f"Weather API error: {e}")
     
-    # Fallback: Use Open-Meteo API (free, no key)
     try:
-        # First, get coordinates for location
         geo_r = requests.get(f"https://geocoding-api.open-meteo.com/v1/search?name={quote(location)}&count=1", timeout=5)
         if geo_r.status_code == 200:
             geo_data = geo_r.json()
@@ -789,7 +769,6 @@ def get_weather(location):
                 city = result.get("name", location)
                 country = result.get("country", "")
                 
-                # Get weather data
                 weather_r = requests.get(
                     f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true&daily=temperature_2m_max,temperature_2m_min&timezone=auto",
                     timeout=5
@@ -1076,7 +1055,7 @@ def knowledge_base_lookup(msg):
             return ans
     return None
 
-# ============ HTML (COMPLETE) ============
+# ============ HTML ============
 HTML = f'''
 <!DOCTYPE html>
 <html lang="en">
@@ -1720,7 +1699,7 @@ def get_response(message, email):
         save_memory(email, memory)
         return {"text": reply, "image": image} if image else reply
     
-    # ===== FIXED: Math detection bypasses web search =====
+    # ===== MATH: Bypass web search =====
     if is_math_query(raw_message):
         solved = solve_math_comprehensive(raw_message)
         if solved:
@@ -1926,19 +1905,18 @@ async def upload_file(file: UploadFile = File(...), email: str = Form(...)):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     print("\n" + "="*55)
-    print("🏛️ YAMA AI - COMPLETE FIXED VERSION")
+    print("🏛️ YAMA AI - COMPLETE WORKING VERSION")
     print("="*55)
     print(f"🌐 Running on port: {port}")
     print("="*55)
     print("✅ ALL Math Problems → Math Engine (bypass search)")
-    print("✅ Calculus Routing Fixed (differentiate, integrate)")
-    print("✅ Expression Corruption Fixed (removed .replace('x', '*'))")
+    print("✅ Calculus Routing Fixed")
+    print("✅ Expression Corruption Fixed")
     print("✅ Clickable Source URLs")
-    print("✅ Mobile Keyboard Fix (No fixed values)")
+    print("✅ Mobile Keyboard Fix")
     print("✅ Fully Responsive Design")
     print("✅ Step-by-Step Math Explanations")
     print("✅ Context Understanding (Follow-ups)")
-    print("✅ Matrix Parsing (Nested matrices supported)")
     print("✅ Weather with Fallback API")
     print("✅ Unit Conversion, Weather, News, Country Facts")
     print("✅ Graph Generation")
