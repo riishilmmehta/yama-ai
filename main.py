@@ -1,5 +1,5 @@
 from __future__ import annotations
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, File, Form, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 import uvicorn
 import json
@@ -293,16 +293,16 @@ def _safe_eval_node(node):
         if isinstance(node.value, (int, float)):
             return node.value
         raise ValueError("invalid constant")
-    if isinstance(node, ast.BinOp) and type(node.op) in _ALLOWED_BINOPS:
+    if isinstance(node, ast.BinOp) and type(node.op) in _ALLOWED_BINOPS):
         return _ALLOWED_BINOPS[type(node.op)](_safe_eval_node(node.left), _safe_eval_node(node.right))
-    if isinstance(node, ast.UnaryOp) and type(node.op) in _ALLOWED_UNARYOPS:
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _ALLOWED_UNARYOPS):
         return _ALLOWED_UNARYOPS[type(node.op)](_safe_eval_node(node.operand))
     if isinstance(node, ast.Call):
-        if isinstance(node.func, ast.Name) and node.func.id in _ALLOWED_FUNCS:
+        if isinstance(node.func, ast.Name) and node.func.id in _ALLOWED_FUNCS):
             args = [_safe_eval_node(a) for a in node.args]
             return _ALLOWED_FUNCS[node.func.id](*args)
         raise ValueError("function not allowed")
-    if isinstance(node, ast.Name) and node.id in _ALLOWED_NAMES:
+    if isinstance(node, ast.Name) and node.id in _ALLOWED_NAMES):
         return _ALLOWED_NAMES[node.id]
     raise ValueError("disallowed expression")
 
