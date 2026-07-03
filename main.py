@@ -361,12 +361,10 @@ def get_friendly_response(msg):
     """Get a friendly response for casual conversation."""
     msg = msg.lower().strip()
     
-    # Check for exact matches
     for key, responses in _FRIENDLY_RESPONSES.items():
         if key in msg:
             return random.choice(responses)
     
-    # Check for patterns
     if re.search(r'\b(hi|hello|hey|sup|yo)\b', msg):
         greetings = [
             "Hey there! 👋 How can I make your day awesome?",
@@ -403,10 +401,7 @@ def clean_query(message):
     for word in fluff_words:
         msg = msg.replace(word, "")
     
-    # Remove extra spaces
     msg = re.sub(r'\s+', ' ', msg).strip()
-    
-    # Remove trailing question marks
     msg = msg.rstrip('?').strip()
     
     return msg if msg else message.strip()
@@ -416,13 +411,11 @@ def expand_query(query):
     """Expand search query with site prefixes based on category."""
     query_lower = query.lower()
     
-    # Detect query type
     is_code = any(kw in query_lower for kw in ['python', 'javascript', 'java', 'c++', 'c#', 'ruby', 'php', 'swift', 'go', 'rust', 'error', 'bug', 'fix', 'code', 'function', 'class', 'method'])
     is_math = any(kw in query_lower for kw in ['math', 'equation', 'formula', 'calculus', 'algebra', 'geometry'])
     is_science = any(kw in query_lower for kw in ['science', 'biology', 'chemistry', 'physics', 'nature', 'research'])
     is_medicine = any(kw in query_lower for kw in ['doctor', 'health', 'disease', 'symptom', 'treatment', 'medicine'])
     
-    # Trusted domains per category
     trusted_sites = []
     
     if is_code:
@@ -465,7 +458,6 @@ def expand_query(query):
             "site:bbc.com"
         ]
     
-    # Build expanded query
     expanded = f"{query} " + " ".join(trusted_sites[:3])
     return expanded
 
@@ -512,7 +504,6 @@ def get_trusted_domains(query):
 
 # ============ SOURCE VERIFICATION ============
 def verify_source(url):
-    """Check if a source is healthy (status 200)."""
     try:
         response = requests.head(url, timeout=5, allow_redirects=True)
         return response.status_code == 200
@@ -520,7 +511,6 @@ def verify_source(url):
         return False
 
 def get_source_health(url):
-    """Get detailed health info about a source."""
     try:
         response = requests.head(url, timeout=5, allow_redirects=True)
         return {
@@ -537,14 +527,12 @@ def get_source_health(url):
 
 # ============ CONFIDENCE ENGINE ============
 def calculate_confidence(sources, query):
-    """Calculate confidence score based on sources."""
     if not sources:
         return 0
     
     total_sources = len(sources)
     trusted_count = 0
     authoritative_count = 0
-    recent_count = 0
     
     trusted_domains = get_trusted_domains(query)
     
@@ -552,30 +540,22 @@ def calculate_confidence(sources, query):
         url = source.get('url', '')
         domain = urlparse(url).netloc.lower()
         
-        # Check if from trusted domain
         if any(trusted in domain for trusted in trusted_domains):
             trusted_count += 1
         
-        # Check authority (org, edu, gov)
         if domain.endswith(('.org', '.edu', '.gov')):
             authoritative_count += 1
-        
-        # Check freshness (recent timestamp)
-        recent_count += 1
     
-    # Calculate confidence
     trust_score = (trusted_count / total_sources) * 100 if total_sources > 0 else 0
     authority_score = (authoritative_count / total_sources) * 100 if total_sources > 0 else 0
     
-    # Weighted confidence
     confidence = (trust_score * 0.6) + (authority_score * 0.4)
-    confidence = min(confidence, 95)  # Cap at 95%
+    confidence = min(confidence, 95)
     
     return round(confidence, 1)
 
 # ============ SOURCE RANKING ============
 def rank_sources(sources, query):
-    """Rank sources by trust, freshness, and relevance."""
     if not sources:
         return []
     
@@ -587,21 +567,17 @@ def rank_sources(sources, query):
         domain = urlparse(url).netloc.lower()
         title = source.get('title', '').lower()
         
-        # Calculate score
         score = 0
         
-        # Trust score
         if any(trusted in domain for trusted in trusted_domains):
             score += 30
         if domain.endswith(('.org', '.edu', '.gov')):
             score += 20
         
-        # Keyword match (query terms in title/domain)
         query_terms = query.lower().split()
         title_matches = sum(1 for term in query_terms if term in title)
         score += title_matches * 5
         
-        # Domain match (exact domain in trusted list)
         if domain in trusted_domains:
             score += 25
         
@@ -610,42 +586,34 @@ def rank_sources(sources, query):
             'rank_score': score
         })
     
-    # Sort by score descending
     ranked.sort(key=lambda x: x['rank_score'], reverse=True)
     return ranked
 
 # ============ RESPONSE FORMATTER ============
 def format_answer(title, direct_answer, explanation, key_points, sources, related_questions, confidence=None):
-    """Format answer in professional style."""
     result = []
     
-    # Title
     if title:
         result.append(f"**{title}**\n")
     
-    # Direct Answer
     if direct_answer:
         result.append(f"**Direct Answer:**\n{direct_answer}\n")
     
-    # Explanation
     if explanation:
         result.append(f"**Detailed Explanation:**\n{explanation}\n")
     
-    # Key Points
     if key_points:
         result.append("**Key Points:**")
         for point in key_points:
             result.append(f"• {point}")
         result.append("")
     
-    # Sources
     if sources:
         result.append("**Sources:**")
         for i, source in enumerate(sources[:3], 1):
             result.append(f"[{i}] {source.get('title', 'Source')} — {source.get('url', '')}")
         result.append("")
     
-    # Related Questions
     if related_questions:
         result.append("**Related Questions:**")
         for q in related_questions[:3]:
@@ -656,11 +624,9 @@ def format_answer(title, direct_answer, explanation, key_points, sources, relate
 
 # ============ CHEMISTRY ENGINE ============
 def solve_chemistry(query, raw_message):
-    """Solve chemistry problems using open-source libraries."""
     query_lower = query.lower()
     raw = raw_message.strip()
     
-    # Balance chemical equation
     if 'balance' in query_lower or '->' in raw or '→' in raw:
         try:
             eq_match = re.search(r'([\w\s\+\d]+)\s*(?:->|→)\s*([\w\s\+\d]+)', raw)
@@ -686,7 +652,6 @@ def solve_chemistry(query, raw_message):
         except Exception as e:
             logger.error(f"Chemistry balance error: {e}")
     
-    # Molar mass calculation
     if 'molar mass' in query_lower or 'molecular weight' in query_lower or 'mass of' in query_lower:
         try:
             formula_match = re.search(r'([A-Z][a-z]?\d*)+', raw)
@@ -707,7 +672,6 @@ def solve_chemistry(query, raw_message):
         except Exception as e:
             logger.error(f"Molar mass error: {e}")
     
-    # PubChem lookup
     if any(kw in query_lower for kw in ['boiling point', 'melting point', 'density', 'property', 'chemical']):
         try:
             chem_match = re.search(r'(?:of|for|about)\s+([A-Za-z][a-zA-Z\s\-]+)', raw)
@@ -752,7 +716,6 @@ def solve_chemistry(query, raw_message):
     return None
 
 def is_chemistry_query(msg):
-    """Detect if query is chemistry-related."""
     chem_keywords = [
         'chemistry', 'chemical', 'molecule', 'compound', 'reaction',
         'balance', 'equation', 'molar', 'molecular', 'weight', 'mass',
@@ -767,7 +730,6 @@ def is_chemistry_query(msg):
 
 # ============ PERIODIC TABLE ============
 def get_element_info(element_name):
-    """Get periodic table information for an element."""
     try:
         elem = element(element_name)
         result = f"⚗️ **Element: {elem.name} ({elem.symbol})**\n\n"
@@ -789,7 +751,6 @@ def get_element_info(element_name):
 
 # ============ TIME ZONE CONVERTER ============
 def convert_timezone(dt, from_tz, to_tz):
-    """Convert datetime between timezones."""
     try:
         from_zone = pytz.timezone(from_tz)
         to_zone = pytz.timezone(to_tz)
@@ -801,7 +762,6 @@ def convert_timezone(dt, from_tz, to_tz):
         return None
 
 def get_business_days(start_date, end_date, country='US'):
-    """Calculate business days between two dates."""
     try:
         holidays_country = holidays.CountryHoliday(country)
         business_days = 0
@@ -816,14 +776,12 @@ def get_business_days(start_date, end_date, country='US'):
 
 # ============ DEVELOPER UTILITIES ============
 def generate_password(length=16, include_symbols=True):
-    """Generate a strong password."""
     chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
     if include_symbols:
         chars += '!@#$%^&*()_+-=[]{}|;:,.<>?'
     return ''.join(secrets.choice(chars) for _ in range(length))
 
 def hash_text(text, algorithm='sha256'):
-    """Hash text using specified algorithm."""
     algorithms = {
         'md5': hashlib.md5,
         'sha1': hashlib.sha1,
@@ -835,7 +793,6 @@ def hash_text(text, algorithm='sha256'):
     return algorithms[algorithm](text.encode()).hexdigest()
 
 def validate_json(json_str):
-    """Validate JSON string."""
     try:
         json.loads(json_str)
         return True, "Valid JSON"
@@ -843,7 +800,6 @@ def validate_json(json_str):
         return False, str(e)
 
 def format_json(json_str):
-    """Format JSON string with indentation."""
     try:
         data = json.loads(json_str)
         return json.dumps(data, indent=2, ensure_ascii=False)
@@ -851,7 +807,6 @@ def format_json(json_str):
         return None
 
 def minify_code(code, lang='javascript'):
-    """Minify code (JavaScript or CSS)."""
     if lang == 'javascript':
         try:
             return rjsmin.jsmin(code)
@@ -865,11 +820,9 @@ def minify_code(code, lang='javascript'):
     return code
 
 def generate_uuid():
-    """Generate UUID v4."""
     return str(secrets.token_hex(16))
 
 def timestamp_converter(timestamp):
-    """Convert timestamp to datetime and vice versa."""
     try:
         if isinstance(timestamp, (int, float)):
             return datetime.fromtimestamp(timestamp).isoformat()
@@ -882,7 +835,6 @@ def timestamp_converter(timestamp):
 
 # ============ CYBERSECURITY UTILITIES ============
 def check_url_safety(url):
-    """Check if a URL is safe."""
     try:
         parsed = urlparse(url)
         if not parsed.scheme or not parsed.netloc:
@@ -897,7 +849,6 @@ def check_url_safety(url):
         return {'safe': False, 'reason': 'Could not validate URL'}
 
 def whois_lookup(domain):
-    """Perform WHOIS lookup."""
     try:
         w = whois.whois(domain)
         return {
@@ -911,7 +862,6 @@ def whois_lookup(domain):
         return None
 
 def dns_lookup(domain):
-    """Perform DNS lookup."""
     try:
         results = {}
         for record_type in ['A', 'AAAA', 'MX', 'NS', 'TXT', 'CNAME']:
@@ -925,7 +875,6 @@ def dns_lookup(domain):
         return None
 
 def check_ssl_cert(domain):
-    """Check SSL certificate details."""
     try:
         context = ssl.create_default_context()
         with context.wrap_socket(socket.socket(), server_hostname=domain) as sock:
@@ -944,7 +893,6 @@ def check_ssl_cert(domain):
         return {'valid': False}
 
 def calculate_security_score(url):
-    """Calculate overall security score for a domain."""
     score = 0
     domain = urlparse(url).netloc
     
@@ -975,7 +923,6 @@ def calculate_security_score(url):
 
 # ============ QR CODE GENERATOR ============
 def generate_qr(data):
-    """Generate QR code."""
     try:
         qr = qrcode.QRCode(
             version=1,
@@ -997,7 +944,6 @@ def generate_qr(data):
 
 # ============ DISTANCE CALCULATOR ============
 def calculate_distance(lat1, lon1, lat2, lon2):
-    """Calculate distance between two coordinates."""
     try:
         point1 = (lat1, lon1)
         point2 = (lat2, lon2)
@@ -1007,7 +953,6 @@ def calculate_distance(lat1, lon1, lat2, lon2):
         return None
 
 def geocode_location(location):
-    """Geocode a location name to coordinates."""
     try:
         geolocator = Nominatim(user_agent="yama_ai")
         location_data = geolocator.geocode(location)
@@ -1023,7 +968,6 @@ def geocode_location(location):
 
 # ============ HEALTH CALCULATORS ============
 def calculate_bmi(weight, height, unit='metric'):
-    """Calculate BMI."""
     try:
         if unit == 'imperial':
             weight_kg = weight * 0.453592
@@ -1056,7 +1000,6 @@ def calculate_bmi(weight, height, unit='metric'):
         return None
 
 def calculate_bmr(weight, height, age, gender, unit='metric'):
-    """Calculate BMR using Mifflin-St Jeor formula."""
     try:
         if unit == 'imperial':
             weight_kg = weight * 0.453592
@@ -1075,7 +1018,6 @@ def calculate_bmr(weight, height, age, gender, unit='metric'):
         return None
 
 def calculate_water_intake(weight, activity_level='moderate', unit='metric'):
-    """Calculate daily water intake recommendation."""
     try:
         if unit == 'imperial':
             weight_kg = weight * 0.453592
@@ -1103,7 +1045,6 @@ def calculate_water_intake(weight, activity_level='moderate', unit='metric'):
 
 # ============ LANGUAGE TOOLS ============
 def detect_language(text):
-    """Detect language of text."""
     try:
         if detect:
             return detect(text)
@@ -1112,7 +1053,6 @@ def detect_language(text):
         return 'en'
 
 def translate_text(text, target_lang='en'):
-    """Translate text to target language."""
     try:
         translator = GoogleTranslator(target=target_lang)
         return translator.translate(text)
@@ -1120,7 +1060,6 @@ def translate_text(text, target_lang='en'):
         return text
 
 def spell_check(text):
-    """Check spelling and grammar."""
     try:
         tool = language_tool_python.LanguageTool('en-US')
         matches = tool.check(text)
@@ -1137,7 +1076,6 @@ def spell_check(text):
         return []
 
 def summarize_text_new(text, max_sentences=5):
-    """Summarize text using NLTK."""
     try:
         sentences = sent_tokenize(text)
         if len(sentences) <= max_sentences:
@@ -1168,66 +1106,52 @@ def summarize_text_new(text, max_sentences=5):
 
 # ============ INTENT ROUTER ============
 def detect_intent(msg):
-    """Detect the intent of the query."""
     msg_lower = msg.lower()
     
-    # Mathematics
     math_keywords = ['math', 'solve', 'calculate', 'equation', 'integrate', 'differentiate', 
                      'derivative', 'matrix', 'determinant', 'statistics', 'mean', 'median']
     if any(kw in msg_lower for kw in math_keywords) or looks_like_math(msg):
         return 'math'
     
-    # Chemistry
     if is_chemistry_query(msg):
         return 'chemistry'
     
-    # Developer utilities
     dev_keywords = ['password', 'hash', 'regex', 'json', 'minify', 'uuid', 'timestamp', 'base64']
     if any(kw in msg_lower for kw in dev_keywords):
         return 'developer'
     
-    # Language
     lang_keywords = ['translate', 'spell check', 'grammar', 'summarize', 'language']
     if any(kw in msg_lower for kw in lang_keywords):
         return 'language'
     
-    # Time/Date
     time_keywords = ['time zone', 'timezone', 'business days', 'holiday', 'countdown']
     if any(kw in msg_lower for kw in time_keywords):
         return 'time'
     
-    # Cybersecurity
     sec_keywords = ['whois', 'dns', 'ssl', 'security', 'safe', 'phishing']
     if any(kw in msg_lower for kw in sec_keywords):
         return 'security'
     
-    # Weather
     if 'weather' in msg_lower or 'temperature' in msg_lower:
         return 'weather'
     
-    # News
     if 'news' in msg_lower or 'headlines' in msg_lower:
         return 'news'
     
-    # Country/Geography
     if any(kw in msg_lower for kw in ['country', 'capital', 'population', 'flag']):
         return 'country'
     
-    # Health calculators
     health_keywords = ['bmi', 'bmr', 'calorie', 'water intake']
     if any(kw in msg_lower for kw in health_keywords):
         return 'health'
     
-    # QR/Barcode
     qr_keywords = ['qr code', 'barcode']
     if any(kw in msg_lower for kw in qr_keywords):
         return 'qr'
     
-    # Distance
     if 'distance' in msg_lower:
         return 'distance'
     
-    # Default to search
     return 'search'
 
 # ============ RESPONSE CACHE ============
@@ -1328,7 +1252,6 @@ _CALC_KEYWORDS_RE = re.compile(
 )
 
 def solve_step_by_step(message):
-    """Returns a formatted, narrated solution or None if not math."""
     msg = message.strip()
     lower = msg.lower()
 
@@ -1942,7 +1865,6 @@ def knowledge_base_lookup(msg):
 
 # ============ UPDATED GET_RESPONSE ============
 def get_response(message, email):
-    """Main response function with all new features."""
     raw_message = message.strip()
     msg = raw_message.lower().strip()
     
@@ -1953,16 +1875,13 @@ def get_response(message, email):
     ltm = memory.get("long_term_memory", {})
     known_name = ltm.get("name") or user_name
     
-    # Friendly conversation check
     friendly_response = get_friendly_response(msg)
     if friendly_response:
         return _finish(friendly_response, topic="friendly", memory=memory, email=email, 
                        stats=stats, known_name=known_name, raw_message=raw_message)
     
-    # Detect intent
     intent = detect_intent(raw_message)
     
-    # -------- MATH ENGINE --------
     if intent == 'math':
         solved = solve_step_by_step(raw_message)
         if solved:
@@ -1993,7 +1912,6 @@ def get_response(message, email):
             except Exception:
                 pass
     
-    # -------- CHEMISTRY ENGINE --------
     if intent == 'chemistry':
         chem_result = solve_chemistry(msg, raw_message)
         if chem_result:
@@ -2010,7 +1928,6 @@ def get_response(message, email):
                 return _finish(elem_info, topic="chemistry", memory=memory, email=email,
                               stats=stats, known_name=known_name, raw_message=raw_message)
     
-    # -------- DEVELOPER UTILITIES --------
     if intent == 'developer':
         if 'password' in msg:
             length = 16
@@ -2057,7 +1974,6 @@ def get_response(message, email):
                                   topic="developer", memory=memory, email=email,
                                   stats=stats, known_name=known_name, raw_message=raw_message)
     
-    # -------- LANGUAGE TOOLS --------
     if intent == 'language':
         if 'translate' in msg:
             translate_match = re.search(r'(?:translate|convert)\s+["\'](.+?)["\']', raw_message)
@@ -2100,7 +2016,6 @@ def get_response(message, email):
                               topic="language", memory=memory, email=email,
                               stats=stats, known_name=known_name, raw_message=raw_message)
     
-    # -------- TIME & DATE --------
     if intent == 'time':
         if 'time zone' in msg or 'timezone' in msg:
             tz_match = re.search(r'(?:from|convert)\s+([A-Za-z/]+)\s+(?:to|->)\s+([A-Za-z/]+)', raw_message)
@@ -2127,7 +2042,6 @@ def get_response(message, email):
                                   topic="time", memory=memory, email=email,
                                   stats=stats, known_name=known_name, raw_message=raw_message)
     
-    # -------- CYBERSECURITY --------
     if intent == 'security':
         if 'whois' in msg:
             domain_match = re.search(r'(?:whois|lookup)\s+([a-zA-Z0-9.-]+)', raw_message)
@@ -2157,7 +2071,6 @@ def get_response(message, email):
                     return _finish(result, topic="security", memory=memory, email=email,
                                   stats=stats, known_name=known_name, raw_message=raw_message)
     
-    # -------- QR CODE --------
     if intent == 'qr':
         if 'qr' in msg:
             data_match = re.search(r'(?:qr code|generate qr)\s+["\'](.+?)["\']', raw_message)
@@ -2170,7 +2083,6 @@ def get_response(message, email):
                                   topic="qr", image=qr_image, memory=memory, email=email,
                                   stats=stats, known_name=known_name, raw_message=raw_message)
     
-    # -------- HEALTH CALCULATORS --------
     if intent == 'health':
         if 'bmi' in msg:
             weight_match = re.search(r'(\d+)\s*(?:kg|lbs?)', raw_message)
@@ -2186,7 +2098,6 @@ def get_response(message, email):
                                   topic="health", memory=memory, email=email,
                                   stats=stats, known_name=known_name, raw_message=raw_message)
     
-    # -------- WEATHER (Existing) --------
     weather_loc = parse_weather_query(msg)
     if weather_loc:
         cached = cache_get(f"weather:{weather_loc}")
@@ -2200,7 +2111,6 @@ def get_response(message, email):
             return _finish(result, topic="weather", memory=memory, email=email,
                           stats=stats, known_name=known_name, raw_message=raw_message)
     
-    # -------- NEWS (Existing) --------
     if re.search(r'\b(news|headlines?|latest|breaking)\b', msg):
         cat = parse_news_query(msg) or "general"
         cached = cache_get(f"news:{cat}")
@@ -2214,7 +2124,6 @@ def get_response(message, email):
             return _finish(result, topic="news", memory=memory, email=email,
                           stats=stats, known_name=known_name, raw_message=raw_message)
     
-    # -------- COUNTRY FACTS (Existing) --------
     if re.search(r'\b(country|capital|population|currency|language|flag)\b', msg):
         country_q = parse_country_query(msg)
         if country_q and len(country_q) > 2:
@@ -2224,19 +2133,16 @@ def get_response(message, email):
                 return _finish(result, topic="country", memory=memory, email=email,
                               stats=stats, known_name=known_name, raw_message=raw_message)
     
-    # -------- KNOWLEDGE BASE (Existing) --------
     kb_answer = knowledge_base_lookup(msg)
     if kb_answer:
         return _finish(kb_answer, topic="knowledge", memory=memory, email=email,
                       stats=stats, known_name=known_name, raw_message=raw_message)
     
-    # -------- MEMORY (Existing) --------
     recall = answer_from_memory(msg, memory)
     if recall:
         return _finish(recall, topic="recall", memory=memory, email=email,
                       stats=stats, known_name=known_name, raw_message=raw_message)
     
-    # -------- LEARN FACTS (Existing) --------
     learned = extract_facts(raw_message, memory)
     if learned:
         ack = []
@@ -2246,13 +2152,11 @@ def get_response(message, email):
         return _finish(" ".join(ack), topic="learning", memory=memory, email=email,
                       stats=stats, known_name=known_name, raw_message=raw_message)
     
-    # -------- DATE/TIME (Existing) --------
     dt_answer = datetime_answer(msg)
     if dt_answer:
         return _finish(dt_answer, topic="time", memory=memory, email=email,
                       stats=stats, known_name=known_name, raw_message=raw_message)
     
-    # -------- UNIT CONVERSION (Existing) --------
     converted = convert_units(msg)
     if converted is not None:
         m = _CONVERT_RE.search(msg)
@@ -2263,7 +2167,6 @@ def get_response(message, email):
         return _finish(reply, topic="conversion", memory=memory, email=email,
                       stats=stats, known_name=known_name, raw_message=raw_message)
     
-    # -------- SEARCH ENGINE (Enhanced) --------
     cleaned_query = clean_query(raw_message)
     expanded_query = expand_query(cleaned_query)
     
@@ -2331,7 +2234,6 @@ def get_response(message, email):
                   stats=stats, known_name=known_name, raw_message=raw_message)
 
 def _finish(reply, topic=None, image=None, memory=None, email=None, stats=None, known_name=None, raw_message=None):
-    """Helper function to finalize response with suffix and context."""
     if memory is None:
         memory = {}
     
@@ -2355,11 +2257,10 @@ def _finish(reply, topic=None, image=None, memory=None, email=None, stats=None, 
     
     return {"text": reply, "image": image} if image else reply
 
-# ============ EXISTING ENDPOINTS ============
+# ============ ENDPOINTS ============
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    # HTML unchanged - UI stays the same
     return HTML
 
 @app.post("/set_user")
@@ -2481,15 +2382,12 @@ async def upload_file(file: UploadFile = File(...), email: str = Form(...)):
 
 @app.get("/analytics")
 async def get_analytics():
-    """Get analytics data."""
     all_data = analytics_db.all()
-    
     total = len(all_data)
     by_type = {}
     for item in all_data:
         t = item.get('type', 'unknown')
         by_type[t] = by_type.get(t, 0) + 1
-    
     return {
         'total_events': total,
         'by_type': by_type,
@@ -2498,7 +2396,6 @@ async def get_analytics():
 
 @app.get("/feedback_stats")
 async def feedback_stats_endpoint():
-    """Get feedback analytics."""
     all_feedback = feedback_db.all()
     likes = [f for f in all_feedback if f.get('type') == 'like']
     dislikes = [f for f in all_feedback if f.get('type') == 'dislike']
@@ -2523,7 +2420,6 @@ async def feedback_stats_endpoint():
 
 @app.get("/element/{element_name}")
 async def get_element_endpoint(element_name: str):
-    """Get periodic table element information."""
     result = get_element_info(element_name)
     if result:
         return {'success': True, 'data': result}
@@ -2531,7 +2427,6 @@ async def get_element_endpoint(element_name: str):
 
 @app.get("/qr/{data:path}")
 async def generate_qr_endpoint(data: str):
-    """Generate QR code for any data."""
     qr_image = generate_qr(data)
     if qr_image:
         return {'success': True, 'image': qr_image}
@@ -2539,7 +2434,6 @@ async def generate_qr_endpoint(data: str):
 
 @app.post("/translate")
 async def translate_endpoint(request: Request):
-    """Translate text to target language."""
     data = await request.json()
     text = data.get('text', '')
     target = data.get('target', 'en')
@@ -2552,7 +2446,6 @@ async def translate_endpoint(request: Request):
 
 @app.post("/hash")
 async def generate_hash_endpoint(request: Request):
-    """Generate hash of text."""
     data = await request.json()
     text = data.get('text', '')
     algorithm = data.get('algorithm', 'sha256')
@@ -2565,7 +2458,6 @@ async def generate_hash_endpoint(request: Request):
 
 @app.post("/password")
 async def generate_password_endpoint(request: Request):
-    """Generate a secure password."""
     data = await request.json()
     length = data.get('length', 16)
     include_symbols = data.get('include_symbols', True)
@@ -2575,7 +2467,6 @@ async def generate_password_endpoint(request: Request):
 
 @app.post("/bmi")
 async def calculate_bmi_endpoint(request: Request):
-    """Calculate BMI."""
     data = await request.json()
     weight = data.get('weight')
     height = data.get('height')
@@ -2590,7 +2481,6 @@ async def calculate_bmi_endpoint(request: Request):
     return {'success': False, 'error': 'Could not calculate BMI'}
 
 # ============ HTML ============
-# (This is your original HTML - completely unchanged)
 HTML = '''<!DOCTYPE html>
 <html lang="en">
 <head>
