@@ -1,1 +1,70 @@
+# ============ CORE ============
+fastapi
+uvicorn
+requests
+beautifulsoup4
+tinydb
+ddgs
+googlesearch-python
+python-multipart
 
+# ============ MATHEMATICS ENGINE ============
+sympy
+mpmath
+numpy
+scipy
+matplotlib
+
+# ============ MATH PARSING ============
+latex2sympy2
+antlr4-python3-runtime
+
+# ============ DOCUMENT PROCESSING (Optional) ============
+PyMuPDF
+python-docx
+python-pptx
+pandas
+openpyxl
+Pillow
+pytesseract
+
+# ============ DATA & APIs ============
+feedparser
+yfinance
+qrcode
+rapidfuzz
+
+# ============ TEXT PROCESSING ============
+textblob
+dateparser
+thefuzz
+
+# ============ UTILITIES ============
+networkx
+PyPDF2
+
+# ============ CHEMISTRY ENGINE (NEW) ============
+chempy
+mendeleev
+
+# ============ LANGUAGE TOOLS (NEW) ============
+deep-translator
+language-tool-python
+nltk
+langdetect
+
+# ============ TIME & DATE (NEW) ============
+pytz
+holidays
+
+# ============ DEVELOPER UTILITIES (NEW) ============
+rjsmin
+rcssmin
+
+# ============ CYBERSECURITY (NEW) ============
+python-whois
+dnspython
+
+# ============ PRODUCTIVITY (NEW) ============
+geopy
+python-barcode
