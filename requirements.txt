@@ -7,6 +7,7 @@ tinydb
 ddgs
 googlesearch-python
 python-multipart
+
 # ============ MATHEMATICS ENGINE ============
 sympy
 mpmath
@@ -41,3 +42,29 @@ thefuzz
 # ============ UTILITIES ============
 networkx
 PyPDF2
+
+# ============ CHEMISTRY ENGINE (NEW) ============
+chempy
+mendeleev
+
+# ============ LANGUAGE TOOLS (NEW) ============
+deep-translator
+language-tool-python
+nltk
+langdetect
+
+# ============ TIME & DATE (NEW) ============
+pytz
+holidays
+
+# ============ DEVELOPER UTILITIES (NEW) ============
+rjsmin
+rcssmin
+
+# ============ CYBERSECURITY (NEW) ============
+python-whois
+dnspython
+
+# ============ PRODUCTIVITY (NEW) ============
+geopy
+python-barcode
