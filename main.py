@@ -203,12 +203,15 @@ Analytics = Query()
 
 def track_analytics(event_type, email, data):
     """Track analytics for the system."""
-    analytics_db.insert({
-        "type": event_type,
-        "email": email,
-        "data": data,
-        "timestamp": datetime.now().isoformat()
-    })
+    try:
+        analytics_db.insert({
+            "type": event_type,
+            "email": email,
+            "data": data,
+            "timestamp": datetime.now().isoformat()
+        })
+    except:
+        pass
 
 # ============ USER FUNCTIONS ============
 def get_or_create_user(email, name, picture=None):
@@ -1865,397 +1868,541 @@ def knowledge_base_lookup(msg):
 
 # ============ UPDATED GET_RESPONSE ============
 def get_response(message, email):
+    """Main response function with all features."""
     raw_message = message.strip()
     msg = raw_message.lower().strip()
     
-    stats = update_user_stats(email)
-    user = user_db.get(User.email == email)
-    user_name = user.get('name', 'User') if user else 'User'
-    memory = load_memory(email)
+    try:
+        stats = update_user_stats(email)
+    except:
+        stats = {"count": 0, "level": 1, "title": "🌟 Newbie Chatter"}
+    
+    try:
+        user = user_db.get(User.email == email)
+        user_name = user.get('name', 'User') if user else 'User'
+    except:
+        user_name = 'User'
+    
+    try:
+        memory = load_memory(email)
+    except:
+        memory = {"conversation_history": [], "context": {}, "long_term_memory": {}}
+    
     ltm = memory.get("long_term_memory", {})
     known_name = ltm.get("name") or user_name
     
-    friendly_response = get_friendly_response(msg)
-    if friendly_response:
-        return _finish(friendly_response, topic="friendly", memory=memory, email=email, 
-                       stats=stats, known_name=known_name, raw_message=raw_message)
+    # Friendly conversation check
+    try:
+        friendly_response = get_friendly_response(msg)
+        if friendly_response:
+            return _finish(friendly_response, topic="friendly", memory=memory, email=email, 
+                           stats=stats, known_name=known_name, raw_message=raw_message)
+    except:
+        pass
     
-    intent = detect_intent(raw_message)
+    # Detect intent
+    try:
+        intent = detect_intent(raw_message)
+    except:
+        intent = 'search'
     
+    # ====== MATH ENGINE ======
     if intent == 'math':
-        solved = solve_step_by_step(raw_message)
-        if solved:
-            track_analytics('math_query', email, {'query': raw_message, 'type': 'step_by_step'})
-            return _finish(solved, topic="math_steps", memory=memory, email=email,
-                          stats=stats, known_name=known_name, raw_message=raw_message)
+        try:
+            solved = solve_step_by_step(raw_message)
+            if solved:
+                track_analytics('math_query', email, {'query': raw_message, 'type': 'step_by_step'})
+                return _finish(solved, topic="math_steps", memory=memory, email=email,
+                              stats=stats, known_name=known_name, raw_message=raw_message)
+        except:
+            pass
         
-        graph_image = generate_graph(raw_message)
-        if graph_image:
-            func_part = raw_message.split(' ', 1)[1] if ' ' in raw_message else raw_message
-            track_analytics('math_query', email, {'query': raw_message, 'type': 'graph'})
-            return _finish(f"📊 Here's the graph of **{func_part}**:", 
-                          topic="graph", image=graph_image, memory=memory, email=email,
-                          stats=stats, known_name=known_name, raw_message=raw_message)
+        try:
+            graph_image = generate_graph(raw_message)
+            if graph_image:
+                func_part = raw_message.split(' ', 1)[1] if ' ' in raw_message else raw_message
+                track_analytics('math_query', email, {'query': raw_message, 'type': 'graph'})
+                return _finish(f"📊 Here's the graph of **{func_part}**:", 
+                              topic="graph", image=graph_image, memory=memory, email=email,
+                              stats=stats, known_name=known_name, raw_message=raw_message)
+        except:
+            pass
         
-        expr = looks_like_math(raw_message)
-        if expr:
-            try:
+        try:
+            expr = looks_like_math(raw_message)
+            if expr:
                 result = safe_calculate(expr)
                 track_analytics('math_query', email, {'query': raw_message, 'type': 'calculation'})
                 return _finish(f"🧮 **{expr} = {result}**", topic="math", 
                               memory=memory, email=email, stats=stats, 
                               known_name=known_name, raw_message=raw_message)
-            except ZeroDivisionError:
-                return _finish("🧮 Can't divide by zero!", topic="math",
-                              memory=memory, email=email, stats=stats,
-                              known_name=known_name, raw_message=raw_message)
-            except Exception:
-                pass
+        except ZeroDivisionError:
+            return _finish("🧮 Can't divide by zero!", topic="math",
+                          memory=memory, email=email, stats=stats,
+                          known_name=known_name, raw_message=raw_message)
+        except:
+            pass
     
+    # ====== CHEMISTRY ENGINE ======
     if intent == 'chemistry':
-        chem_result = solve_chemistry(msg, raw_message)
-        if chem_result:
-            track_analytics('chemistry_query', email, {'query': raw_message})
-            return _finish(chem_result, topic="chemistry", memory=memory, email=email,
-                          stats=stats, known_name=known_name, raw_message=raw_message)
-        
-        element_match = re.search(r'(?:element|periodic table|info about)\s+([A-Za-z]+)', raw_message)
-        if element_match:
-            elem_name = element_match.group(1)
-            elem_info = get_element_info(elem_name)
-            if elem_info:
-                track_analytics('chemistry_query', email, {'query': raw_message, 'type': 'element'})
-                return _finish(elem_info, topic="chemistry", memory=memory, email=email,
+        try:
+            chem_result = solve_chemistry(msg, raw_message)
+            if chem_result:
+                track_analytics('chemistry_query', email, {'query': raw_message})
+                return _finish(chem_result, topic="chemistry", memory=memory, email=email,
                               stats=stats, known_name=known_name, raw_message=raw_message)
-    
-    if intent == 'developer':
-        if 'password' in msg:
-            length = 16
-            if re.search(r'(\d+)\s*(?:char|length)', msg):
-                length_match = re.search(r'(\d+)\s*(?:char|length)', msg)
-                if length_match:
-                    length = min(int(length_match.group(1)), 64)
-            password = generate_password(length, True)
-            track_analytics('developer_tool', email, {'tool': 'password'})
-            return _finish(f"🔑 **Secure Password ({length} chars):**\n`{password}`\n\n_Store this securely!_",
-                          topic="developer", memory=memory, email=email,
-                          stats=stats, known_name=known_name, raw_message=raw_message)
+        except:
+            pass
         
-        if 'hash' in msg:
-            text_match = re.search(r'(?:hash|hash of)\s+["\'](.+?)["\']', raw_message)
-            if text_match:
-                text = text_match.group(1)
-                hashed = hash_text(text, 'sha256')
-                track_analytics('developer_tool', email, {'tool': 'hash'})
-                return _finish(f"🔐 **SHA-256 Hash:**\n`{hashed}`\n\n**Original:** `{text}`",
+        try:
+            element_match = re.search(r'(?:element|periodic table|info about)\s+([A-Za-z]+)', raw_message)
+            if element_match:
+                elem_name = element_match.group(1)
+                elem_info = get_element_info(elem_name)
+                if elem_info:
+                    track_analytics('chemistry_query', email, {'query': raw_message, 'type': 'element'})
+                    return _finish(elem_info, topic="chemistry", memory=memory, email=email,
+                                  stats=stats, known_name=known_name, raw_message=raw_message)
+        except:
+            pass
+    
+    # ====== DEVELOPER UTILITIES ======
+    if intent == 'developer':
+        try:
+            if 'password' in msg:
+                length = 16
+                if re.search(r'(\d+)\s*(?:char|length)', msg):
+                    length_match = re.search(r'(\d+)\s*(?:char|length)', msg)
+                    if length_match:
+                        length = min(int(length_match.group(1)), 64)
+                password = generate_password(length, True)
+                track_analytics('developer_tool', email, {'tool': 'password'})
+                return _finish(f"🔑 **Secure Password ({length} chars):**\n`{password}`\n\n_Store this securely!_",
                               topic="developer", memory=memory, email=email,
                               stats=stats, known_name=known_name, raw_message=raw_message)
+        except:
+            pass
         
-        if 'uuid' in msg or 'guid' in msg:
-            uuid = generate_uuid()
-            track_analytics('developer_tool', email, {'tool': 'uuid'})
-            return _finish(f"🆔 **UUID v4:**\n`{uuid}`",
-                          topic="developer", memory=memory, email=email,
-                          stats=stats, known_name=known_name, raw_message=raw_message)
-        
-        if 'json' in msg:
-            json_match = re.search(r'`(.+?)`', raw_message)
-            if json_match:
-                json_str = json_match.group(1)
-                valid, msg_result = validate_json(json_str)
-                if valid:
-                    formatted = format_json(json_str)
-                    track_analytics('developer_tool', email, {'tool': 'json'})
-                    return _finish(f"✅ **Valid JSON**\n\n```json\n{formatted[:500]}\n```",
+        try:
+            if 'hash' in msg:
+                text_match = re.search(r'(?:hash|hash of)\s+["\'](.+?)["\']', raw_message)
+                if text_match:
+                    text = text_match.group(1)
+                    hashed = hash_text(text, 'sha256')
+                    track_analytics('developer_tool', email, {'tool': 'hash'})
+                    return _finish(f"🔐 **SHA-256 Hash:**\n`{hashed}`\n\n**Original:** `{text}`",
                                   topic="developer", memory=memory, email=email,
                                   stats=stats, known_name=known_name, raw_message=raw_message)
-                else:
-                    return _finish(f"❌ **Invalid JSON**\n\nError: {msg_result}",
-                                  topic="developer", memory=memory, email=email,
-                                  stats=stats, known_name=known_name, raw_message=raw_message)
+        except:
+            pass
+        
+        try:
+            if 'uuid' in msg or 'guid' in msg:
+                uuid = generate_uuid()
+                track_analytics('developer_tool', email, {'tool': 'uuid'})
+                return _finish(f"🆔 **UUID v4:**\n`{uuid}`",
+                              topic="developer", memory=memory, email=email,
+                              stats=stats, known_name=known_name, raw_message=raw_message)
+        except:
+            pass
+        
+        try:
+            if 'json' in msg:
+                json_match = re.search(r'`(.+?)`', raw_message)
+                if json_match:
+                    json_str = json_match.group(1)
+                    valid, msg_result = validate_json(json_str)
+                    if valid:
+                        formatted = format_json(json_str)
+                        track_analytics('developer_tool', email, {'tool': 'json'})
+                        return _finish(f"✅ **Valid JSON**\n\n```json\n{formatted[:500]}\n```",
+                                      topic="developer", memory=memory, email=email,
+                                      stats=stats, known_name=known_name, raw_message=raw_message)
+                    else:
+                        return _finish(f"❌ **Invalid JSON**\n\nError: {msg_result}",
+                                      topic="developer", memory=memory, email=email,
+                                      stats=stats, known_name=known_name, raw_message=raw_message)
+        except:
+            pass
     
+    # ====== LANGUAGE TOOLS ======
     if intent == 'language':
-        if 'translate' in msg:
-            translate_match = re.search(r'(?:translate|convert)\s+["\'](.+?)["\']', raw_message)
-            if translate_match:
-                text = translate_match.group(1)
-                target = 'en'
-                if 'to' in msg:
-                    lang_match = re.search(r'to\s+([a-z]{2})', msg)
-                    if lang_match:
-                        target = lang_match.group(1)
-                translated = translate_text(text, target)
-                track_analytics('language_tool', email, {'tool': 'translate'})
-                return _finish(f"🌍 **Translation ({target}):**\n\n**Original:** {text}\n**Translated:** {translated}",
-                              topic="language", memory=memory, email=email,
-                              stats=stats, known_name=known_name, raw_message=raw_message)
-        
-        if 'spell' in msg or 'grammar' in msg:
-            text_match = re.search(r'(?:check|fix)\s+["\'](.+?)["\']', raw_message)
-            if text_match:
-                text = text_match.group(1)
-                corrections = spell_check(text)
-                if corrections:
-                    result = "📝 **Spelling & Grammar Check:**\n\n"
-                    for i, corr in enumerate(corrections[:5], 1):
-                        result += f"**{i}.** {corr['message']}\n"
-                        if corr['suggestions']:
-                            result += f"   Suggestions: {', '.join(corr['suggestions'])}\n"
-                        result += "\n"
-                    track_analytics('language_tool', email, {'tool': 'spell_check'})
-                    return _finish(result, topic="language", memory=memory, email=email,
+        try:
+            if 'translate' in msg:
+                translate_match = re.search(r'(?:translate|convert)\s+["\'](.+?)["\']', raw_message)
+                if translate_match:
+                    text = translate_match.group(1)
+                    target = 'en'
+                    if 'to' in msg:
+                        lang_match = re.search(r'to\s+([a-z]{2})', msg)
+                        if lang_match:
+                            target = lang_match.group(1)
+                    translated = translate_text(text, target)
+                    track_analytics('language_tool', email, {'tool': 'translate'})
+                    return _finish(f"🌍 **Translation ({target}):**\n\n**Original:** {text}\n**Translated:** {translated}",
+                                  topic="language", memory=memory, email=email,
                                   stats=stats, known_name=known_name, raw_message=raw_message)
+        except:
+            pass
         
-        if 'summarize' in msg:
-            text_match = re.search(r'(?:summarize|summary of)\s+["\'](.+?)["\']', raw_message)
-            if text_match:
-                text = text_match.group(1)
-                summary = summarize_text_new(text, 5)
-                track_analytics('language_tool', email, {'tool': 'summarize'})
-                return _finish(f"📄 **Summary:**\n\n{summary}",
-                              topic="language", memory=memory, email=email,
-                              stats=stats, known_name=known_name, raw_message=raw_message)
+        try:
+            if 'spell' in msg or 'grammar' in msg:
+                text_match = re.search(r'(?:check|fix)\s+["\'](.+?)["\']', raw_message)
+                if text_match:
+                    text = text_match.group(1)
+                    corrections = spell_check(text)
+                    if corrections:
+                        result = "📝 **Spelling & Grammar Check:**\n\n"
+                        for i, corr in enumerate(corrections[:5], 1):
+                            result += f"**{i}.** {corr['message']}\n"
+                            if corr['suggestions']:
+                                result += f"   Suggestions: {', '.join(corr['suggestions'])}\n"
+                            result += "\n"
+                        track_analytics('language_tool', email, {'tool': 'spell_check'})
+                        return _finish(result, topic="language", memory=memory, email=email,
+                                      stats=stats, known_name=known_name, raw_message=raw_message)
+        except:
+            pass
+        
+        try:
+            if 'summarize' in msg:
+                text_match = re.search(r'(?:summarize|summary of)\s+["\'](.+?)["\']', raw_message)
+                if text_match:
+                    text = text_match.group(1)
+                    summary = summarize_text_new(text, 5)
+                    track_analytics('language_tool', email, {'tool': 'summarize'})
+                    return _finish(f"📄 **Summary:**\n\n{summary}",
+                                  topic="language", memory=memory, email=email,
+                                  stats=stats, known_name=known_name, raw_message=raw_message)
+        except:
+            pass
     
+    # ====== TIME & DATE ======
     if intent == 'time':
-        if 'time zone' in msg or 'timezone' in msg:
-            tz_match = re.search(r'(?:from|convert)\s+([A-Za-z/]+)\s+(?:to|->)\s+([A-Za-z/]+)', raw_message)
-            if tz_match:
-                from_tz = tz_match.group(1)
-                to_tz = tz_match.group(2)
-                now = datetime.now()
-                converted = convert_timezone(now, from_tz, to_tz)
-                if converted:
-                    track_analytics('time_tool', email, {'tool': 'timezone'})
-                    return _finish(f"🕐 **Time Zone Conversion:**\n\n**{from_tz}:** {now.strftime('%I:%M %p')}\n**{to_tz}:** {converted.strftime('%I:%M %p')}",
-                                  topic="time", memory=memory, email=email,
-                                  stats=stats, known_name=known_name, raw_message=raw_message)
+        try:
+            if 'time zone' in msg or 'timezone' in msg:
+                tz_match = re.search(r'(?:from|convert)\s+([A-Za-z/]+)\s+(?:to|->)\s+([A-Za-z/]+)', raw_message)
+                if tz_match:
+                    from_tz = tz_match.group(1)
+                    to_tz = tz_match.group(2)
+                    now = datetime.now()
+                    converted = convert_timezone(now, from_tz, to_tz)
+                    if converted:
+                        track_analytics('time_tool', email, {'tool': 'timezone'})
+                        return _finish(f"🕐 **Time Zone Conversion:**\n\n**{from_tz}:** {now.strftime('%I:%M %p')}\n**{to_tz}:** {converted.strftime('%I:%M %p')}",
+                                      topic="time", memory=memory, email=email,
+                                      stats=stats, known_name=known_name, raw_message=raw_message)
+        except:
+            pass
         
-        if 'business days' in msg:
-            date_match = re.findall(r'(\d{4}-\d{1,2}-\d{1,2})', raw_message)
-            if len(date_match) >= 2:
-                start = datetime.strptime(date_match[0], '%Y-%m-%d')
-                end = datetime.strptime(date_match[1], '%Y-%m-%d')
-                days = get_business_days(start, end)
-                if days is not None:
-                    track_analytics('time_tool', email, {'tool': 'business_days'})
-                    return _finish(f"📅 **Business Days:**\n\nBetween {start.strftime('%b %d, %Y')} and {end.strftime('%b %d, %Y')}\n**{days} business days**",
-                                  topic="time", memory=memory, email=email,
-                                  stats=stats, known_name=known_name, raw_message=raw_message)
+        try:
+            if 'business days' in msg:
+                date_match = re.findall(r'(\d{4}-\d{1,2}-\d{1,2})', raw_message)
+                if len(date_match) >= 2:
+                    start = datetime.strptime(date_match[0], '%Y-%m-%d')
+                    end = datetime.strptime(date_match[1], '%Y-%m-%d')
+                    days = get_business_days(start, end)
+                    if days is not None:
+                        track_analytics('time_tool', email, {'tool': 'business_days'})
+                        return _finish(f"📅 **Business Days:**\n\nBetween {start.strftime('%b %d, %Y')} and {end.strftime('%b %d, %Y')}\n**{days} business days**",
+                                      topic="time", memory=memory, email=email,
+                                      stats=stats, known_name=known_name, raw_message=raw_message)
+        except:
+            pass
     
+    # ====== CYBERSECURITY ======
     if intent == 'security':
-        if 'whois' in msg:
-            domain_match = re.search(r'(?:whois|lookup)\s+([a-zA-Z0-9.-]+)', raw_message)
-            if domain_match:
-                domain = domain_match.group(1)
-                whois_data = whois_lookup(domain)
-                if whois_data:
-                    track_analytics('security_tool', email, {'tool': 'whois'})
-                    result = f"🔍 **WHOIS Lookup for {domain}:**\n\n"
-                    result += f"**Registrar:** {whois_data.get('registrar', 'N/A')}\n"
-                    result += f"**Created:** {whois_data.get('creation_date', 'N/A')}\n"
-                    result += f"**Expires:** {whois_data.get('expiration_date', 'N/A')}\n"
-                    return _finish(result, topic="security", memory=memory, email=email,
-                                  stats=stats, known_name=known_name, raw_message=raw_message)
+        try:
+            if 'whois' in msg:
+                domain_match = re.search(r'(?:whois|lookup)\s+([a-zA-Z0-9.-]+)', raw_message)
+                if domain_match:
+                    domain = domain_match.group(1)
+                    whois_data = whois_lookup(domain)
+                    if whois_data:
+                        track_analytics('security_tool', email, {'tool': 'whois'})
+                        result = f"🔍 **WHOIS Lookup for {domain}:**\n\n"
+                        result += f"**Registrar:** {whois_data.get('registrar', 'N/A')}\n"
+                        result += f"**Created:** {whois_data.get('creation_date', 'N/A')}\n"
+                        result += f"**Expires:** {whois_data.get('expiration_date', 'N/A')}\n"
+                        return _finish(result, topic="security", memory=memory, email=email,
+                                      stats=stats, known_name=known_name, raw_message=raw_message)
+        except:
+            pass
         
-        if 'dns' in msg:
-            domain_match = re.search(r'(?:dns|dns lookup)\s+([a-zA-Z0-9.-]+)', raw_message)
-            if domain_match:
-                domain = domain_match.group(1)
-                dns_data = dns_lookup(domain)
-                if dns_data:
-                    track_analytics('security_tool', email, {'tool': 'dns'})
-                    result = f"🌐 **DNS Lookup for {domain}:**\n\n"
-                    for record_type, records in dns_data.items():
-                        if records:
-                            result += f"**{record_type}:** {', '.join(records[:3])}\n"
-                    return _finish(result, topic="security", memory=memory, email=email,
-                                  stats=stats, known_name=known_name, raw_message=raw_message)
+        try:
+            if 'dns' in msg:
+                domain_match = re.search(r'(?:dns|dns lookup)\s+([a-zA-Z0-9.-]+)', raw_message)
+                if domain_match:
+                    domain = domain_match.group(1)
+                    dns_data = dns_lookup(domain)
+                    if dns_data:
+                        track_analytics('security_tool', email, {'tool': 'dns'})
+                        result = f"🌐 **DNS Lookup for {domain}:**\n\n"
+                        for record_type, records in dns_data.items():
+                            if records:
+                                result += f"**{record_type}:** {', '.join(records[:3])}\n"
+                        return _finish(result, topic="security", memory=memory, email=email,
+                                      stats=stats, known_name=known_name, raw_message=raw_message)
+        except:
+            pass
     
+    # ====== QR CODE ======
     if intent == 'qr':
-        if 'qr' in msg:
-            data_match = re.search(r'(?:qr code|generate qr)\s+["\'](.+?)["\']', raw_message)
-            if data_match:
-                data = data_match.group(1)
-                qr_image = generate_qr(data)
-                if qr_image:
-                    track_analytics('productivity_tool', email, {'tool': 'qr'})
-                    return _finish(f"📱 **QR Code:**\n\n![QR Code]({qr_image})",
-                                  topic="qr", image=qr_image, memory=memory, email=email,
-                                  stats=stats, known_name=known_name, raw_message=raw_message)
+        try:
+            if 'qr' in msg:
+                data_match = re.search(r'(?:qr code|generate qr)\s+["\'](.+?)["\']', raw_message)
+                if data_match:
+                    data = data_match.group(1)
+                    qr_image = generate_qr(data)
+                    if qr_image:
+                        track_analytics('productivity_tool', email, {'tool': 'qr'})
+                        return _finish(f"📱 **QR Code:**\n\n![QR Code]({qr_image})",
+                                      topic="qr", image=qr_image, memory=memory, email=email,
+                                      stats=stats, known_name=known_name, raw_message=raw_message)
+        except:
+            pass
     
+    # ====== HEALTH CALCULATORS ======
     if intent == 'health':
-        if 'bmi' in msg:
-            weight_match = re.search(r'(\d+)\s*(?:kg|lbs?)', raw_message)
-            height_match = re.search(r'(\d+)\s*(?:cm|m|ft|in)', raw_message)
-            if weight_match and height_match:
-                weight = float(weight_match.group(1))
-                height = float(height_match.group(1))
-                unit = 'imperial' if 'lbs' in raw_message or 'ft' in raw_message or 'in' in raw_message else 'metric'
-                bmi_result = calculate_bmi(weight, height, unit)
-                if bmi_result:
-                    track_analytics('health_tool', email, {'tool': 'bmi'})
-                    return _finish(f"🏋️ **BMI Calculator:**\n\n**BMI:** {bmi_result['bmi']}\n**Category:** {bmi_result['category']}\n**Advice:** {bmi_result['advice']}",
-                                  topic="health", memory=memory, email=email,
-                                  stats=stats, known_name=known_name, raw_message=raw_message)
+        try:
+            if 'bmi' in msg:
+                weight_match = re.search(r'(\d+)\s*(?:kg|lbs?)', raw_message)
+                height_match = re.search(r'(\d+)\s*(?:cm|m|ft|in)', raw_message)
+                if weight_match and height_match:
+                    weight = float(weight_match.group(1))
+                    height = float(height_match.group(1))
+                    unit = 'imperial' if 'lbs' in raw_message or 'ft' in raw_message or 'in' in raw_message else 'metric'
+                    bmi_result = calculate_bmi(weight, height, unit)
+                    if bmi_result:
+                        track_analytics('health_tool', email, {'tool': 'bmi'})
+                        return _finish(f"🏋️ **BMI Calculator:**\n\n**BMI:** {bmi_result['bmi']}\n**Category:** {bmi_result['category']}\n**Advice:** {bmi_result['advice']}",
+                                      topic="health", memory=memory, email=email,
+                                      stats=stats, known_name=known_name, raw_message=raw_message)
+        except:
+            pass
     
-    weather_loc = parse_weather_query(msg)
-    if weather_loc:
-        cached = cache_get(f"weather:{weather_loc}")
-        if cached:
-            return _finish(cached, topic="weather", memory=memory, email=email,
-                          stats=stats, known_name=known_name, raw_message=raw_message)
-        result = get_weather(weather_loc)
-        if result:
-            cache_set(f"weather:{weather_loc}", result)
-            track_analytics('weather_query', email, {'location': weather_loc})
-            return _finish(result, topic="weather", memory=memory, email=email,
-                          stats=stats, known_name=known_name, raw_message=raw_message)
-    
-    if re.search(r'\b(news|headlines?|latest|breaking)\b', msg):
-        cat = parse_news_query(msg) or "general"
-        cached = cache_get(f"news:{cat}")
-        if cached:
-            return _finish(cached, topic="news", memory=memory, email=email,
-                          stats=stats, known_name=known_name, raw_message=raw_message)
-        result = get_news(cat)
-        if result:
-            cache_set(f"news:{cat}", result)
-            track_analytics('news_query', email, {'category': cat})
-            return _finish(result, topic="news", memory=memory, email=email,
-                          stats=stats, known_name=known_name, raw_message=raw_message)
-    
-    if re.search(r'\b(country|capital|population|currency|language|flag)\b', msg):
-        country_q = parse_country_query(msg)
-        if country_q and len(country_q) > 2:
-            result = get_country_info(country_q)
-            if result:
-                track_analytics('country_query', email, {'country': country_q})
-                return _finish(result, topic="country", memory=memory, email=email,
+    # ====== WEATHER (Existing) ======
+    try:
+        weather_loc = parse_weather_query(msg)
+        if weather_loc:
+            cached = cache_get(f"weather:{weather_loc}")
+            if cached:
+                return _finish(cached, topic="weather", memory=memory, email=email,
                               stats=stats, known_name=known_name, raw_message=raw_message)
+            result = get_weather(weather_loc)
+            if result:
+                cache_set(f"weather:{weather_loc}", result)
+                track_analytics('weather_query', email, {'location': weather_loc})
+                return _finish(result, topic="weather", memory=memory, email=email,
+                              stats=stats, known_name=known_name, raw_message=raw_message)
+    except:
+        pass
     
-    kb_answer = knowledge_base_lookup(msg)
-    if kb_answer:
-        return _finish(kb_answer, topic="knowledge", memory=memory, email=email,
+    # ====== NEWS (Existing) ======
+    try:
+        if re.search(r'\b(news|headlines?|latest|breaking)\b', msg):
+            cat = parse_news_query(msg) or "general"
+            cached = cache_get(f"news:{cat}")
+            if cached:
+                return _finish(cached, topic="news", memory=memory, email=email,
+                              stats=stats, known_name=known_name, raw_message=raw_message)
+            result = get_news(cat)
+            if result:
+                cache_set(f"news:{cat}", result)
+                track_analytics('news_query', email, {'category': cat})
+                return _finish(result, topic="news", memory=memory, email=email,
+                              stats=stats, known_name=known_name, raw_message=raw_message)
+    except:
+        pass
+    
+    # ====== COUNTRY FACTS (Existing) ======
+    try:
+        if re.search(r'\b(country|capital|population|currency|language|flag)\b', msg):
+            country_q = parse_country_query(msg)
+            if country_q and len(country_q) > 2:
+                result = get_country_info(country_q)
+                if result:
+                    track_analytics('country_query', email, {'country': country_q})
+                    return _finish(result, topic="country", memory=memory, email=email,
+                                  stats=stats, known_name=known_name, raw_message=raw_message)
+    except:
+        pass
+    
+    # ====== KNOWLEDGE BASE (Existing) ======
+    try:
+        kb_answer = knowledge_base_lookup(msg)
+        if kb_answer:
+            return _finish(kb_answer, topic="knowledge", memory=memory, email=email,
+                          stats=stats, known_name=known_name, raw_message=raw_message)
+    except:
+        pass
+    
+    # ====== MEMORY (Existing) ======
+    try:
+        recall = answer_from_memory(msg, memory)
+        if recall:
+            return _finish(recall, topic="recall", memory=memory, email=email,
+                          stats=stats, known_name=known_name, raw_message=raw_message)
+    except:
+        pass
+    
+    # ====== LEARN FACTS (Existing) ======
+    try:
+        learned = extract_facts(raw_message, memory)
+        if learned:
+            ack = []
+            for key, value in learned:
+                label = key.replace('favorite_', 'favorite ').replace('_', ' ')
+                ack.append(f"Got it — your {label} is **{value}**. I'll remember that! 🧠")
+            return _finish(" ".join(ack), topic="learning", memory=memory, email=email,
+                          stats=stats, known_name=known_name, raw_message=raw_message)
+    except:
+        pass
+    
+    # ====== DATE/TIME (Existing) ======
+    try:
+        dt_answer = datetime_answer(msg)
+        if dt_answer:
+            return _finish(dt_answer, topic="time", memory=memory, email=email,
+                          stats=stats, known_name=known_name, raw_message=raw_message)
+    except:
+        pass
+    
+    # ====== UNIT CONVERSION (Existing - FIXED) ======
+    try:
+        converted = convert_units(msg)
+        if converted is not None:
+            m = _CONVERT_RE.search(msg)
+            if m:
+                from_u, to_u = m.group(2), m.group(3)
+                result_str = f"{round(converted, 6):.6f}".rstrip('0').rstrip('.')
+                reply = f"📏 {m.group(1)} {from_u} = **{result_str} {to_u}**"
+                track_analytics('unit_conversion', email, {'from': from_u, 'to': to_u})
+                return _finish(reply, topic="conversion", memory=memory, email=email,
+                              stats=stats, known_name=known_name, raw_message=raw_message)
+    except:
+        pass
+    
+    # ====== SEARCH ENGINE (Enhanced) ======
+    try:
+        cleaned_query = clean_query(raw_message)
+        expanded_query = expand_query(cleaned_query)
+        
+        cached_search = cache_get(f"search:{cleaned_query}")
+        if cached_search:
+            return _finish(cached_search, topic="search", memory=memory, email=email,
+                          stats=stats, known_name=known_name, raw_message=raw_message)
+        
+        search_results = search_web(expanded_query)
+        if not search_results:
+            return _finish(f"🔍 I searched for **{cleaned_query}** but found no results. Try rephrasing?",
+                          topic="search", memory=memory, email=email,
+                          stats=stats, known_name=known_name, raw_message=raw_message)
+        
+        ranked_sources = rank_sources(search_results, cleaned_query)
+        
+        verified_sources = []
+        for source in ranked_sources[:5]:
+            health = get_source_health(source['url'])
+            if health['healthy']:
+                verified_sources.append(source)
+        
+        if not verified_sources:
+            verified_sources = ranked_sources[:3]
+        
+        confidence = calculate_confidence(verified_sources, cleaned_query)
+        
+        title = cleaned_query.title()
+        direct_answer = verified_sources[0]['snippet'] if verified_sources else "No direct answer found."
+        explanation = f"Based on {len(verified_sources)} sources, here's what I found about {cleaned_query}."
+        key_points = [f"{s['title']}" for s in verified_sources[:3]]
+        sources = [{'title': s['title'], 'url': s['url']} for s in verified_sources[:3]]
+        related_questions = [
+            f"What is {cleaned_query.split()[0]}?",
+            f"How does {cleaned_query.split()[0]} work?",
+            f"Latest news about {cleaned_query.split()[0]}"
+        ]
+        
+        formatted_response = format_answer(
+            title=title,
+            direct_answer=direct_answer,
+            explanation=explanation,
+            key_points=key_points,
+            sources=sources,
+            related_questions=related_questions
+        )
+        
+        if confidence > 80:
+            formatted_response += f"\n\n✅ I'm {confidence}% confident about this information."
+        elif confidence > 60:
+            formatted_response += f"\n\nℹ️ I'm about {confidence}% confident — you might want to verify with additional sources."
+        
+        endings = [
+            "\n\nAnything else you'd like to know? 😊",
+            "\n\nLet me know if you need more details! 💡",
+            "\n\nHope that helps! What's next? 🚀",
+            "\n\nFeel free to ask follow-up questions! 🌟"
+        ]
+        formatted_response += random.choice(endings)
+        
+        cache_set(f"search:{cleaned_query}", formatted_response)
+        track_analytics('search_query', email, {'query': cleaned_query, 'sources': len(verified_sources)})
+        
+        return _finish(formatted_response, topic="search", memory=memory, email=email,
                       stats=stats, known_name=known_name, raw_message=raw_message)
-    
-    recall = answer_from_memory(msg, memory)
-    if recall:
-        return _finish(recall, topic="recall", memory=memory, email=email,
+    except Exception as e:
+        logger.error(f"Search error: {e}")
+        return _finish(f"🔍 I tried to search for **{raw_message}** but encountered an error. Please try again.",
+                      topic="error", memory=memory, email=email,
                       stats=stats, known_name=known_name, raw_message=raw_message)
-    
-    learned = extract_facts(raw_message, memory)
-    if learned:
-        ack = []
-        for key, value in learned:
-            label = key.replace('favorite_', 'favorite ').replace('_', ' ')
-            ack.append(f"Got it — your {label} is **{value}**. I'll remember that! 🧠")
-        return _finish(" ".join(ack), topic="learning", memory=memory, email=email,
-                      stats=stats, known_name=known_name, raw_message=raw_message)
-    
-    dt_answer = datetime_answer(msg)
-    if dt_answer:
-        return _finish(dt_answer, topic="time", memory=memory, email=email,
-                      stats=stats, known_name=known_name, raw_message=raw_message)
-    
-    converted = convert_units(msg)
-    if converted is not None:
-        m = _CONVERT_RE.search(msg)
-        from_u, to_u = m.group(2), m.group(3)
-        result_str = f"{round(converted, 6):.6f}".rstrip('0').rstrip('.')
-        reply = f"📏 {m.group(1)} {from_u} = **{result_str} {to_u}**"
-        track_analytics('unit_conversion', email, {'from': from_u, 'to': to_u})
-        return _finish(reply, topic="conversion", memory=memory, email=email,
-                      stats=stats, known_name=known_name, raw_message=raw_message)
-    
-    cleaned_query = clean_query(raw_message)
-    expanded_query = expand_query(cleaned_query)
-    
-    cached_search = cache_get(f"search:{cleaned_query}")
-    if cached_search:
-        return _finish(cached_search, topic="search", memory=memory, email=email,
-                      stats=stats, known_name=known_name, raw_message=raw_message)
-    
-    search_results = search_web(expanded_query)
-    if not search_results:
-        return _finish(f"🔍 I searched for **{cleaned_query}** but found no results. Try rephrasing?",
-                      topic="search", memory=memory, email=email,
-                      stats=stats, known_name=known_name, raw_message=raw_message)
-    
-    ranked_sources = rank_sources(search_results, cleaned_query)
-    
-    verified_sources = []
-    for source in ranked_sources[:5]:
-        health = get_source_health(source['url'])
-        if health['healthy']:
-            verified_sources.append(source)
-    
-    if not verified_sources:
-        verified_sources = ranked_sources[:3]
-    
-    confidence = calculate_confidence(verified_sources, cleaned_query)
-    
-    title = cleaned_query.title()
-    direct_answer = verified_sources[0]['snippet'] if verified_sources else "No direct answer found."
-    explanation = f"Based on {len(verified_sources)} sources, here's what I found about {cleaned_query}."
-    key_points = [f"{s['title']}" for s in verified_sources[:3]]
-    sources = [{'title': s['title'], 'url': s['url']} for s in verified_sources[:3]]
-    related_questions = [
-        f"What is {cleaned_query.split()[0]}?",
-        f"How does {cleaned_query.split()[0]} work?",
-        f"Latest news about {cleaned_query.split()[0]}"
-    ]
-    
-    formatted_response = format_answer(
-        title=title,
-        direct_answer=direct_answer,
-        explanation=explanation,
-        key_points=key_points,
-        sources=sources,
-        related_questions=related_questions
-    )
-    
-    if confidence > 80:
-        formatted_response += f"\n\n✅ I'm {confidence}% confident about this information."
-    elif confidence > 60:
-        formatted_response += f"\n\nℹ️ I'm about {confidence}% confident — you might want to verify with additional sources."
-    
-    endings = [
-        "\n\nAnything else you'd like to know? 😊",
-        "\n\nLet me know if you need more details! 💡",
-        "\n\nHope that helps! What's next? 🚀",
-        "\n\nFeel free to ask follow-up questions! 🌟"
-    ]
-    formatted_response += random.choice(endings)
-    
-    cache_set(f"search:{cleaned_query}", formatted_response)
-    track_analytics('search_query', email, {'query': cleaned_query, 'sources': len(verified_sources)})
-    
-    return _finish(formatted_response, topic="search", memory=memory, email=email,
-                  stats=stats, known_name=known_name, raw_message=raw_message)
 
 def _finish(reply, topic=None, image=None, memory=None, email=None, stats=None, known_name=None, raw_message=None):
+    """Helper function to finalize response with suffix and context."""
     if memory is None:
         memory = {}
     
-    if not any(kw in reply for kw in ['😊', '👋', '❤️', '🌟', '✨']):
-        suffix = f"\n\n✨ **{known_name or 'User'}** • Level {stats['level']} — {stats['title']} • {stats['count']} messages"
-        if not reply.endswith(suffix):
-            reply += suffix
+    # Ensure reply is always a string
+    if reply is None:
+        reply = "I couldn't generate a response. Please try again."
     
+    if not isinstance(reply, str):
+        reply = str(reply)
+    
+    # Add suffix if not a friendly response
+    if not any(kw in reply for kw in ['😊', '👋', '❤️', '🌟', '✨', '🙂']):
+        try:
+            suffix = f"\n\n✨ **{known_name or 'User'}** • Level {stats.get('level', 1)} — {stats.get('title', '🌟 Newbie Chatter')} • {stats.get('count', 0)} messages"
+            if not reply.endswith(suffix):
+                reply += suffix
+        except:
+            pass
+    
+    # Store in memory
     if raw_message:
-        memory["conversation_history"].append({"user": raw_message, "yama": reply})
-        memory["conversation_history"] = memory["conversation_history"][-MEMORY_TURN_LIMIT:]
+        try:
+            memory["conversation_history"].append({"user": raw_message, "yama": reply})
+            memory["conversation_history"] = memory["conversation_history"][-MEMORY_TURN_LIMIT:]
+        except:
+            pass
     
     if topic:
         memory["last_topic"] = topic
     
-    context = detect_intent_and_context(raw_message or "")
-    memory["context"] = context
+    # Store context
+    try:
+        context = detect_intent_and_context(raw_message or "")
+        memory["context"] = context
+    except:
+        pass
     
     if email:
-        save_memory(email, memory)
+        try:
+            save_memory(email, memory)
+        except:
+            pass
     
-    return {"text": reply, "image": image} if image else reply
+    # ALWAYS return consistent format
+    return {"text": reply, "image": image}
 
 # ============ ENDPOINTS ============
 
@@ -2265,41 +2412,65 @@ async def root():
 
 @app.post("/set_user")
 async def set_user(request: Request):
-    data = await request.json()
-    get_or_create_user(data.get('email'), data.get('name'), data.get('picture'))
-    return {"status": "ok"}
+    try:
+        data = await request.json()
+        get_or_create_user(data.get('email'), data.get('name'), data.get('picture'))
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Set user error: {e}")
+        return {"status": "error", "message": str(e)}
 
 @app.post("/chat")
 async def chat(request: Request):
-    data = await request.json()
-    message = data.get('message', '')
-    email = data.get('email', '')
-    
-    start_time = time.time()
-    result = get_response(message, email)
-    end_time = time.time()
-    
-    track_analytics('response_time', email, {'time': end_time - start_time, 'query': message[:50]})
-    
-    if isinstance(result, dict):
-        response_text, response_image = result["text"], result.get("image")
-    else:
-        response_text, response_image = result, None
-    
-    if email:
-        history = load_history(email)
-        history.append({
-            "user": message,
-            "ai": response_text,
-            "timestamp": datetime.now().strftime("%H:%M")
-        })
-        save_history(email, history)
-    
-    return {"response": response_text, "image": response_image}
+    try:
+        data = await request.json()
+        message = data.get('message', '')
+        email = data.get('email', '')
+        
+        if not message:
+            return {"response": "Please enter a message.", "image": None}
+        
+        start_time = time.time()
+        result = get_response(message, email)
+        end_time = time.time()
+        
+        track_analytics('response_time', email, {'time': end_time - start_time, 'query': message[:50]})
+        
+        if isinstance(result, dict):
+            response_text = result.get("text", "I couldn't generate a response. Please try again.")
+            response_image = result.get("image")
+        else:
+            response_text = str(result) if result else "I couldn't generate a response. Please try again."
+            response_image = None
+        
+        # Ensure response_text is always a string
+        if response_text is None:
+            response_text = "I couldn't generate a response. Please try again."
+        
+        # Save to history
+        if email:
+            try:
+                history = load_history(email)
+                history.append({
+                    "user": message,
+                    "ai": response_text,
+                    "timestamp": datetime.now().strftime("%H:%M")
+                })
+                save_history(email, history)
+            except:
+                pass
+        
+        return {"response": response_text, "image": response_image}
+    except Exception as e:
+        logger.error(f"Chat error: {e}")
+        return {"response": f"⚠️ Error: {str(e)}", "image": None}
 
 @app.get("/get_history")
 async def get_history(email: str = ""):
-    return load_history(email)
+    try:
+        return load_history(email)
+    except:
+        return []
 
 @app.post("/clear_history")
 async def clear_history_endpoint(request: Request):
@@ -2313,64 +2484,79 @@ async def clear_history_endpoint(request: Request):
 
 @app.post("/feedback")
 async def feedback_endpoint(request: Request):
-    data = await request.json()
-    email = data.get('email', '')
-    feedback_type = data.get('feedback_type')
-    category = data.get('category')
-    question = data.get('question', '')
-    answer = data.get('answer', '')
-    
-    if feedback_type not in ('like', 'dislike'):
-        raise HTTPException(status_code=400, detail="feedback_type must be 'like' or 'dislike'")
-    
-    track_analytics('feedback', email, {'type': feedback_type, 'category': category})
-    
-    feedback_db.insert({
-        "email": email,
-        "type": feedback_type,
-        "category": category if feedback_type == 'dislike' else None,
-        "question": question,
-        "answer": answer,
-        "timestamp": datetime.now().isoformat()
-    })
-    return {"status": "ok"}
+    try:
+        data = await request.json()
+        email = data.get('email', '')
+        feedback_type = data.get('feedback_type')
+        category = data.get('category')
+        question = data.get('question', '')
+        answer = data.get('answer', '')
+        
+        if feedback_type not in ('like', 'dislike'):
+            raise HTTPException(status_code=400, detail="feedback_type must be 'like' or 'dislike'")
+        
+        track_analytics('feedback', email, {'type': feedback_type, 'category': category})
+        
+        feedback_db.insert({
+            "email": email,
+            "type": feedback_type,
+            "category": category if feedback_type == 'dislike' else None,
+            "question": question,
+            "answer": answer,
+            "timestamp": datetime.now().isoformat()
+        })
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Feedback error: {e}")
+        return {"status": "error", "message": str(e)}
 
 @app.post("/regenerate")
 async def regenerate_endpoint(request: Request):
-    data = await request.json()
-    email = data.get('email', '')
-    message = data.get('message', '')
-    invalidate_cache_for_message(message)
-    result = get_response(message, email)
-    if isinstance(result, dict):
-        return {"response": result["text"], "image": result.get("image")}
-    return {"response": result}
+    try:
+        data = await request.json()
+        email = data.get('email', '')
+        message = data.get('message', '')
+        invalidate_cache_for_message(message)
+        result = get_response(message, email)
+        if isinstance(result, dict):
+            return {"response": result.get("text", "No response"), "image": result.get("image")}
+        return {"response": str(result) if result else "No response", "image": None}
+    except Exception as e:
+        logger.error(f"Regenerate error: {e}")
+        return {"response": f"Error: {str(e)}", "image": None}
 
 @app.post("/continue_generating")
 async def continue_generating_endpoint(request: Request):
-    data = await request.json()
-    email = data.get('email', '')
-    message = data.get('message', '')
-    memory = load_memory(email)
-    last_topic = memory.get("last_topic")
-    
-    if last_topic == "search":
-        cleaned_query = clean_query(message)
-        search_results = search_web(cleaned_query)
-        if search_results and len(search_results) > 3:
-            extra = search_results[3:6]
-            response = "📚 **More sources:**\n\n"
-            for i, r in enumerate(extra, start=4):
-                response += f"**[{i}] {r['title']}**\n{r['snippet']}\n🔗 {r['url']}\n\n"
-            return {"response": response}
-    
-    return {"response": "_That's the complete answer — no additional details to add for this one._"}
+    try:
+        data = await request.json()
+        email = data.get('email', '')
+        message = data.get('message', '')
+        memory = load_memory(email)
+        last_topic = memory.get("last_topic")
+        
+        if last_topic == "search":
+            cleaned_query = clean_query(message)
+            search_results = search_web(cleaned_query)
+            if search_results and len(search_results) > 3:
+                extra = search_results[3:6]
+                response = "📚 **More sources:**\n\n"
+                for i, r in enumerate(extra, start=4):
+                    response += f"**[{i}] {r['title']}**\n{r['snippet']}\n🔗 {r['url']}\n\n"
+                return {"response": response}
+        
+        return {"response": "_That's the complete answer — no additional details to add for this one._"}
+    except Exception as e:
+        logger.error(f"Continue generating error: {e}")
+        return {"response": f"Error: {str(e)}"}
 
 @app.get("/share_conversation")
 async def share_conversation_endpoint(email: str = ""):
-    history = load_history(email)
-    conversation = [{"user": h.get("user", ""), "ai": h.get("ai", "")} for h in history]
-    return {"conversation": conversation}
+    try:
+        history = load_history(email)
+        conversation = [{"user": h.get("user", ""), "ai": h.get("ai", "")} for h in history]
+        return {"conversation": conversation}
+    except:
+        return {"conversation": []}
 
 @app.get("/health")
 async def health_check():
@@ -2382,105 +2568,130 @@ async def upload_file(file: UploadFile = File(...), email: str = Form(...)):
 
 @app.get("/analytics")
 async def get_analytics():
-    all_data = analytics_db.all()
-    total = len(all_data)
-    by_type = {}
-    for item in all_data:
-        t = item.get('type', 'unknown')
-        by_type[t] = by_type.get(t, 0) + 1
-    return {
-        'total_events': total,
-        'by_type': by_type,
-        'recent': all_data[-50:] if len(all_data) > 50 else all_data
-    }
+    try:
+        all_data = analytics_db.all()
+        total = len(all_data)
+        by_type = {}
+        for item in all_data:
+            t = item.get('type', 'unknown')
+            by_type[t] = by_type.get(t, 0) + 1
+        return {
+            'total_events': total,
+            'by_type': by_type,
+            'recent': all_data[-50:] if len(all_data) > 50 else all_data
+        }
+    except:
+        return {"total_events": 0, "by_type": {}, "recent": []}
 
 @app.get("/feedback_stats")
 async def feedback_stats_endpoint():
-    all_feedback = feedback_db.all()
-    likes = [f for f in all_feedback if f.get('type') == 'like']
-    dislikes = [f for f in all_feedback if f.get('type') == 'dislike']
-    
-    category_counts = {}
-    for f in dislikes:
-        cat = f.get('category') or 'Other'
-        category_counts[cat] = category_counts.get(cat, 0) + 1
-    
-    question_dislike_counts = {}
-    for f in dislikes:
-        q = f.get('question', '')
-        question_dislike_counts[q] = question_dislike_counts.get(q, 0) + 1
-    most_disliked = sorted(question_dislike_counts.items(), key=lambda x: x[1], reverse=True)[:10]
-    
-    return {
-        'total_likes': len(likes),
-        'total_dislikes': len(dislikes),
-        'dislike_categories': category_counts,
-        'most_disliked_questions': [{'question': q, 'count': c} for q, c in most_disliked]
-    }
+    try:
+        all_feedback = feedback_db.all()
+        likes = [f for f in all_feedback if f.get('type') == 'like']
+        dislikes = [f for f in all_feedback if f.get('type') == 'dislike']
+        
+        category_counts = {}
+        for f in dislikes:
+            cat = f.get('category') or 'Other'
+            category_counts[cat] = category_counts.get(cat, 0) + 1
+        
+        question_dislike_counts = {}
+        for f in dislikes:
+            q = f.get('question', '')
+            question_dislike_counts[q] = question_dislike_counts.get(q, 0) + 1
+        most_disliked = sorted(question_dislike_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+        
+        return {
+            'total_likes': len(likes),
+            'total_dislikes': len(dislikes),
+            'dislike_categories': category_counts,
+            'most_disliked_questions': [{'question': q, 'count': c} for q, c in most_disliked]
+        }
+    except:
+        return {"total_likes": 0, "total_dislikes": 0, "dislike_categories": {}, "most_disliked_questions": []}
 
 @app.get("/element/{element_name}")
 async def get_element_endpoint(element_name: str):
-    result = get_element_info(element_name)
-    if result:
-        return {'success': True, 'data': result}
-    return {'success': False, 'error': 'Element not found'}
+    try:
+        result = get_element_info(element_name)
+        if result:
+            return {'success': True, 'data': result}
+        return {'success': False, 'error': 'Element not found'}
+    except:
+        return {'success': False, 'error': 'Error fetching element'}
 
 @app.get("/qr/{data:path}")
 async def generate_qr_endpoint(data: str):
-    qr_image = generate_qr(data)
-    if qr_image:
-        return {'success': True, 'image': qr_image}
-    return {'success': False, 'error': 'Could not generate QR code'}
+    try:
+        qr_image = generate_qr(data)
+        if qr_image:
+            return {'success': True, 'image': qr_image}
+        return {'success': False, 'error': 'Could not generate QR code'}
+    except:
+        return {'success': False, 'error': 'QR generation error'}
 
 @app.post("/translate")
 async def translate_endpoint(request: Request):
-    data = await request.json()
-    text = data.get('text', '')
-    target = data.get('target', 'en')
-    
-    if not text:
-        raise HTTPException(status_code=400, detail="Text required")
-    
-    translated = translate_text(text, target)
-    return {'original': text, 'translated': translated, 'target_language': target}
+    try:
+        data = await request.json()
+        text = data.get('text', '')
+        target = data.get('target', 'en')
+        
+        if not text:
+            raise HTTPException(status_code=400, detail="Text required")
+        
+        translated = translate_text(text, target)
+        return {'original': text, 'translated': translated, 'target_language': target}
+    except Exception as e:
+        return {'error': str(e)}
 
 @app.post("/hash")
 async def generate_hash_endpoint(request: Request):
-    data = await request.json()
-    text = data.get('text', '')
-    algorithm = data.get('algorithm', 'sha256')
-    
-    if not text:
-        raise HTTPException(status_code=400, detail="Text required")
-    
-    hashed = hash_text(text, algorithm)
-    return {'algorithm': algorithm, 'hash': hashed}
+    try:
+        data = await request.json()
+        text = data.get('text', '')
+        algorithm = data.get('algorithm', 'sha256')
+        
+        if not text:
+            raise HTTPException(status_code=400, detail="Text required")
+        
+        hashed = hash_text(text, algorithm)
+        return {'algorithm': algorithm, 'hash': hashed}
+    except Exception as e:
+        return {'error': str(e)}
 
 @app.post("/password")
 async def generate_password_endpoint(request: Request):
-    data = await request.json()
-    length = data.get('length', 16)
-    include_symbols = data.get('include_symbols', True)
-    
-    password = generate_password(length, include_symbols)
-    return {'password': password, 'length': len(password), 'includes_symbols': include_symbols}
+    try:
+        data = await request.json()
+        length = data.get('length', 16)
+        include_symbols = data.get('include_symbols', True)
+        
+        password = generate_password(length, include_symbols)
+        return {'password': password, 'length': len(password), 'includes_symbols': include_symbols}
+    except Exception as e:
+        return {'error': str(e)}
 
 @app.post("/bmi")
 async def calculate_bmi_endpoint(request: Request):
-    data = await request.json()
-    weight = data.get('weight')
-    height = data.get('height')
-    unit = data.get('unit', 'metric')
-    
-    if not weight or not height:
-        raise HTTPException(status_code=400, detail="Weight and height required")
-    
-    result = calculate_bmi(float(weight), float(height), unit)
-    if result:
-        return {'success': True, **result}
-    return {'success': False, 'error': 'Could not calculate BMI'}
+    try:
+        data = await request.json()
+        weight = data.get('weight')
+        height = data.get('height')
+        unit = data.get('unit', 'metric')
+        
+        if not weight or not height:
+            raise HTTPException(status_code=400, detail="Weight and height required")
+        
+        result = calculate_bmi(float(weight), float(height), unit)
+        if result:
+            return {'success': True, **result}
+        return {'success': False, 'error': 'Could not calculate BMI'}
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
 
 # ============ HTML ============
+# USE YOUR ORIGINAL HTML HERE - Copy your working HTML from your original file
 HTML = '''<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -3329,6 +3540,7 @@ if __name__ == "__main__":
     print("✅ Analytics")
     print("✅ Friendly Conversations")
     print("✅ Performance Optimizations")
+    print("✅ Fixed Response Pipeline")
     print("="*55)
     print("🏛️ Developed by: Riishil M Mehta")
     print("="*55 + "\n")
