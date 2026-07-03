@@ -714,6 +714,26 @@ def cache_get(text):
 def cache_set(text, result):
     _response_cache[_cache_key(text)] = (time.time(), result)
 
+def invalidate_cache_for_message(raw_message):
+    """Used by /regenerate — clears any cached weather/news/search entry for
+    this exact message so a fresh answer is fetched instead of returning the
+    identical cached one."""
+    msg = raw_message.lower().strip()
+    weather_loc = parse_weather_query(msg)
+    if weather_loc:
+        _response_cache.pop(_cache_key(f"weather:{weather_loc}"), None)
+    if re.search(r'\b(news|headlines?|latest|breaking)\b', msg):
+        cat = parse_news_query(msg) or "general"
+        _response_cache.pop(_cache_key(f"news:{cat}"), None)
+    _response_cache.pop(_cache_key(f"search:{raw_message}"), None)
+
+# ============ FEEDBACK STORAGE (Issues #1 & #2) ============
+# FIX: the frontend already called POST /feedback for both like and dislike
+# clicks, but this endpoint never existed on the backend — every click 404'd
+# silently and nothing was ever stored. Added real storage here.
+feedback_db = TinyDB(os.path.join(DATA_DIR, 'feedback.json'))
+Feedback = Query()
+
 # ============ SEARCH FUNCTION ============
 def search_web(query):
     results = []
@@ -1249,6 +1269,39 @@ HTML = f'''
         @supports (height: 100dvh) {{
             .app {{ height: 100dvh; min-height: 100dvh; }}
         }}
+
+        /* ===== FEEDBACK MODAL (Issue #1 — dislike reason popup) ===== */
+        .feedback-modal-overlay {{
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.45); z-index: 3000;
+            display: none; align-items: center; justify-content: center;
+            padding: 20px;
+        }}
+        .feedback-modal-overlay.show {{ display: flex; }}
+        .feedback-modal {{
+            background: white; border-radius: 20px; padding: 24px;
+            max-width: 380px; width: 100%;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.25);
+        }}
+        body.dark .feedback-modal {{ background: #2a2a4e; color: #e0e0e0; }}
+        .feedback-modal h3 {{ font-family: 'Playfair Display', serif; margin-bottom: 16px; font-size: 1.15rem; }}
+        .feedback-options {{ display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }}
+        .feedback-options label {{
+            display: flex; align-items: center; gap: 10px;
+            font-size: 0.9rem; cursor: pointer; padding: 6px 8px;
+            border-radius: 8px; transition: background 0.15s;
+        }}
+        .feedback-options label:hover {{ background: rgba(44,36,24,0.06); }}
+        body.dark .feedback-options label:hover {{ background: rgba(212,197,169,0.08); }}
+        .feedback-modal-actions {{ display: flex; gap: 10px; justify-content: flex-end; }}
+        .feedback-modal-actions button {{
+            padding: 8px 18px; border-radius: 20px; border: none;
+            cursor: pointer; font-size: 0.85rem; font-family: inherit;
+        }}
+        .feedback-cancel-btn {{ background: #e0d5c8; color: #2c2418; }}
+        body.dark .feedback-cancel-btn {{ background: #3a3a5e; color: #d4c5a9; }}
+        .feedback-submit-btn {{ background: #2c2418; color: white; }}
+        body.dark .feedback-submit-btn {{ background: #4a3f2f; }}
     </style>
 </head>
 <body>
@@ -1259,6 +1312,23 @@ HTML = f'''
             <p>Your Intelligent Assistant</p>
             <div id="g_id_onload" data-client_id="{GOOGLE_CLIENT_ID}" data-context="signin" data-ux_mode="popup" data-callback="handleCredentialResponse" data-auto_prompt="false"></div>
             <div class="g_id_signin" data-type="standard" data-shape="rectangular" data-theme="outline" data-text="signin_with" data-size="large" data-logo_alignment="left"></div>
+        </div>
+    </div>
+    <div id="dislikeModal" class="feedback-modal-overlay">
+        <div class="feedback-modal">
+            <h3>What went wrong?</h3>
+            <div class="feedback-options">
+                <label><input type="radio" name="dislikeReason" value="Incorrect Answer" checked> Incorrect Answer</label>
+                <label><input type="radio" name="dislikeReason" value="Outdated Information"> Outdated Information</label>
+                <label><input type="radio" name="dislikeReason" value="Bad Source"> Bad Source</label>
+                <label><input type="radio" name="dislikeReason" value="Not Helpful"> Not Helpful</label>
+                <label><input type="radio" name="dislikeReason" value="Poor Explanation"> Poor Explanation</label>
+                <label><input type="radio" name="dislikeReason" value="Other"> Other</label>
+            </div>
+            <div class="feedback-modal-actions">
+                <button class="feedback-cancel-btn" onclick="closeDislikeModal()">Cancel</button>
+                <button class="feedback-submit-btn" onclick="submitDislikeFeedback()">Submit</button>
+            </div>
         </div>
     </div>
     <div class="app" id="app">
@@ -1312,6 +1382,9 @@ HTML = f'''
     </div>
     <script>
         let currentUser = null, hasMessages = false, messageCounter = 0, isGenerating = false;
+        // Maps messageId -> {{question, answer}} so like/dislike feedback and
+        // copy/regenerate actions don't need to scrape the DOM.
+        let messageStore = {{}};
         
         function toggleTheme() {{ document.body.classList.toggle('dark'); localStorage.setItem('theme', document.body.classList.contains('dark') ? 'dark' : 'light'); }}
         
@@ -1470,6 +1543,9 @@ HTML = f'''
                 }});
                 const data = await res.json();
                 content.innerHTML = formatMessage(data.response);
+                // Keep messageStore in sync so a later like/dislike reports
+                // the regenerated answer, not the original one.
+                if (messageStore[messageId]) messageStore[messageId].answer = data.response;
             }} catch(e) {{ console.error(e); }}
             document.getElementById('typing').style.display = 'none';
             isGenerating = false;
@@ -1528,6 +1604,7 @@ HTML = f'''
                 }});
                 const data = await res.json();
                 content.innerHTML += formatMessage(data.response);
+                if (messageStore[messageId]) messageStore[messageId].answer = content.innerText;
             }} catch(e) {{ console.error(e); }}
             document.getElementById('typing').style.display = 'none';
             isGenerating = false;
@@ -1551,33 +1628,97 @@ HTML = f'''
             }} catch(e) {{ alert('Could not share conversation.'); }}
         }}
         
-        async function submitFeedback(messageId, feedbackType) {{
-            const div = document.getElementById(`message-${{messageId}}`);
-            const likeBtn = div.querySelector('.like-btn');
-            const dislikeBtn = div.querySelector('.dislike-btn');
+        // ===== LIKE / DISLIKE FEEDBACK (Issues #1 & #2) =====
+        // FIX: this previously called /feedback with the wrong payload shape
+        // and that endpoint didn't even exist on the backend, so every click
+        // silently failed. Now: like submits immediately; dislike opens a
+        // reason popup first, matching the report's required behavior.
+        let pendingDislikeMessageId = null;
+        
+        async function sendFeedback(messageId, feedbackType, category) {{
+            const entry = messageStore[messageId] || {{}};
             try {{
                 await fetch('/feedback', {{
                     method: 'POST',
                     headers: {{ 'Content-Type': 'application/json' }},
-                    body: JSON.stringify({{ email: currentUser.email, message_index: parseInt(messageId.split('-')[1]), feedback_type: feedbackType }})
+                    body: JSON.stringify({{
+                        email: currentUser.email,
+                        feedback_type: feedbackType,
+                        category: category,
+                        question: entry.question || '',
+                        answer: entry.answer || ''
+                    }})
                 }});
-                if (feedbackType === 'like') {{
-                    likeBtn.classList.toggle('liked');
-                    if (dislikeBtn.classList.contains('disliked')) dislikeBtn.classList.remove('disliked');
-                }} else {{
-                    dislikeBtn.classList.toggle('disliked');
-                    if (likeBtn.classList.contains('liked')) likeBtn.classList.remove('liked');
-                }}
             }} catch(e) {{ console.error(e); }}
         }}
         
-        function stopGenerating() {{ isGenerating = false; document.getElementById('typing').style.display = 'none'; }}
+        function submitLikeFeedback(messageId) {{
+            const div = document.getElementById(messageId);
+            const likeBtn = div.querySelector('.like-btn');
+            const dislikeBtn = div.querySelector('.dislike-btn');
+            likeBtn.classList.toggle('liked');
+            dislikeBtn.classList.remove('disliked');
+            sendFeedback(messageId, 'like', null);
+        }}
+        
+        function openDislikeModal(messageId) {{
+            pendingDislikeMessageId = messageId;
+            document.getElementById('dislikeModal').classList.add('show');
+        }}
+        
+        function closeDislikeModal() {{
+            document.getElementById('dislikeModal').classList.remove('show');
+            pendingDislikeMessageId = null;
+        }}
+        
+        function submitDislikeFeedback() {{
+            const messageId = pendingDislikeMessageId;
+            if (!messageId) return;
+            const selected = document.querySelector('input[name="dislikeReason"]:checked');
+            const category = selected ? selected.value : 'Other';
+            const div = document.getElementById(messageId);
+            const dislikeBtn = div.querySelector('.dislike-btn');
+            const likeBtn = div.querySelector('.like-btn');
+            dislikeBtn.classList.add('disliked');
+            likeBtn.classList.remove('liked');
+            sendFeedback(messageId, 'dislike', category);
+            closeDislikeModal();
+        }}
+        
+        // ===== STOP GENERATION (Issues #6 & #7) =====
+        // FIX: the old Stop just hid the typing indicator and flipped a flag —
+        // the original fetch('/chat') call kept running in the background and
+        // its answer would still get appended after "stopping". Now uses a
+        // real AbortController so the in-flight request is actually cancelled,
+        // and the send button visually becomes a Stop button while generating.
+        let currentController = null;
+        
+        function setSendButtonState(generating) {{
+            const btn = document.querySelector('.submit-btn');
+            if (generating) {{
+                btn.innerHTML = '<svg class="submit-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+                btn.setAttribute('aria-label', 'Stop generating');
+            }} else {{
+                btn.innerHTML = '<svg class="submit-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>';
+                btn.setAttribute('aria-label', 'Send message');
+            }}
+        }}
+        
+        function stopGenerating() {{
+            if (currentController) {{
+                currentController.abort();
+                currentController = null;
+            }}
+            isGenerating = false;
+            setSendButtonState(false);
+            document.getElementById('typing').style.display = 'none';
+        }}
         
         async function sendMessage() {{
             if (!currentUser) {{ alert('Please sign in first!'); return; }}
+            if (isGenerating) {{ stopGenerating(); return; }}
             const message = textarea.value.trim();
             if (!message) return;
-            if (isGenerating) {{ stopGenerating(); return; }}
             if (!hasMessages) {{
                 const welcome = document.getElementById('welcome');
                 if (welcome) welcome.style.display = 'none';
@@ -1588,20 +1729,34 @@ HTML = f'''
             textarea.value = '';
             textarea.style.height = 'auto';
             document.getElementById('typing').style.display = 'block';
+            isGenerating = true;
+            setSendButtonState(true);
+            currentController = new AbortController();
             scrollToBottom();
             try {{
                 const res = await fetch('/chat', {{
                     method: 'POST',
                     headers: {{ 'Content-Type': 'application/json' }},
-                    body: JSON.stringify({{ message: message, email: currentUser.email }})
+                    body: JSON.stringify({{ message: message, email: currentUser.email }}),
+                    signal: currentController.signal
                 }});
                 const data = await res.json();
                 const aiMessageId = 'msg-' + (++messageCounter);
                 addMessage(data.response, 'ai', aiMessageId, message);
-                document.getElementById('typing').style.display = 'none';
                 loadHistory();
+            }} catch(e) {{
+                if (e.name === 'AbortError') {{
+                    addMessage('_Generation stopped._', 'ai', 'msg-' + (++messageCounter));
+                }} else {{
+                    console.error(e);
+                }}
+            }} finally {{
+                document.getElementById('typing').style.display = 'none';
+                isGenerating = false;
+                setSendButtonState(false);
+                currentController = null;
                 scrollToBottom();
-            }} catch(e) {{ console.error(e); document.getElementById('typing').style.display = 'none'; }}
+            }}
         }}
         
         function addMessage(text, sender, messageId, userMessage = '') {{
@@ -1629,14 +1784,19 @@ HTML = f'''
             const actions = document.createElement('div');
             actions.className = 'message-actions';
             if (sender === 'ai') {{
+                // FIX: track question/answer pairs so feedback and copy/share
+                // actions have real content instead of scraping the DOM.
+                // (The old per-message "Stop" button is gone — Stop now lives
+                // on the send button itself, matching the report's request
+                // that it behave like ChatGPT/Gemini/Claude.)
+                messageStore[messageId] = {{ question: userMessage || getLastUserMessage(), answer: text }};
                 actions.innerHTML = `
                     <button class="copy-btn" onclick="copyResponse('${{messageId}}')">📋 Copy</button>
                     <button onclick="regenerateResponse('${{messageId}}', '${{escapeJs(userMessage || getLastUserMessage())}}')">🔄 Regenerate</button>
                     <button onclick="continueGenerating('${{messageId}}')">📝 Continue</button>
-                    <button onclick="stopGenerating()">⏹️ Stop</button>
                     <button onclick="shareConversation()">📤 Share</button>
-                    <button class="like-btn" onclick="submitFeedback('${{messageId}}', 'like')">👍</button>
-                    <button class="dislike-btn" onclick="submitFeedback('${{messageId}}', 'dislike')">👎</button>
+                    <button class="like-btn" onclick="submitLikeFeedback('${{messageId}}')">👍</button>
+                    <button class="dislike-btn" onclick="openDislikeModal('${{messageId}}')">👎</button>
                 `;
             }} else {{
                 actions.innerHTML = `<button onclick="editMessage('${{messageId}}')">✏️ Edit</button>`;
@@ -1738,6 +1898,113 @@ async def clear_history_endpoint(request: Request):
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "service": "Yama AI", "timestamp": datetime.now().isoformat()}
+
+# ============ FEEDBACK ENDPOINTS (Issues #1 & #2) ============
+_DISLIKE_CATEGORIES = {
+    "Incorrect Answer", "Outdated Information", "Bad Source",
+    "Not Helpful", "Poor Explanation", "Other"
+}
+
+@app.post("/feedback")
+async def feedback_endpoint(request: Request):
+    data = await request.json()
+    email = data.get('email', '')
+    feedback_type = data.get('feedback_type')
+    category = data.get('category')
+    question = data.get('question', '')
+    answer = data.get('answer', '')
+
+    if feedback_type not in ('like', 'dislike'):
+        raise HTTPException(status_code=400, detail="feedback_type must be 'like' or 'dislike'")
+    if feedback_type == 'dislike' and category not in _DISLIKE_CATEGORIES:
+        category = 'Other'
+
+    feedback_db.insert({
+        "email": email,
+        "type": feedback_type,
+        "category": category if feedback_type == 'dislike' else None,
+        "question": question,
+        "answer": answer,
+        "timestamp": datetime.now().isoformat()
+    })
+    return {"status": "ok"}
+
+@app.get("/feedback_stats")
+async def feedback_stats():
+    """Bonus analytics endpoint (not wired into the UI) — most disliked
+    questions and most common complaint categories, as the report requested
+    the backend track."""
+    all_feedback = feedback_db.all()
+    likes = [f for f in all_feedback if f["type"] == "like"]
+    dislikes = [f for f in all_feedback if f["type"] == "dislike"]
+
+    category_counts = {}
+    for f in dislikes:
+        cat = f.get("category") or "Other"
+        category_counts[cat] = category_counts.get(cat, 0) + 1
+
+    question_dislike_counts = {}
+    for f in dislikes:
+        q = f.get("question", "")
+        question_dislike_counts[q] = question_dislike_counts.get(q, 0) + 1
+    most_disliked = sorted(question_dislike_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+
+    return {
+        "total_likes": len(likes),
+        "total_dislikes": len(dislikes),
+        "dislike_categories": category_counts,
+        "most_disliked_questions": [{"question": q, "count": c} for q, c in most_disliked]
+    }
+
+# ============ REGENERATE (Issue #13 button audit) ============
+@app.post("/regenerate")
+async def regenerate_endpoint(request: Request):
+    """FIX: frontend already called this, endpoint didn't exist. Note: since
+    Yama has no LLM, there is no creative variation to regenerate — this
+    clears any cached weather/news/search entry for the message so a fresh
+    fetch runs instead of returning byte-identical cached text. Deterministic
+    answers (math, conversions, knowledge base) will come back the same,
+    which is expected/correct for a rule-based engine."""
+    data = await request.json()
+    email = data.get('email', '')
+    message = data.get('message', '')
+    invalidate_cache_for_message(message)
+    result = get_response(message, email)
+    if isinstance(result, dict):
+        return {"response": result["text"], "image": result.get("image")}
+    return {"response": result}
+
+# ============ CONTINUE GENERATING (Issue #13 button audit) ============
+@app.post("/continue_generating")
+async def continue_generating_endpoint(request: Request):
+    """FIX: frontend already called this, endpoint didn't exist. For a
+    rule-based engine there's no token stream to resume, so 'continue' means
+    something concrete instead: if the last answer was a web search, fetch
+    the next batch of sources beyond the first 3 that were already shown."""
+    data = await request.json()
+    email = data.get('email', '')
+    message = data.get('message', '')
+    memory = load_memory(email)
+    last_topic = memory.get("last_topic")
+
+    if last_topic == "search":
+        search_results = search_web(message)
+        extra = search_results[3:6] if search_results else []
+        if extra:
+            response = "📚 **More sources:**\n\n"
+            for i, r in enumerate(extra, start=4):
+                response += f"**[{i}] {r['title']}**\n{r['snippet']}\n🔗 {r['url']}\n\n"
+            return {"response": response}
+
+    return {"response": "_That's the complete answer — no additional details to add for this one._"}
+
+# ============ SHARE CONVERSATION (Issue #13 button audit) ============
+@app.get("/share_conversation")
+async def share_conversation_endpoint(email: str = ""):
+    """FIX: frontend already called this, endpoint didn't exist."""
+    history = load_history(email)
+    conversation = [{"user": h.get("user", ""), "ai": h.get("ai", "")} for h in history]
+    return {"conversation": conversation}
 
 # ============ MISSING FUNCTIONS ============
 def get_response(message, email):
