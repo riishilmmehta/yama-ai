@@ -1,3 +1,7 @@
+# ============================================
+# YAMA AI – Complete Dependencies
+# ============================================
+
 # ============ CORE ============
 fastapi
 uvicorn
@@ -15,56 +19,56 @@ numpy
 scipy
 matplotlib
 
-# ============ MATH PARSING ============
+# ============ MATH PARSING (optional) ============
 latex2sympy2
 antlr4-python3-runtime
 
-# ============ DOCUMENT PROCESSING (Optional) ============
-PyMuPDF
-python-docx
-python-pptx
-pandas
-openpyxl
-Pillow
-pytesseract
+# ============ DOCUMENT PROCESSING (optional) ============
+PyMuPDF          # PDF extraction (faster than PyPDF2)
+python-docx      # Word documents
+python-pptx      # PowerPoint
+pandas           # Data analysis (Excel, CSV)
+openpyxl         # Excel read/write
+Pillow           # Image processing
+pytesseract      # OCR (requires Tesseract-OCR system install)
 
-# ============ DATA & APIs ============
-feedparser
-yfinance
-qrcode
-rapidfuzz
+# ============ DATA & APIS ============
+feedparser       # RSS/Atom feeds
+yfinance         # Stock market data
+qrcode           # QR code generation
+rapidfuzz        # Fuzzy string matching
 
 # ============ TEXT PROCESSING ============
-textblob
-dateparser
-thefuzz
+textblob         # NLP sentiment, translation (alternative)
+dateparser       # Natural language date parsing
+thefuzz          # Fuzzy matching (alternative)
 
 # ============ UTILITIES ============
-networkx
-PyPDF2
+networkx         # Graph algorithms (optional)
+PyPDF2           # PDF manipulation (legacy, consider PyMuPDF)
 
-# ============ CHEMISTRY ENGINE (NEW) ============
-chempy
-mendeleev
+# ============ CHEMISTRY ENGINE ============
+chempy           # Stoichiometry, reactions
+mendeleev        # Periodic table data
 
-# ============ LANGUAGE TOOLS (NEW) ============
-deep-translator
-language-tool-python
-nltk
-langdetect
+# ============ LANGUAGE TOOLS ============
+deep-translator  # Translation (Google, etc.)
+language-tool-python  # Grammar/spell check
+nltk             # NLP tokenization, summarization
+langdetect       # Language detection
 
-# ============ TIME & DATE (NEW) ============
+# ============ TIME & DATE ============
 pytz
-holidays
+holidays         # Public holidays
 
-# ============ DEVELOPER UTILITIES (NEW) ============
-rjsmin
-rcssmin
+# ============ DEVELOPER UTILITIES ============
+rjsmin           # JavaScript minification
+rcssmin          # CSS minification
 
-# ============ CYBERSECURITY (NEW) ============
-python-whois
-dnspython
+# ============ CYBERSECURITY ============
+python-whois     # WHOIS lookup
+dnspython        # DNS queries
 
-# ============ PRODUCTIVITY (NEW) ============
-geopy
-python-barcode
+# ============ PRODUCTIVITY ============
+geopy            # Geocoding, distance
+python-barcode   # Barcode generation
