@@ -1852,14 +1852,19 @@ HTML = '''<!DOCTYPE html>
             loadHistory();
             fetch('/set_user', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: currentUser.email, name: currentUser.name, picture: currentUser.picture }) });
         }
-        function logout() {
-            currentUser = null;
-            document.getElementById('loginOverlay').style.display = 'flex';
-            document.getElementById('app').style.display = 'none';
-            document.getElementById('userBtn').style.display = 'none';
-            document.getElementById('userProfile').style.display = 'none';
-            if (google && google.accounts) google.accounts.id.disableAutoSelect();
-        }
+       function logout() {
+    currentUser = null;
+    document.getElementById('loginOverlay').style.display = 'flex';
+    document.getElementById('app').style.display = 'none';
+    document.getElementById('userBtn').style.display = 'none';
+    document.getElementById('userProfile').style.display = 'none';
+    
+    // ✅ Proper logout
+    if (google && google.accounts) {
+        google.accounts.id.disableAutoSelect();
+        google.accounts.id.cancel();
+    }
+}
         function newChat() { if (confirm('Start a new chat?')) location.reload(); }
         function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); document.getElementById('overlay').classList.toggle('show'); }
         function closeSidebar() { document.getElementById('sidebar').classList.remove('open'); document.getElementById('overlay').classList.remove('show'); }
