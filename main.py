@@ -1817,7 +1817,7 @@ HTML = '''<!DOCTYPE html>
         let messageStore = {};
         
         function toggleTheme() { document.body.classList.toggle('dark'); localStorage.setItem('theme', document.body.classList.contains('dark') ? 'dark' : 'light'); }
-        function exportChat() {
+                function exportChat() {
             const messages = document.querySelectorAll('.message');
             let exportText = '';
             messages.forEach(msg => {
@@ -1831,26 +1831,53 @@ HTML = '''<!DOCTYPE html>
             a.download = 'yama_chat_' + new Date().toISOString() + '.txt';
             a.click();
         }
+        
         if (localStorage.getItem('theme') === 'dark') document.body.classList.add('dark');
-        function toggleUserMenu() { document.getElementById('sidebar').classList.toggle('open'); document.getElementById('overlay').classList.toggle('show'); }
+        
+        function toggleUserMenu() { 
+            document.getElementById('sidebar').classList.toggle('open'); 
+            document.getElementById('overlay').classList.toggle('show'); 
+        }
+        
+        // ✅ FIXED: Added try/catch and return false
         function handleCredentialResponse(response) {
-            const payload = JSON.parse(atob(response.credential.split('.')[1]));
-            currentUser = { name: payload.name, email: payload.email, picture: payload.picture };
-            document.getElementById('loginOverlay').style.display = 'none';
-            document.getElementById('app').style.display = 'flex';
-            document.getElementById('userBtn').style.display = 'block';
-            document.getElementById('userAvatar').src = currentUser.picture;
-            document.getElementById('userProfile').style.display = 'flex';
-            document.getElementById('userProfile').innerHTML = `
-                <img src="${currentUser.picture}" class="user-profile-img">
-                <div class="user-profile-info">
-                    <div class="user-profile-name">${currentUser.name}</div>
-                    <div class="user-profile-email">${currentUser.email}</div>
-                </div>
-                <button class="logout-btn" onclick="logout()">Logout</button>
-            `;
-            loadHistory();
-            fetch('/set_user', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: currentUser.email, name: currentUser.name, picture: currentUser.picture }) });
+            try {
+                const payload = JSON.parse(atob(response.credential.split('.')[1]));
+                currentUser = { name: payload.name, email: payload.email, picture: payload.picture };
+                
+                document.getElementById('loginOverlay').style.display = 'none';
+                document.getElementById('app').style.display = 'flex';
+                document.getElementById('userBtn').style.display = 'block';
+                document.getElementById('userAvatar').src = currentUser.picture;
+                
+                document.getElementById('userProfile').style.display = 'flex';
+                document.getElementById('userProfile').innerHTML = `
+                    <img src="${currentUser.picture}" class="user-profile-img">
+                    <div class="user-profile-info">
+                        <div class="user-profile-name">${currentUser.name}</div>
+                        <div class="user-profile-email">${currentUser.email}</div>
+                    </div>
+                    <button class="logout-btn" onclick="logout()">Logout</button>
+                `;
+                
+                loadHistory();
+                fetch('/set_user', { 
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'application/json' }, 
+                    body: JSON.stringify({ 
+                        email: currentUser.email, 
+                        name: currentUser.name, 
+                        picture: currentUser.picture 
+                    }) 
+                });
+                
+                // ✅ CRITICAL: Prevents the sign-in loop
+                return false;
+                
+            } catch (error) {
+                console.error('Google Sign-In error:', error);
+                alert('Sign-in failed. Please try again.');
+            }
         }
        function logout() {
     currentUser = null;
