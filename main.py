@@ -74,7 +74,11 @@ import socket
 import whois
 import dns.resolver
 import ssl
-import datetime
+# NOTE: Do NOT `import datetime` here. `from datetime import datetime, timedelta`
+# was already done above. A bare `import datetime` rebinds the name `datetime`
+# to the MODULE, which silently breaks every `datetime.now()` call in this
+# file with "module 'datetime' has no attribute 'now'"-style failures. This
+# was a fatal, hard-to-spot bug and has been removed on purpose.
 
 # Productivity
 import qrcode
@@ -84,6 +88,19 @@ from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 import barcode
 from barcode.writer import ImageWriter
+
+# Optional OCR support (image -> text -> solve). Degrades gracefully if not installed.
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+
+try:
+    import pytesseract
+    TESSERACT_AVAILABLE = True
+except ImportError:
+    TESSERACT_AVAILABLE = False
 
 # ============ LOGGING SETUP ============
 logging.basicConfig(
@@ -1107,17 +1124,208 @@ def summarize_text_new(text, max_sentences=5):
     except:
         return text
 
+# ============ PHYSICS ENGINE ============
+_PHYSICS_FORMULAS = {
+    'kinematics_v':      {'name': 'v = u + at',      'vars': ['v', 'u', 'a', 't'],      'eq': 'v - (u + a*t)'},
+    'kinematics_s':      {'name': 's = ut + \u00bdat\u00b2', 'vars': ['s', 'u', 't', 'a'],      'eq': 's - (u*t + 0.5*a*t**2)'},
+    'kinematics_v2':     {'name': 'v\u00b2 = u\u00b2 + 2as', 'vars': ['v', 'u', 'a', 's'],      'eq': 'v**2 - (u**2 + 2*a*s)'},
+    'force':             {'name': 'F = ma',           'vars': ['F', 'm', 'a'],           'eq': 'F - m*a'},
+    'work':              {'name': 'W = Fd',           'vars': ['W', 'F', 'd'],           'eq': 'W - F*d'},
+    'kinetic_energy':    {'name': 'KE = \u00bdmv\u00b2', 'vars': ['KE', 'm', 'v'],        'eq': 'KE - 0.5*m*v**2'},
+    'potential_energy':  {'name': 'PE = mgh',         'vars': ['PE', 'm', 'g', 'h'],     'eq': 'PE - m*g*h'},
+    'ohms_law':          {'name': 'V = IR',           'vars': ['V', 'I', 'R'],           'eq': 'V - I*R'},
+    'power_electric':    {'name': 'P = VI',           'vars': ['P', 'V', 'I'],           'eq': 'P - V*I'},
+    'density':           {'name': '\u03c1 = m/V',      'vars': ['rho', 'm', 'V'],         'eq': 'rho - m/V'},
+    'pressure':          {'name': 'P = F/A',          'vars': ['P', 'F', 'A'],           'eq': 'P - F/A'},
+    'momentum':          {'name': 'p = mv',           'vars': ['p', 'm', 'v'],           'eq': 'p - m*v'},
+    'wave_speed':        {'name': 'v = f\u03bb',       'vars': ['v', 'f', 'wl'],          'eq': 'v - f*wl'},
+    'ideal_gas':         {'name': 'PV = nRT',         'vars': ['P', 'V', 'n', 'R', 'T'], 'eq': 'P*V - n*R*T'},
+}
+
+_PHYSICS_TRIGGERS = {
+    'kinematics_v':     ['final velocity', 'v=u+at', 'v = u + at'],
+    'kinematics_s':     ['displacement', 's=ut', 'distance travelled'],
+    'kinematics_v2':    ['v^2=u^2', 'v2=u2'],
+    'force':            ['newton', 'force =', 'f=ma', 'f = ma'],
+    'work':             ['work done', 'work ='],
+    'kinetic_energy':   ['kinetic energy'],
+    'potential_energy': ['potential energy'],
+    'ohms_law':         ['ohm', 'voltage', 'resistance', 'current ='],
+    'power_electric':   ['electric power', 'power ='],
+    'density':          ['density'],
+    'pressure':         ['pressure'],
+    'momentum':         ['momentum'],
+    'wave_speed':       ['wave speed', 'wavelength', 'frequency'],
+    'ideal_gas':        ['ideal gas', 'gas law', 'pv=nrt'],
+}
+
+_PHYSICS_KEYWORDS = [
+    'physics', 'velocity', 'acceleration', 'newton', 'kinematics', 'projectile',
+    'kinetic energy', 'potential energy', 'ohm', 'voltage', 'resistance',
+    'momentum', 'wavelength', 'frequency', 'ideal gas', 'gas law', 'force =',
+    'pressure', 'friction', 'torque', 'gravity', 'g =', 'f=ma', 'v=u+at'
+]
+
+def is_physics_query(msg):
+    return any(kw in msg.lower() for kw in _PHYSICS_KEYWORDS)
+
+def _detect_physics_formula(msg_lower):
+    for key, triggers in _PHYSICS_TRIGGERS.items():
+        if any(t in msg_lower for t in triggers):
+            return key
+    return None
+
+def solve_physics(raw_message):
+    """Solve a physics formula step-by-step given known variable=value pairs."""
+    msg_lower = raw_message.lower()
+    formula_key = _detect_physics_formula(msg_lower)
+    if not formula_key:
+        return None
+    try:
+        formula = _PHYSICS_FORMULAS[formula_key]
+        pairs = re.findall(r'\b([a-zA-Z]{1,4})\s*=\s*(-?\d+\.?\d*)', raw_message)
+        known = {}
+        for name, val in pairs:
+            for v in formula['vars']:
+                if name.lower() == v.lower():
+                    known[v] = float(val)
+                    break
+
+        missing = [v for v in formula['vars'] if v not in known]
+        if len(missing) != 1 or len(known) < 2:
+            return None
+        target = missing[0]
+
+        symbols = {v: sp.Symbol(v) for v in formula['vars']}
+        expr = sp.sympify(formula['eq'], locals=symbols)
+        expr_sub = expr.subs({symbols[k]: v for k, v in known.items()})
+        solutions = sp.solve(sp.Eq(expr_sub, 0), symbols[target])
+
+        if not solutions:
+            return None
+
+        real_solutions = [s for s in solutions if getattr(s, 'is_real', True)]
+        chosen = real_solutions[0] if real_solutions else solutions[0]
+        try:
+            chosen_val = round(float(chosen), 4)
+        except (TypeError, ValueError):
+            chosen_val = chosen
+
+        lines = [
+            f"⚛️ **Formula:** {formula['name']}",
+            "",
+            "**Step 1: Identify known and unknown values**",
+            "**Given:** " + ", ".join(f"{k} = {v}" for k, v in known.items()),
+            f"**Find:** {target}",
+            "",
+            "**Step 2: Substitute known values into the formula**",
+            f"{formula['eq'].replace('**', '^')}  (solve for {target} = 0)",
+            "",
+            f"**Final Answer:** {target} = {chosen_val}"
+        ]
+        track_analytics('physics_query', 'anon', {'formula': formula_key})
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"Physics solve error: {e}")
+        return None
+
+# ============ BIOLOGY ENGINE ============
+def solve_biology(raw_message):
+    """Handle basic step-by-step biology calculations: Punnett squares and population growth."""
+    msg_lower = raw_message.lower()
+
+    # Monohybrid Punnett square cross, e.g. "punnett square cross Aa x Aa"
+    if 'punnett' in msg_lower or 'genotype' in msg_lower or ('cross' in msg_lower and re.search(r'\b[A-Za-z]{2}\s*(?:x|×)\s*[A-Za-z]{2}\b', raw_message)):
+        cross_match = re.search(r'\b([A-Za-z]{2})\s*(?:x|×|cross)\s*([A-Za-z]{2})\b', raw_message)
+        if cross_match:
+            try:
+                p1, p2 = cross_match.group(1), cross_match.group(2)
+                gametes1 = list(p1)
+                gametes2 = list(p2)
+                offspring = [a + b for a in gametes1 for b in gametes2]
+                counts = {}
+                for o in offspring:
+                    key = ''.join(sorted(o, key=lambda c: (c.lower(), not c.isupper())))
+                    counts[key] = counts.get(key, 0) + 1
+
+                lines = [
+                    "🧬 **Monohybrid Cross (Punnett Square)**",
+                    "",
+                    "**Step 1: Identify parent genotypes**",
+                    f"Parent 1: {p1}  •  Parent 2: {p2}",
+                    "",
+                    "**Step 2: List the gametes each parent can produce**",
+                    f"Parent 1 gametes: {', '.join(gametes1)}",
+                    f"Parent 2 gametes: {', '.join(gametes2)}",
+                    "",
+                    "**Step 3: Combine gametes to get offspring genotypes**",
+                ]
+                for k, v in counts.items():
+                    lines.append(f"• {k}: {v}/4 ({round(v/4*100)}%)")
+                track_analytics('biology_query', 'anon', {'type': 'punnett'})
+                return "\n".join(lines)
+            except Exception as e:
+                logger.error(f"Punnett square error: {e}")
+
+    # Exponential population growth: N = N0 * e^(rt)
+    if 'population growth' in msg_lower or 'exponential growth' in msg_lower:
+        try:
+            n0 = re.search(r'n0\s*=\s*(-?\d+\.?\d*)', msg_lower)
+            r = re.search(r'\br\s*=\s*(-?\d+\.?\d*)', msg_lower)
+            t = re.search(r'\bt\s*=\s*(-?\d+\.?\d*)', msg_lower)
+            if n0 and r and t:
+                N0, rr, tt = float(n0.group(1)), float(r.group(1)), float(t.group(1))
+                N = N0 * math.exp(rr * tt)
+                lines = [
+                    "🧬 **Exponential Population Growth**",
+                    "",
+                    "**Formula:** N = N₀ × e^(rt)",
+                    "",
+                    "**Step 1: Identify known values**",
+                    f"N₀ (initial population) = {N0}",
+                    f"r (growth rate) = {rr}",
+                    f"t (time) = {tt}",
+                    "",
+                    "**Step 2: Substitute into the formula**",
+                    f"N = {N0} × e^({rr} × {tt})",
+                    "",
+                    f"**Final Answer:** N = {round(N, 4)}"
+                ]
+                track_analytics('biology_query', 'anon', {'type': 'population_growth'})
+                return "\n".join(lines)
+        except Exception as e:
+            logger.error(f"Population growth error: {e}")
+
+    return None
+
+_BIOLOGY_KEYWORDS = [
+    'biology', 'punnett', 'genotype', 'phenotype', 'allele', 'dna', 'rna',
+    'chromosome', 'mitosis', 'meiosis', 'photosynthesis', 'respiration',
+    'population growth', 'ecosystem', 'evolution', 'natural selection',
+    'enzyme', 'protein synthesis', 'gene', 'heredity', 'punnett square'
+]
+
+def is_biology_query(msg):
+    return any(kw in msg.lower() for kw in _BIOLOGY_KEYWORDS)
+
 # ============ INTENT ROUTER ============
 def detect_intent(msg):
     msg_lower = msg.lower()
     
     math_keywords = ['math', 'solve', 'calculate', 'equation', 'integrate', 'differentiate', 
                      'derivative', 'matrix', 'determinant', 'statistics', 'mean', 'median']
+
+    if is_physics_query(msg_lower):
+        return 'physics'
+
     if any(kw in msg_lower for kw in math_keywords) or looks_like_math(msg):
         return 'math'
     
     if is_chemistry_query(msg):
         return 'chemistry'
+
+    if is_biology_query(msg):
+        return 'biology'
     
     dev_keywords = ['password', 'hash', 'regex', 'json', 'minify', 'uuid', 'timestamp', 'base64']
     if any(kw in msg_lower for kw in dev_keywords):
@@ -1795,6 +2003,8 @@ _KNOWLEDGE_BASE = {
         "**Developed by:** Riishil M Mehta\n\n"
         "**My Abilities:**\n"
         "🧮 Solve math (algebra, calculus, matrices)\n"
+        "⚛️ Solve physics problems step-by-step\n"
+        "🧬 Solve biology problems (Punnett squares, growth models)\n"
         "📊 Generate graphs of any function\n"
         "🌤️ Check live weather anywhere\n"
         "📰 Fetch latest news by topic\n"
@@ -1810,6 +2020,8 @@ _KNOWLEDGE_BASE = {
     "what can you do": (
         "🛠️ **Yama's Capabilities:**\n\n"
         "**Math & Science:** Full expression calculator, algebra, calculus, integrals, matrices, stats, graphing\n"
+        "**Physics:** Step-by-step formula solving (kinematics, forces, energy, circuits, gas laws)\n"
+        "**Biology:** Punnett squares, population growth models\n"
         "**Real-Time Data:** Weather, news headlines\n"
         "**Knowledge:** Country facts\n"
         "**Files:** PDF, DOCX, XLSX, TXT, images (OCR)\n"
@@ -1835,7 +2047,7 @@ _KNOWLEDGE_BASE = {
     "are you human": "🤖 Nope! I'm Yama — a rule-based AI assistant. No LLM, no neural network — just clever engineering!",
     "are you real": "💡 I'm as real as software gets! A rule-based AI with genuine capabilities.",
     "i love you": "❤️ That's sweet! I'm here to help whenever you need me.",
-    "help": "💡 Type any question! Try: **weather in Mumbai**, **graph x^2**, **10 km to miles**, **latest tech news**, or **solve x^2 - 4 = 0**.",
+    "help": "💡 Type any question! Try: **weather in Mumbai**, **graph x^2**, **10 km to miles**, **latest tech news**, **v=u+at u=0 a=9.8 t=5**, or **solve x^2 - 4 = 0**.",
     "hello": "👋 Hello! I'm **Yama AI**. How can I help you today?",
     "hi": "👋 Hi there! I'm Yama — your intelligent assistant. What brings you here?",
     "hey": "👋 Hey! Yama here! Ready to help you with anything!",
@@ -1847,7 +2059,7 @@ _KNOWLEDGE_BASE = {
         "🏛️ **About Yama AI:**\n\n"
         "I'm a rule-based AI assistant created by **Riishil M Mehta**.\n\n"
         "I don't use any LLM or AI APIs — everything I do is based on:\n"
-        "• SymPy for mathematics\n"
+        "• SymPy for mathematics and physics\n"
         "• Matplotlib for graphs\n"
         "• Web search for research\n"
         "• RSS feeds for news\n"
@@ -1906,6 +2118,24 @@ def get_response(message, email):
     except:
         intent = 'search'
     
+    # ====== PHYSICS ENGINE ======
+    if intent == 'physics':
+        try:
+            physics_result = solve_physics(raw_message)
+            if physics_result:
+                return _finish(physics_result, topic="physics", memory=memory, email=email,
+                              stats=stats, known_name=known_name, raw_message=raw_message)
+        except:
+            pass
+        # Fall through to math engine in case it's phrased as a plain equation
+        try:
+            solved = solve_step_by_step(raw_message)
+            if solved:
+                return _finish(solved, topic="physics_math", memory=memory, email=email,
+                              stats=stats, known_name=known_name, raw_message=raw_message)
+        except:
+            pass
+
     # ====== MATH ENGINE ======
     if intent == 'math':
         try:
@@ -1963,6 +2193,16 @@ def get_response(message, email):
                     track_analytics('chemistry_query', email, {'query': raw_message, 'type': 'element'})
                     return _finish(elem_info, topic="chemistry", memory=memory, email=email,
                                   stats=stats, known_name=known_name, raw_message=raw_message)
+        except:
+            pass
+
+    # ====== BIOLOGY ENGINE ======
+    if intent == 'biology':
+        try:
+            bio_result = solve_biology(raw_message)
+            if bio_result:
+                return _finish(bio_result, topic="biology", memory=memory, email=email,
+                              stats=stats, known_name=known_name, raw_message=raw_message)
         except:
             pass
     
@@ -2564,7 +2804,44 @@ async def health_check():
 
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...), email: str = Form(...)):
-    return {"status": "ok", "message": "File upload is available but requires additional libraries installed."}
+    try:
+        contents = await file.read()
+        filename = (file.filename or "").lower()
+        image_types = ('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp')
+
+        if filename.endswith(image_types):
+            if not (PIL_AVAILABLE and TESSERACT_AVAILABLE):
+                return {"status": "ok",
+                        "message": "📷 Image received, but OCR isn't available on this server "
+                                    "(Pillow/pytesseract not installed). Please type your question instead.",
+                        "image": None}
+            try:
+                img = Image.open(io.BytesIO(contents))
+                extracted_text = pytesseract.image_to_string(img).strip()
+            except Exception as e:
+                logger.error(f"OCR error: {e}")
+                return {"status": "error",
+                        "message": "⚠️ I couldn't read that image. Please try a clearer photo or type the question.",
+                        "image": None}
+
+            if not extracted_text:
+                return {"status": "ok",
+                        "message": "📷 Image uploaded, but I couldn't detect any readable text. Please type the question.",
+                        "image": None}
+
+            ai_result = get_response(extracted_text, email)
+            ai_text = ai_result.get("text", "Could not solve.") if isinstance(ai_result, dict) else str(ai_result)
+            ai_image = ai_result.get("image") if isinstance(ai_result, dict) else None
+            message = f"📷 **Text detected in image:**\n```\n{extracted_text}\n```\n\n**Answer:**\n{ai_text}"
+            return {"status": "ok", "message": message, "image": ai_image}
+
+        return {"status": "ok",
+                "message": f"📎 Received **{file.filename}**. Right now I can only read text out of images (OCR) — "
+                            "please paste the text/question directly for other file types.",
+                "image": None}
+    except Exception as e:
+        logger.error(f"Upload error: {e}")
+        return {"status": "error", "message": f"⚠️ Upload failed: {str(e)}", "image": None}
 
 @app.get("/analytics")
 async def get_analytics():
@@ -2900,6 +3177,8 @@ HTML = '''<!DOCTYPE html>
         body.dark .attach-btn { border-color: #4a3f2f; color: #e0e0e0; }
         .attach-btn:hover { background-color: rgba(44,36,24,0.06); }
         .attach-icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; }
+        .attach-btn.listening { background-color: #d9534f; border-color: #d9534f; color: white; animation: pulseMic 1s ease-in-out infinite; }
+        @keyframes pulseMic { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
         .message-content img.chat-image { max-width: 100%; border-radius: 10px; margin-top: 10px; display: block; }
         
         .welcome {
@@ -3065,9 +3344,9 @@ HTML = '''<!DOCTYPE html>
                         <div class="suggestion" onclick="askSuggestion('5 km to miles')">📏 Convert</div>
                         <div class="suggestion" onclick="askSuggestion('latest tech news')">📰 News</div>
                         <div class="suggestion" onclick="askSuggestion('solve x^2 - 4 = 0')">📐 Math</div>
-                        <div class="suggestion" onclick="askSuggestion('tell me a joke')">😄 Joke</div>
+                        <div class="suggestion" onclick="askSuggestion('v=u+at u=0 a=9.8 t=5')">⚛️ Physics</div>
+                        <div class="suggestion" onclick="askSuggestion('punnett square cross Aa x Aa')">🧬 Biology</div>
                         <div class="suggestion" onclick="askSuggestion('info about Japan')">🌍 Facts</div>
-                        <div class="suggestion" onclick="askSuggestion('who made you')">👨‍💻 About</div>
                     </div>
                 </div>
             </div>
@@ -3079,6 +3358,9 @@ HTML = '''<!DOCTYPE html>
                         <svg class="attach-icon" viewBox="0 0 24 24" width="18" height="18"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
                     </button>
                     <div class="input-text-wrapper"><textarea id="userInput" placeholder="Ask Yama anything..." rows="1" onkeypress="handleKey(event)"></textarea></div>
+                    <button class="attach-btn" id="micBtn" onclick="toggleVoice()" aria-label="Voice input" type="button" title="Voice input">
+                        <svg class="attach-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                    </button>
                     <button class="submit-btn" onclick="sendMessage()" aria-label="Send message">
                         <svg class="submit-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
                     </button>
@@ -3210,10 +3492,10 @@ HTML = '''<!DOCTYPE html>
         function handleKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }
         
         function copyResponse(messageId) {
-            const content = document.querySelector(`#message-${messageId} .message-content`);
+            const content = document.querySelector(`#${messageId} .message-content`);
             if (content) {
                 navigator.clipboard.writeText(content.innerText).then(() => {
-                    const btn = document.querySelector(`#message-${messageId} .copy-btn`);
+                    const btn = document.querySelector(`#${messageId} .copy-btn`);
                     const originalText = btn.textContent;
                     btn.textContent = '✅ Copied!';
                     setTimeout(() => { btn.textContent = originalText; }, 2000);
@@ -3225,7 +3507,7 @@ HTML = '''<!DOCTYPE html>
             if (isGenerating) return;
             isGenerating = true;
             document.getElementById('typing').style.display = 'block';
-            const content = document.querySelector(`#message-${messageId} .message-content`);
+            const content = document.querySelector(`#${messageId} .message-content`);
             try {
                 const res = await fetch('/regenerate', {
                     method: 'POST',
@@ -3234,6 +3516,13 @@ HTML = '''<!DOCTYPE html>
                 });
                 const data = await res.json();
                 content.innerHTML = formatMessage(data.response);
+                if (data.image) {
+                    const img = document.createElement('img');
+                    img.src = data.image;
+                    img.className = 'chat-image';
+                    img.alt = 'Generated image';
+                    content.appendChild(img);
+                }
                 if (messageStore[messageId]) messageStore[messageId].answer = data.response;
             } catch(e) { console.error(e); }
             document.getElementById('typing').style.display = 'none';
@@ -3242,7 +3531,7 @@ HTML = '''<!DOCTYPE html>
         }
         
         function editMessage(messageId) {
-            const div = document.getElementById(`message-${messageId}`);
+            const div = document.getElementById(messageId);
             const content = div.querySelector('.message-content');
             const editInput = div.querySelector('.edit-message-input');
             const editActions = div.querySelector('.edit-actions');
@@ -3255,22 +3544,66 @@ HTML = '''<!DOCTYPE html>
             }
         }
         
-        function saveEdit(messageId) {
-            const div = document.getElementById(`message-${messageId}`);
+        async function saveEdit(messageId) {
+            const div = document.getElementById(messageId);
             const editInput = div.querySelector('.edit-message-input');
             const content = div.querySelector('.message-content');
             const editActions = div.querySelector('.edit-actions');
             const newText = editInput.value.trim();
-            if (newText) {
-                content.innerText = newText;
-                content.style.display = 'block';
-                editInput.classList.remove('active');
-                editActions.classList.remove('active');
+            if (!newText) return;
+
+            content.innerText = newText;
+            content.style.display = 'block';
+            editInput.classList.remove('active');
+            editActions.classList.remove('active');
+
+            // Find the AI response that immediately follows this edited user message
+            let aiDiv = div.nextElementSibling;
+            while (aiDiv && !aiDiv.classList.contains('ai-message')) {
+                aiDiv = aiDiv.nextElementSibling;
             }
+
+            if (!currentUser || isGenerating) return;
+            isGenerating = true;
+            document.getElementById('typing').style.display = 'block';
+
+            try {
+                const res = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: newText, email: currentUser.email })
+                });
+                const data = await res.json();
+                if (aiDiv) {
+                    const aiContent = aiDiv.querySelector('.message-content');
+                    aiContent.innerHTML = formatMessage(data.response);
+                    if (data.image) {
+                        const img = document.createElement('img');
+                        img.src = data.image;
+                        img.className = 'chat-image';
+                        img.alt = 'Generated image';
+                        aiContent.appendChild(img);
+                    }
+                    if (messageStore[aiDiv.id]) {
+                        messageStore[aiDiv.id].question = newText;
+                        messageStore[aiDiv.id].answer = data.response;
+                    }
+                    const regenBtn = aiDiv.querySelector('.message-actions button:nth-child(2)');
+                    if (regenBtn) regenBtn.setAttribute('onclick', `regenerateResponse('${aiDiv.id}', '${escapeJs(newText)}')`);
+                } else {
+                    addMessage(data.response, 'ai', 'msg-' + (++messageCounter), newText);
+                }
+                loadHistory();
+            } catch (e) {
+                console.error(e);
+            }
+            document.getElementById('typing').style.display = 'none';
+            isGenerating = false;
+            scrollToBottom();
         }
         
         function cancelEdit(messageId) {
-            const div = document.getElementById(`message-${messageId}`);
+            const div = document.getElementById(messageId);
             const content = div.querySelector('.message-content');
             const editInput = div.querySelector('.edit-message-input');
             const editActions = div.querySelector('.edit-actions');
@@ -3283,8 +3616,8 @@ HTML = '''<!DOCTYPE html>
             if (isGenerating) return;
             isGenerating = true;
             document.getElementById('typing').style.display = 'block';
-            const content = document.querySelector(`#message-${messageId} .message-content`);
-            const userMessage = getLastUserMessage();
+            const content = document.querySelector(`#${messageId} .message-content`);
+            const userMessage = (messageStore[messageId] && messageStore[messageId].question) || getLastUserMessage();
             try {
                 const res = await fetch('/continue_generating', {
                     method: 'POST',
@@ -3420,7 +3753,7 @@ HTML = '''<!DOCTYPE html>
                 });
                 const data = await res.json();
                 const aiMessageId = 'msg-' + (++messageCounter);
-                addMessage(data.response, 'ai', aiMessageId, message);
+                addMessage(data.response, 'ai', aiMessageId, message, data.image);
                 loadHistory();
             } catch(e) {
                 if (e.name === 'AbortError') {
@@ -3437,7 +3770,7 @@ HTML = '''<!DOCTYPE html>
             }
         }
         
-        function addMessage(text, sender, messageId, userMessage = '') {
+        function addMessage(text, sender, messageId, userMessage = '', image = null) {
             const messages = document.getElementById('messages');
             const div = document.createElement('div');
             div.className = 'message ' + sender + '-message';
@@ -3447,6 +3780,13 @@ HTML = '''<!DOCTYPE html>
             const content = document.createElement('div');
             content.className = 'message-content';
             content.innerHTML = formatMessage(text);
+            if (image) {
+                const img = document.createElement('img');
+                img.src = image;
+                img.className = 'chat-image';
+                img.alt = 'Generated image';
+                content.appendChild(img);
+            }
             wrapper.appendChild(content);
             if (sender === 'user') {
                 const editInput = document.createElement('input');
@@ -3468,6 +3808,7 @@ HTML = '''<!DOCTYPE html>
                     <button onclick="regenerateResponse('${messageId}', '${escapeJs(userMessage || getLastUserMessage())}')">🔄 Regenerate</button>
                     <button onclick="continueGenerating('${messageId}')">📝 Continue</button>
                     <button onclick="shareConversation()">📤 Share</button>
+                    <button class="speak-btn" onclick="speakMessage('${messageId}')">🔊 Speak</button>
                     <button class="like-btn" onclick="submitLikeFeedback('${messageId}')">👍</button>
                     <button class="dislike-btn" onclick="openDislikeModal('${messageId}')">👎</button>
                 `;
@@ -3502,15 +3843,74 @@ HTML = '''<!DOCTYPE html>
             try {
                 const res = await fetch('/upload', { method: 'POST', body: formData });
                 const data = await res.json();
-                addMessage(data.message || 'Upload failed.', 'ai');
+                addMessage(data.message || 'Upload failed.', 'ai', 'msg-' + (++messageCounter), '', data.image);
             } catch (err) {
-                addMessage('⚠️ Upload failed, please try again.', 'ai');
+                addMessage('⚠️ Upload failed, please try again.', 'ai', 'msg-' + (++messageCounter));
             }
             document.getElementById('typing').style.display = 'none';
             event.target.value = '';
             scrollToBottom();
         }
         
+        // ===== Voice Input (Web Speech API) =====
+        let recognition = null;
+        let isListening = false;
+        const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SpeechRecognitionAPI) {
+            recognition = new SpeechRecognitionAPI();
+            recognition.continuous = false;
+            recognition.interimResults = false;
+            recognition.lang = 'en-US';
+
+            recognition.onresult = function(event) {
+                const transcript = event.results[0][0].transcript;
+                textarea.value = transcript;
+                autoAdjustHeight.call(textarea);
+                sendMessage();
+            };
+            recognition.onend = function() {
+                isListening = false;
+                document.getElementById('micBtn').classList.remove('listening');
+            };
+            recognition.onerror = function() {
+                isListening = false;
+                document.getElementById('micBtn').classList.remove('listening');
+            };
+        }
+
+        function toggleVoice() {
+            if (!recognition) {
+                alert('Voice input is not supported in this browser. Try Chrome or Edge.');
+                return;
+            }
+            const micBtn = document.getElementById('micBtn');
+            if (isListening) {
+                recognition.stop();
+                isListening = false;
+                micBtn.classList.remove('listening');
+            } else {
+                recognition.start();
+                isListening = true;
+                micBtn.classList.add('listening');
+            }
+        }
+
+        // ===== Voice Output (SpeechSynthesis) =====
+        function speakMessage(messageId) {
+            if (!('speechSynthesis' in window)) {
+                alert('Voice output is not supported in this browser.');
+                return;
+            }
+            const content = document.querySelector(`#${messageId} .message-content`);
+            if (!content) return;
+            const text = content.innerText;
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'en-US';
+            utterance.rate = 1.0;
+            window.speechSynthesis.speak(utterance);
+        }
+
         loadHistory();
         textarea.focus();
     </script>
@@ -3527,6 +3927,8 @@ if __name__ == "__main__":
     print("✅ Enhanced Search Quality")
     print("✅ AI Response Formatter")
     print("✅ Step-by-Step Math Solutions")
+    print("✅ Physics Formula Solver (step-by-step)")
+    print("✅ Biology Solver (Punnett squares, growth models)")
     print("✅ Chemistry Engine (ChemPy + PubChem)")
     print("✅ Periodic Table Integration")
     print("✅ Developer Utilities")
@@ -3541,6 +3943,8 @@ if __name__ == "__main__":
     print("✅ Friendly Conversations")
     print("✅ Performance Optimizations")
     print("✅ Fixed Response Pipeline")
+    print("✅ Fixed Copy/Edit/Regenerate/Continue button IDs")
+    print("✅ Fixed critical `import datetime` name-collision bug")
     print("="*55)
     print("🏛️ Developed by: Riishil M Mehta")
     print("="*55 + "\n")
