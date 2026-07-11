@@ -1,5 +1,12 @@
 # ============================================
-# YAMA AI – Complete Dependencies
+# YAMA AI – Dependencies
+# Trimmed to match what app.py actually imports.
+# Packages that were listed but never imported
+# (googlesearch-python, latex2sympy2, antlr4-python3-runtime,
+#  PyMuPDF, python-docx, python-pptx, pandas, openpyxl,
+#  yfinance, rapidfuzz, thefuzz, textblob, dateparser,
+#  networkx, PyPDF2) have been removed — they just slow down
+# install and increase the chance of a version conflict.
 # ============================================
 
 # ============ CORE ============
@@ -9,8 +16,7 @@ requests
 beautifulsoup4
 tinydb
 ddgs
-googlesearch-python
-python-multipart
+python-multipart      # required by FastAPI for UploadFile / Form()
 
 # ============ MATHEMATICS ENGINE ============
 sympy
@@ -19,56 +25,43 @@ numpy
 scipy
 matplotlib
 
-# ============ MATH PARSING (optional) ============
-latex2sympy2
-antlr4-python3-runtime
-
-# ============ DOCUMENT PROCESSING (optional) ============
-PyMuPDF          # PDF extraction (faster than PyPDF2)
-python-docx      # Word documents
-python-pptx      # PowerPoint
-pandas           # Data analysis (Excel, CSV)
-openpyxl         # Excel read/write
-Pillow           # Image processing
-pytesseract      # OCR (requires Tesseract-OCR system install)
-
-# ============ DATA & APIS ============
-feedparser       # RSS/Atom feeds
-yfinance         # Stock market data
-qrcode           # QR code generation
-rapidfuzz        # Fuzzy string matching
-
-# ============ TEXT PROCESSING ============
-textblob         # NLP sentiment, translation (alternative)
-dateparser       # Natural language date parsing
-thefuzz          # Fuzzy matching (alternative)
-
-# ============ UTILITIES ============
-networkx         # Graph algorithms (optional)
-PyPDF2           # PDF manipulation (legacy, consider PyMuPDF)
-
 # ============ CHEMISTRY ENGINE ============
-chempy           # Stoichiometry, reactions
-mendeleev        # Periodic table data
+chempy
+mendeleev
 
 # ============ LANGUAGE TOOLS ============
-deep-translator  # Translation (Google, etc.)
-language-tool-python  # Grammar/spell check
-nltk             # NLP tokenization, summarization
-langdetect       # Language detection
+deep-translator
+language-tool-python   # needs a Java runtime installed on the host
+nltk
+langdetect
 
 # ============ TIME & DATE ============
 pytz
-holidays         # Public holidays
+holidays
 
 # ============ DEVELOPER UTILITIES ============
-rjsmin           # JavaScript minification
-rcssmin          # CSS minification
+rjsmin
+rcssmin
 
 # ============ CYBERSECURITY ============
-python-whois     # WHOIS lookup
-dnspython        # DNS queries
+python-whois
+dnspython
 
 # ============ PRODUCTIVITY ============
-geopy            # Geocoding, distance
-python-barcode   # Barcode generation
+qrcode
+geopy
+python-barcode         # <-- was MISSING from your list; app.py does
+                        #     `import barcode` which needs this package,
+                        #     not "barcode" (that's a different, unrelated
+                        #     PyPI package) — without it the app crashes
+                        #     on startup with ModuleNotFoundError
+
+# ============ DATA & APIS ============
+feedparser              # used for RSS news fetching
+
+# ============ IMAGE / OCR (optional, app degrades gracefully without it) ============
+Pillow
+pytesseract              # also requires the Tesseract-OCR binary on the
+                          # OS itself (e.g. `apt install tesseract-ocr`
+                          # on Debian/Ubuntu, or the Windows installer) —
+                          # pip only installs the Python wrapper
