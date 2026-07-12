@@ -526,6 +526,13 @@ def get_trusted_domains(query):
 def verify_source(url):
     try:
         response = requests.head(url, timeout=5, allow_redirects=True)
+        if response.status_code == 200:
+            return True
+    except:
+        pass
+    try:
+        response = requests.get(url, timeout=6, allow_redirects=True, stream=True)
+        response.close()
         return response.status_code == 200
     except:
         return False
@@ -533,6 +540,20 @@ def verify_source(url):
 def get_source_health(url):
     try:
         response = requests.head(url, timeout=5, allow_redirects=True)
+        if response.status_code == 200:
+            return {
+                'status_code': response.status_code,
+                'healthy': True,
+                'final_url': response.url
+            }
+    except Exception:
+        pass
+    # HEAD failed or returned a non-200 status - many sites (Wikipedia, gov sites,
+    # some news sites) reject HEAD requests outright. Fall back to a GET before
+    # giving up on an otherwise valid source.
+    try:
+        response = requests.get(url, timeout=6, allow_redirects=True, stream=True)
+        response.close()
         return {
             'status_code': response.status_code,
             'healthy': response.status_code == 200,
@@ -1849,6 +1870,7 @@ def parse_news_query(msg):
 # ============ SEARCH FUNCTION ============
 def search_web(query):
     results = []
+    start_time = time.time()
     try:
         with DDGS() as ddgs:
             search_results = list(ddgs.text(query, max_results=7))
@@ -1859,8 +1881,52 @@ def search_web(query):
                     "url": r.get('href', '')
                 })
     except Exception as e:
-        print(f"Search error: {e}")
+        logger.error(f"DDGS search error for query='{query}': {e}")
+
+    elapsed = round(time.time() - start_time, 3)
+    logger.info(f"SEARCH_DIAGNOSTICS query={query!r} result_count={len(results)} elapsed={elapsed}s")
+    if results:
+        logger.info(f"SEARCH_DIAGNOSTICS sample={results[:3]}")
+
+    if not results:
+        results = search_wikipedia_fallback(query)
+        if results:
+            logger.info(f"SEARCH_DIAGNOSTICS wikipedia_fallback query={query!r} result_count={len(results)}")
+
     return results
+
+def search_wikipedia_fallback(query):
+    """Fallback search when DDGS returns nothing: hit Wikipedia's own search API directly."""
+    try:
+        r = requests.get(
+            "https://en.wikipedia.org/w/api.php",
+            params={
+                "action": "query",
+                "list": "search",
+                "srsearch": query,
+                "format": "json",
+                "srlimit": 5,
+            },
+            headers={"User-Agent": "YamaAI/1.0"},
+            timeout=8,
+        )
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        hits = data.get("query", {}).get("search", [])
+        results = []
+        for h in hits:
+            title = h.get("title", "")
+            snippet = re.sub(r'<[^>]+>', '', h.get("snippet", ""))
+            results.append({
+                "title": title,
+                "snippet": snippet[:300],
+                "url": f"https://en.wikipedia.org/wiki/{quote(title.replace(' ', '_'))}"
+            })
+        return results
+    except Exception as e:
+        logger.error(f"Wikipedia fallback search error for query='{query}': {e}")
+        return []
 
 def read_full_webpage(url):
     try:
@@ -2527,29 +2593,51 @@ def get_response(message, email):
     try:
         cleaned_query = clean_query(raw_message)
         expanded_query = expand_query(cleaned_query)
-        
+
         cached_search = cache_get(f"search:{cleaned_query}")
         if cached_search:
             return _finish(cached_search, topic="search", memory=memory, email=email,
                           stats=stats, known_name=known_name, raw_message=raw_message)
-        
-        search_results = search_web(expanded_query)
+
+        # PROBLEM 5 fix: query expansion (site: operators) can sometimes make
+        # results worse. Try both the plain query and the expanded query and
+        # keep whichever actually returned more results.
+        results_plain = search_web(cleaned_query)
+        results_expanded = search_web(expanded_query) if expanded_query != cleaned_query else []
+        search_results = results_expanded if len(results_expanded) > len(results_plain) else results_plain
+        logger.info(f"SEARCH_DIAGNOSTICS plain_count={len(results_plain)} expanded_count={len(results_expanded)} chosen_count={len(search_results)}")
+
         if not search_results:
             return _finish(f"🔍 I searched for **{cleaned_query}** but found no results. Try rephrasing?",
                           topic="search", memory=memory, email=email,
                           stats=stats, known_name=known_name, raw_message=raw_message)
-        
+
         ranked_sources = rank_sources(search_results, cleaned_query)
-        
+        logger.info(f"SEARCH_DIAGNOSTICS ranked_count={len(ranked_sources)}")
+
+        # PROBLEM 2/3/4 fix: HEAD->GET fallback verification is used, but
+        # verification and domain filtering must never be allowed to remove
+        # every single source. Always fall back to the top-ranked results
+        # (even unverified / off-whitelist) rather than returning nothing.
         verified_sources = []
         for source in ranked_sources[:5]:
             health = get_source_health(source['url'])
             if health['healthy']:
                 verified_sources.append(source)
-        
-        if not verified_sources:
-            verified_sources = ranked_sources[:3]
-        
+        logger.info(f"SEARCH_DIAGNOSTICS verified_count={len(verified_sources)}")
+
+        if len(verified_sources) < 3:
+            # Top up with the best-ranked sources we haven't already included,
+            # regardless of verification/whitelist status, so we always have
+            # something to answer with.
+            seen_urls = {s['url'] for s in verified_sources}
+            for source in ranked_sources:
+                if len(verified_sources) >= 3:
+                    break
+                if source['url'] not in seen_urls:
+                    verified_sources.append(source)
+                    seen_urls.add(source['url'])
+
         confidence = calculate_confidence(verified_sources, cleaned_query)
         
         title = cleaned_query.title()
@@ -2591,7 +2679,7 @@ def get_response(message, email):
         return _finish(formatted_response, topic="search", memory=memory, email=email,
                       stats=stats, known_name=known_name, raw_message=raw_message)
     except Exception as e:
-        logger.error(f"Search error: {e}")
+        logger.error(f"Search error: {e}", exc_info=True)
         return _finish(f"🔍 I tried to search for **{raw_message}** but encountered an error. Please try again.",
                       topic="error", memory=memory, email=email,
                       stats=stats, known_name=known_name, raw_message=raw_message)
