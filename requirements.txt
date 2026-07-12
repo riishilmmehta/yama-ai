@@ -1,67 +1,56 @@
 # ============================================
-# YAMA AI – Dependencies
-# Trimmed to match what app.py actually imports.
-# Packages that were listed but never imported
-# (googlesearch-python, latex2sympy2, antlr4-python3-runtime,
-#  PyMuPDF, python-docx, python-pptx, pandas, openpyxl,
-#  yfinance, rapidfuzz, thefuzz, textblob, dateparser,
-#  networkx, PyPDF2) have been removed — they just slow down
-# install and increase the chance of a version conflict.
+# YAMA AI - Complete Requirements
 # ============================================
 
-# ============ CORE ============
-fastapi
-uvicorn
-requests
-beautifulsoup4
-tinydb
-ddgs
-python-multipart      # required by FastAPI for UploadFile / Form()
+# Web Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
 
-# ============ MATHEMATICS ENGINE ============
-sympy
-mpmath
-numpy
-scipy
-matplotlib
+# Search & Web
+ddgs==9.0.1
+requests==2.31.0
+beautifulsoup4==4.12.2
+feedparser==6.0.10
 
-# ============ CHEMISTRY ENGINE ============
-chempy
-mendeleev
+# Database
+tinydb==4.8.0
 
-# ============ LANGUAGE TOOLS ============
-deep-translator
-language-tool-python   # needs a Java runtime installed on the host
-nltk
-langdetect
+# Mathematics & Science
+sympy==1.12
+numpy==1.24.3
+matplotlib==3.7.2
+scipy==1.11.4
+mpmath==1.3.0
 
-# ============ TIME & DATE ============
-pytz
-holidays
+# Chemistry
+chempy==0.8.2
+mendeleev==0.14.0
 
-# ============ DEVELOPER UTILITIES ============
-rjsmin
-rcssmin
+# Language Tools
+deep-translator==1.11.4
+language-tool-python==2.7.1
+nltk==3.8.1
+langdetect==1.0.9
 
-# ============ CYBERSECURITY ============
-python-whois
-dnspython
+# Time & Date
+pytz==2023.3
+holidays==0.35
 
-# ============ PRODUCTIVITY ============
-qrcode
-geopy
-python-barcode         # <-- was MISSING from your list; app.py does
-                        #     `import barcode` which needs this package,
-                        #     not "barcode" (that's a different, unrelated
-                        #     PyPI package) — without it the app crashes
-                        #     on startup with ModuleNotFoundError
+# Developer Utilities
+rjsmin==1.2.0
+rcssmin==1.1.0
+python-whois==0.8.0
+dnspython==2.4.2
 
-# ============ DATA & APIS ============
-feedparser              # used for RSS news fetching
+# Productivity
+qrcode==7.4.2
+geopy==2.4.1
+python-barcode==0.15.1
 
-# ============ IMAGE / OCR (optional, app degrades gracefully without it) ============
-Pillow
-pytesseract              # also requires the Tesseract-OCR binary on the
-                          # OS itself (e.g. `apt install tesseract-ocr`
-                          # on Debian/Ubuntu, or the Windows installer) —
-                          # pip only installs the Python wrapper
+# OCR (Optional - for image text extraction)
+Pillow==10.1.0
+pytesseract==0.3.10
+
+# Additional Utilities
+pygments==2.16.1
+markdown==3.5.1
