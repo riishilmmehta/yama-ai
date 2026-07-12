@@ -1,10 +1,17 @@
 # ============================================
 # YAMA AI - Complete Requirements
+# Pair with runtime.txt (python-3.11.9) so all
+# these pinned wheels install without compiling.
 # ============================================
 
 # Web Framework
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
+python-multipart==0.0.6   # <-- was MISSING. FastAPI's UploadFile/Form (used
+                           #     by your /upload endpoint) need this at
+                           #     runtime — without it every upload request
+                           #     fails with "Form data requires
+                           #     python-multipart to be installed."
 
 # Search & Web
 ddgs==9.0.1
@@ -28,7 +35,7 @@ mendeleev==0.14.0
 
 # Language Tools
 deep-translator==1.11.4
-language-tool-python==2.7.1
+language-tool-python==2.7.1   # needs a Java runtime on the host
 nltk==3.8.1
 langdetect==1.0.9
 
@@ -49,8 +56,10 @@ python-barcode==0.15.1
 
 # OCR (Optional - for image text extraction)
 Pillow==10.1.0
-pytesseract==0.3.10
+pytesseract==0.3.10   # also needs the Tesseract-OCR binary on the OS itself
 
 # Additional Utilities
+# pygments and markdown below are not imported anywhere in app.py right now
+# (kept only if you're planning to use them soon - safe to delete otherwise)
 pygments==2.16.1
 markdown==3.5.1
