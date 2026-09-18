@@ -2759,7 +2759,13 @@ async def chat(request: Request):
             return {"response": "Please enter a message.", "image": None}
         
         start_time = time.time()
-        result = get_response(message, email)
+        
+        # --- NEW PIPELINE ---
+        from orchestrator.pipeline import process_query
+        # The legacy logic expects history from memory, we pass session_id as email
+        result = await process_query(message, email, {})
+        # --- END NEW PIPELINE ---
+        
         end_time = time.time()
         
         track_analytics('response_time', email, {'time': end_time - start_time, 'query': message[:50]})
