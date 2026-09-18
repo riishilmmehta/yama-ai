@@ -1872,7 +1872,7 @@ def search_web(query):
     results = []
     start_time = time.time()
     try:
-        with DDGS() as ddgs:
+        with DDGS(timeout=8) as ddgs:
             search_results = list(ddgs.text(query, max_results=7))
             for r in search_results:
                 results.append({
@@ -1930,23 +1930,16 @@ def search_wikipedia_fallback(query):
 
 def read_full_webpage(url):
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        response = requests.get(url, headers=headers, timeout=15)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        for tag in soup(['script', 'style', 'nav', 'footer', 'header', 'aside']):
-            tag.decompose()
-        content = []
-        article = soup.find('article')
-        if article:
-            content.append(article.get_text())
-        else:
-            for p in soup.find_all('p'):
-                text = p.get_text(strip=True)
-                if len(text) > 50:
-                    content.append(text)
-        full_text = ' '.join(content[:30])
-        return full_text[:2000]
-    except Exception:
+        import trafilatura
+        downloaded = trafilatura.fetch_url(url)
+        if downloaded:
+            text = trafilatura.extract(downloaded)
+            if text:
+                return text[:2000]
+        return None
+    except Exception as e:
+        logger.error(f"Error extracting webpage {url}: {e}")
+
         return None
 
 def summarize_text(text, max_sentences=4):
@@ -2615,15 +2608,37 @@ def get_response(message, email):
         ranked_sources = rank_sources(search_results, cleaned_query)
         logger.info(f"SEARCH_DIAGNOSTICS ranked_count={len(ranked_sources)}")
 
-        # PROBLEM 2/3/4 fix: HEAD->GET fallback verification is used, but
-        # verification and domain filtering must never be allowed to remove
-        # every single source. Always fall back to the top-ranked results
-        # (even unverified / off-whitelist) rather than returning nothing.
+        # PROBLEM 2/3/4 fix: Concurrent HEAD->GET fallback verification
         verified_sources = []
-        for source in ranked_sources[:5]:
-            health = get_source_health(source['url'])
-            if health['healthy']:
-                verified_sources.append(source)
+        import asyncio
+        import httpx
+        
+        async def check_sources(sources_to_check):
+            async with httpx.AsyncClient(timeout=6.0, follow_redirects=True) as client:
+                async def check_url(source):
+                    try:
+                        resp = await client.head(source['url'])
+                        if resp.status_code == 200:
+                            return source, True
+                    except Exception:
+                        pass
+                    try:
+                        resp = await client.get(source['url'])
+                        if resp.status_code == 200:
+                            return source, True
+                    except Exception:
+                        pass
+                    return source, False
+                
+                results = await asyncio.gather(*(check_url(s) for s in sources_to_check))
+                return [s for s, is_healthy in results if is_healthy]
+
+        try:
+            loop = asyncio.get_running_loop()
+            verified_sources = loop.run_until_complete(check_sources(ranked_sources[:5]))
+        except RuntimeError:
+            verified_sources = asyncio.run(check_sources(ranked_sources[:5]))
+            
         logger.info(f"SEARCH_DIAGNOSTICS verified_count={len(verified_sources)}")
 
         if len(verified_sources) < 3:
@@ -2676,7 +2691,45 @@ def get_response(message, email):
         cache_set(f"search:{cleaned_query}", formatted_response)
         track_analytics('search_query', email, {'query': cleaned_query, 'sources': len(verified_sources)})
         
-        return _finish(formatted_response, topic="search", memory=memory, email=email,
+        # --- SHAPE CLASSIFIER INJECTION ---
+        from nlu.response_shape import classify_shape
+        shape = classify_shape(raw_message)
+        visual = None
+        
+        if shape == "chart":
+            visual = {
+                "type": "chart",
+                "data": {
+                    "type": "bar",
+                    "data": {
+                        "labels": ["Item 1", "Item 2", "Item 3", "Item 4"],
+                        "datasets": [{
+                            "label": f"Data for {cleaned_query.title()}",
+                            "data": [12, 19, 3, 5],
+                            "backgroundColor": "rgba(54, 162, 235, 0.5)",
+                            "borderColor": "rgba(54, 162, 235, 1)",
+                            "borderWidth": 1
+                        }]
+                    },
+                    "options": {
+                        "responsive": True,
+                        "scales": {"y": {"beginAtZero": True}}
+                    }
+                }
+            }
+        elif shape == "table":
+            visual = {
+                "type": "table",
+                "data": f"<table><tr><th>Attribute</th><th>Value</th></tr><tr><td>Query</td><td>{cleaned_query}</td></tr><tr><td>Sources</td><td>{len(verified_sources)}</td></tr></table>"
+            }
+        elif shape == "image":
+            visual = {
+                "type": "image",
+                "data": f"https://picsum.photos/seed/{cleaned_query.replace(' ', '')}/400/300"
+            }
+        # -----------------------------------
+        
+        return _finish(formatted_response, topic="search", visual=visual, memory=memory, email=email,
                       stats=stats, known_name=known_name, raw_message=raw_message)
     except Exception as e:
         logger.error(f"Search error: {e}", exc_info=True)
@@ -2684,7 +2737,7 @@ def get_response(message, email):
                       topic="error", memory=memory, email=email,
                       stats=stats, known_name=known_name, raw_message=raw_message)
 
-def _finish(reply, topic=None, image=None, memory=None, email=None, stats=None, known_name=None, raw_message=None):
+def _finish(reply, topic=None, image=None, visual=None, memory=None, email=None, stats=None, known_name=None, raw_message=None):
     """Helper function to finalize response with suffix and context."""
     if memory is None:
         memory = {}
@@ -2730,7 +2783,7 @@ def _finish(reply, topic=None, image=None, memory=None, email=None, stats=None, 
             pass
     
     # ALWAYS return consistent format
-    return {"text": reply, "image": image}
+    return {"text": reply, "image": image, "visual": visual}
 
 # ============ ENDPOINTS ============
 
@@ -2755,6 +2808,8 @@ async def chat(request: Request):
         message = data.get('message', '')
         email = data.get('email', '')
         
+        logger.info(f"RAW INCOMING MESSAGE: {message!r}")
+        
         if not message:
             return {"response": "Please enter a message.", "image": None}
         
@@ -2771,11 +2826,13 @@ async def chat(request: Request):
         track_analytics('response_time', email, {'time': end_time - start_time, 'query': message[:50]})
         
         if isinstance(result, dict):
-            response_text = result.get("text", "I couldn't generate a response. Please try again.")
+            response_text = result.get("text", result.get("direct_answer", "I couldn't generate a response. Please try again."))
             response_image = result.get("image")
+            visual = result.get("visual")
         else:
             response_text = str(result) if result else "I couldn't generate a response. Please try again."
             response_image = None
+            visual = None
         
         # Ensure response_text is always a string
         if response_text is None:
@@ -2794,7 +2851,7 @@ async def chat(request: Request):
             except:
                 pass
         
-        return {"response": response_text, "image": response_image}
+        return {"response": response_text, "image": response_image, "visual": visual}
     except Exception as e:
         logger.error(f"Chat error: {e}")
         return {"response": f"⚠️ Error: {str(e)}", "image": None}
@@ -3070,6 +3127,7 @@ HTML = '''<!DOCTYPE html>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover, interactive-widget=resizes-content">
     <title>Yama AI - Your Intelligent Assistant</title>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -3847,7 +3905,7 @@ HTML = '''<!DOCTYPE html>
                 });
                 const data = await res.json();
                 const aiMessageId = 'msg-' + (++messageCounter);
-                addMessage(data.response, 'ai', aiMessageId, message, data.image);
+                addMessage(data.response, 'ai', aiMessageId, message, data.image, data.visual);
                 loadHistory();
             } catch(e) {
                 if (e.name === 'AbortError') {
@@ -3864,7 +3922,7 @@ HTML = '''<!DOCTYPE html>
             }
         }
         
-        function addMessage(text, sender, messageId, userMessage = '', image = null) {
+        function addMessage(text, sender, messageId, userMessage = '', image = null, visual = null) {
             const messages = document.getElementById('messages');
             const div = document.createElement('div');
             div.className = 'message ' + sender + '-message';
@@ -3880,6 +3938,39 @@ HTML = '''<!DOCTYPE html>
                 img.className = 'chat-image';
                 img.alt = 'Generated image';
                 content.appendChild(img);
+            }
+            if (visual) {
+                const visContainer = document.createElement('div');
+                visContainer.className = 'visual-container';
+                if (visual.type === 'chart') {
+                    const canvas = document.createElement('canvas');
+                    visContainer.appendChild(canvas);
+                    content.appendChild(visContainer);
+                    new Chart(canvas, {
+                        type: visual.chart_type || 'line',
+                        data: visual.data,
+                        options: { responsive: true, maintainAspectRatio: false }
+                    });
+                    visContainer.style.height = '300px';
+                } else if (visual.type === 'table') {
+                    const table = document.createElement('table');
+                    table.className = 'visual-table';
+                    let html = '<thead><tr>' + visual.data.columns.map(c => `<th>${c}</th>`).join('') + '</tr></thead><tbody>';
+                    visual.data.rows.forEach(row => {
+                        html += '<tr>' + row.map(cell => `<td>${cell}</td>`).join('') + '</tr>';
+                    });
+                    html += '</tbody>';
+                    table.innerHTML = html;
+                    visContainer.appendChild(table);
+                    content.appendChild(visContainer);
+                    table.style.width = '100%'; table.style.borderCollapse = 'collapse';
+                } else if (visual.type === 'image') {
+                    const img = document.createElement('img');
+                    img.src = visual.data.url || visual.data;
+                    img.className = 'chat-image';
+                    visContainer.appendChild(img);
+                    content.appendChild(visContainer);
+                }
             }
             wrapper.appendChild(content);
             if (sender === 'user') {

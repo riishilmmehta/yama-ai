@@ -23,10 +23,16 @@ async def process_query(query: str, session_id: str, raw_state: Dict[str, Any]) 
     state = state_manager.get_session(session_id)
     
     # --- PHASE 1: NLU ---
-    logger.info(f"Processing query: {query}")
+    logger.info(f"Processing raw query: {query}")
+    
+    # 1.0 Spell Checking
+    from nlu.spellchecker import correct_query
+    corrected_query = correct_query(query)
+    if corrected_query != query:
+        logger.info(f"Query after spellcheck: {corrected_query}")
     
     # 1.1 Coreference Resolution
-    resolved_query = resolve_coreferences(query, state)
+    resolved_query = resolve_coreferences(corrected_query, state)
     
     # 1.2 Intent Classification
     intent_label, confidence = get_intent(resolved_query)
